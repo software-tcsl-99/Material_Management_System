@@ -30,6 +30,16 @@ const ProfilePage = () => {
   // Photo State
   const [photoUploading, setPhotoUploading] = useState(false);
 
+  const focusAndScroll = (id) => {
+    setTimeout(() => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.focus();
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  };
+
   const handleProfileUpdate = async (e) => {
     e.preventDefault();
     setUpdatingProfile(true);
@@ -51,6 +61,7 @@ const ProfilePage = () => {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
       setPasswordError("New passwords don't match.");
+      focusAndScroll('confirmPassword');
       return;
     }
     setUpdatingPassword(true);

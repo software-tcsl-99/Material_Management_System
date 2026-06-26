@@ -15,7 +15,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
 
-const Sidebar = ({ className = '' }) => {
+const Sidebar = ({ className = '', onNavigate }) => {
   const { user, clearAuth } = useAuthStore();
   const isAdmin = ['super_admin', 'admin'].includes(user?.role);
   const location = useLocation();
@@ -72,6 +72,7 @@ const Sidebar = ({ className = '' }) => {
           <NavLink
             key={item.path}
             to={item.path}
+            onClick={() => onNavigate?.()}
             className={({ isActive }) => `
               flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer
               ${isActive

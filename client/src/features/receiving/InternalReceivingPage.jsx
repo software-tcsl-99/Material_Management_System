@@ -30,6 +30,16 @@ const InternalReceivingPage = () => {
   const [activeMaterialIndex, setActiveMaterialIndex] = useState(null);
   const [activePhotoType, setActivePhotoType] = useState(null); // 'document' or 'material'
 
+  const focusAndScroll = (id) => {
+    setTimeout(() => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.focus();
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  };
+
   // Fetch pending receipts
   const fetchIncomingTransactions = async () => {
     setLoading(true);
@@ -131,6 +141,7 @@ const InternalReceivingPage = () => {
     if (!selectedTxn) return;
     if (!receiverDocumentPhotos || receiverDocumentPhotos.length === 0) {
       setError('At least one document photo/upload is required.');
+      focusAndScroll('receiverDocumentPhotos');
       return;
     }
 
@@ -362,7 +373,7 @@ const InternalReceivingPage = () => {
               </Card>
 
               {/* Receiver's Document Photos */}
-              <Card title="Receiver's Document Photos (Required)">
+              <Card id="receiverDocumentPhotos" title="Receiver's Document Photos (Required)">
                 <div className="flex flex-col gap-4">
                   <GeoCamera
                     onCapture={handleDocumentPhotoCapture}
@@ -466,7 +477,7 @@ const InternalReceivingPage = () => {
                   Cancel
                 </Button>
                 <Button type="submit" size="sm" loading={submitting} icon={FileSpreadsheet} className="bg-emerald-600 hover:bg-emerald-700">
-                  Log Receipt & Complete Cycle
+                  submit Receipt & Complete Cycle
                 </Button>
               </div>
             </form>

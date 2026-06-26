@@ -20,11 +20,19 @@ const uploadRoutes = require('./routes/upload.routes');
 const app = express();
 
 // Security middleware
-app.use(helmet());
-app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
-  credentials: true,
-}));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: {
+      policy: 'cross-origin',
+    },
+  })
+);
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    credentials: true,
+  })
+);
 
 // Rate limiting
 const limiter = rateLimit({
@@ -46,7 +54,28 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve static uploads for local mock testing
 const path = require('path');
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Serve uploads via Cloudinary only. Local static uploads are disabled to enforce
+// cloud storage usage for production and cross-origin reliability.
+if (process.env.CLOUDINARY_BASE_URL) {
+  // Example CLOUDINARY_BASE_URL: https://res.cloudinary.com/<cloudName>/image/upload
+  // Use a regex route to capture the remainder of the path in a way compatible
+  // with the installed path-to-regexp version.
+  app.get(/^\/uploads\/(.*)$/, (req, res) => {
+    const key = req.params[0] || '';
+    const normalizedKey = key.replace(/^\/+/, '');
+    const base = String(process.env.CLOUDINARY_BASE_URL).replace(/\/+$/g, '');
+    const url = `${base}/${normalizedKey}`;
+    return res.redirect(302, url);
+  });
+} else {
+  // When Cloudinary is not configured, respond with a clear error to guide setup.
+  app.get(/^\/uploads\/(.*)$/, (req, res) => {
+    res.status(503).json({
+      message:
+        'Cloud storage not configured. Set CLOUDINARY_BASE_URL to a valid Cloudinary base URL to serve uploads.',
+    });
+  });
+}
 
 // Logging
 if (process.env.NODE_ENV !== 'production') {
@@ -79,7 +108,7 @@ app.use((req, res) => {
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
-  
+
   if (err.name === 'MulterError' || err.message?.includes('Only image files')) {
     return res.status(400).json({ message: `Upload error: ${err.message}` });
   }

@@ -31,6 +31,16 @@ const CreateTransactionPage = () => {
   const { getPosition } = useGeoLocation();
   const [fileUploading, setFileUploading] = useState(false);
 
+  const focusAndScroll = (id) => {
+    setTimeout(() => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.focus();
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  };
+
   // Materials State
   const [materials, setMaterials] = useState([
     { name: '', description: '', qty: 1, unit: 'Nos', price: 0, barcode: '', photos: [] },
@@ -204,19 +214,23 @@ const CreateTransactionPage = () => {
     if (step === 1) {
       if (!receiverId) {
         setError('Please select a receiver');
+        focusAndScroll('receiver');
         return false;
       }
       if (receiverId === 'other' && !otherReceiverName.trim()) {
         setError('Please specify receiver name');
+        focusAndScroll('otherReceiverName');
         return false;
       }
       if (!documentNumber.trim()) {
         setError('Document number is required');
+        focusAndScroll('documentNumber');
         return false;
       }
       if (documentType === 'RDC') {
         if (!expectedReturnDate) {
           setError('Expected return date is required for Returnable DC');
+          focusAndScroll('expectedReturnDate');
           return false;
         }
         const selectedDate = new Date(expectedReturnDate);
@@ -225,6 +239,7 @@ const CreateTransactionPage = () => {
         today.setHours(0, 0, 0, 0);
         if (selectedDate <= today) {
           setError('Expected Return Date must be a future date');
+          focusAndScroll('expectedReturnDate');
           return false;
         }
       }
@@ -239,14 +254,20 @@ const CreateTransactionPage = () => {
         const item = materials[i];
         if (!item.name.trim()) {
           setError(`Item ${i + 1} name is required`);
+          focusAndScroll(`material-name-${i}`);
+          focusAndScroll(`material-name-mob-${i}`);
           return false;
         }
         if (item.qty <= 0) {
           setError(`Item ${i + 1} quantity must be greater than 0`);
+          focusAndScroll(`material-qty-${i}`);
+          focusAndScroll(`material-qty-mob-${i}`);
           return false;
         }
         if (!item.barcode || !item.barcode.trim()) {
           setError(`Item ${i + 1} barcode is required`);
+          focusAndScroll(`material-barcode-${i}`);
+          focusAndScroll(`material-barcode-mob-${i}`);
           return false;
         }
       }
@@ -524,6 +545,7 @@ const CreateTransactionPage = () => {
                     <tr key={idx} className="text-slate-700 dark:text-slate-200">
                       <td className="px-3 py-2">
                         <input
+                          id={`material-name-${idx}`}
                           type="text"
                           placeholder="Name"
                           value={mat.name ?? ''}
@@ -543,6 +565,7 @@ const CreateTransactionPage = () => {
                       </td>
                       <td className="px-3 py-2">
                         <input
+                          id={`material-qty-${idx}`}
                           type="number"
                           min="1"
                           value={mat.qty ?? 0}
@@ -571,6 +594,7 @@ const CreateTransactionPage = () => {
                       </td>
                       <td className="px-3 py-2">
                         <input
+                          id={`material-barcode-${idx}`}
                           type="text"
                           placeholder="Barcode *"
                           value={mat.barcode ?? ''}
@@ -623,6 +647,7 @@ const CreateTransactionPage = () => {
                     <div className="col-span-2 flex flex-col gap-1">
                       <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Material Name *</label>
                       <input
+                        id={`material-name-mob-${idx}`}
                         type="text"
                         placeholder="Name"
                         value={mat.name ?? ''}
@@ -646,6 +671,7 @@ const CreateTransactionPage = () => {
                     <div className="flex flex-col gap-1">
                       <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Qty *</label>
                       <input
+                        id={`material-qty-mob-${idx}`}
                         type="number"
                         min="1"
                         value={mat.qty ?? 0}
@@ -680,6 +706,7 @@ const CreateTransactionPage = () => {
                     <div className="flex flex-col gap-1">
                       <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Barcode *</label>
                       <input
+                        id={`material-barcode-mob-${idx}`}
                         type="text"
                         placeholder="Barcode"
                         value={mat.barcode ?? ''}

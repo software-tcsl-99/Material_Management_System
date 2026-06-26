@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet } from 'react-router-dom';
-import Sidebar from './Sidebar';
-import Header from './Header';
-import MobileNav from './MobileNav';
-import useThemeStore from '../../store/themeStore';
 import useSocket from '../../hooks/useSocket';
 import useNotificationStore from '../../store/notificationStore';
+import useThemeStore from '../../store/themeStore';
+import Header from './Header';
+import MobileNav from './MobileNav';
+import Sidebar from './Sidebar';
 
 const AppLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -40,7 +40,7 @@ const AppLayout = () => {
           />
           {/* Drawer Panel */}
           <div className="relative flex-1 max-w-[260px] animate-in slide-in-from-left duration-250 z-50">
-            <Sidebar className="w-full" />
+            <Sidebar className="w-full" onNavigate={() => setSidebarOpen(false)} />
           </div>
         </div>
       )}

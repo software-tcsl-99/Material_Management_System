@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const MAX_ACCURACY_M = 50;
 
@@ -34,13 +34,15 @@ const useGeoLocation = ({ watch = false, maxAccuracy = MAX_ACCURACY_M } = {}) =>
     const lng = position.coords.longitude;
     const acc = position.coords.accuracy;
 
+    // If accuracy is worse than desired, don't throw — return the coordinates
+    // along with a warning flag so callers can decide how to proceed.
     if (acc > maxAccuracy) {
-      throw new Error(`GPS accuracy too low: ±${Math.round(acc)}m (max: ${maxAccuracy}m)`);
+      console.warn(`GPS accuracy low: ±${Math.round(acc)}m (max: ${maxAccuracy}m)`);
     }
 
     const resolvedAddress = await getAddressFromCoords(lat, lng);
 
-    return { lat, lng, accuracy: acc, address: resolvedAddress };
+    return { lat, lng, accuracy: acc, address: resolvedAddress, lowAccuracy: acc > maxAccuracy };
   }, [maxAccuracy]);
 
   const getPosition = useCallback(() => {

@@ -36,6 +36,16 @@ const ExternalReceivingPage = () => {
   const [docNumber, setDocNumber] = useState('');
   const [docDescription, setDocDescription] = useState('');
 
+  const focusAndScroll = (id) => {
+    setTimeout(() => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.focus();
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  };
+
   // Dynamic Row operations
   const handleAddMaterial = () => {
     setMaterials([
@@ -81,19 +91,23 @@ const ExternalReceivingPage = () => {
     if (activeTab === 'vendor') {
       if (!vendorName.trim()) {
         setError('Vendor name is required');
+        focusAndScroll('vendorName');
         return false;
       }
       if (!poNumber.trim()) {
         setError('PO number is required');
+        focusAndScroll('poNumber');
         return false;
       }
     } else {
       if (!customerName.trim()) {
         setError('Customer name is required');
+        focusAndScroll('customerName');
         return false;
       }
       if (!docNumber.trim()) {
         setError('Document reference number is required');
+        focusAndScroll('docNumber');
         return false;
       }
     }
@@ -108,14 +122,20 @@ const ExternalReceivingPage = () => {
       const item = materials[i];
       if (!item.name.trim()) {
         setError(`Item ${i + 1} name is required`);
+        focusAndScroll(`material-name-${i}`);
+        focusAndScroll(`material-name-mob-${i}`);
         return false;
       }
       if (item.qty <= 0) {
         setError(`Item ${i + 1} quantity must be greater than 0`);
+        focusAndScroll(`material-qty-${i}`);
+        focusAndScroll(`material-qty-mob-${i}`);
         return false;
       }
       if (!item.barcode || !item.barcode.trim()) {
         setError(`Item ${i + 1} barcode is required`);
+        focusAndScroll(`material-barcode-${i}`);
+        focusAndScroll(`material-barcode-mob-${i}`);
         return false;
       }
     }
@@ -358,201 +378,207 @@ const ExternalReceivingPage = () => {
             }
           >
             <div className="flex flex-col gap-4">
-            {/* Desktop Table View */}
-            <div className="hidden md:block overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
-              <table className="w-full text-left border-collapse min-w-[700px]">
-                <thead>
-                  <tr className="border-b border-slate-200/80 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase">
-                    <th className="px-4 py-3">Material Name *</th>
-                    <th className="px-4 py-3">Description</th>
-                    <th className="px-4 py-3 w-20">Qty *</th>
-                    <th className="px-4 py-3 w-24">Unit</th>
-                    <th className="px-4 py-3 w-28">Price (₹)</th>
-                    <th className="px-4 py-3 w-24">Barcode *</th>
-                    <th className="px-4 py-3 w-24">Total</th>
-                    <th className="px-4 py-3 w-12"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {materials.map((mat, idx) => (
-                    <tr key={idx} className="text-slate-700 dark:text-slate-200">
-                      <td className="px-3 py-2">
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
+                <table className="w-full text-left border-collapse min-w-[700px]">
+                  <thead>
+                    <tr className="border-b border-slate-200/80 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase">
+                      <th className="px-4 py-3">Material Name *</th>
+                      <th className="px-4 py-3">Description</th>
+                      <th className="px-4 py-3 w-20">Qty *</th>
+                      <th className="px-4 py-3 w-24">Unit</th>
+                      <th className="px-4 py-3 w-28">Price (₹)</th>
+                      <th className="px-4 py-3 w-24">Barcode *</th>
+                      <th className="px-4 py-3 w-24">Total</th>
+                      <th className="px-4 py-3 w-12"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {materials.map((mat, idx) => (
+                      <tr key={idx} className="text-slate-700 dark:text-slate-200">
+                        <td className="px-3 py-2">
+                          <input
+                            id={`material-name-${idx}`}
+                            type="text"
+                            placeholder="Name"
+                            value={mat.name}
+                            onChange={(e) => handleMaterialChange(idx, 'name', e.target.value)}
+                            className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                            required
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="text"
+                            placeholder="e.g. Specifications"
+                            value={mat.description}
+                            onChange={(e) => handleMaterialChange(idx, 'description', e.target.value)}
+                            className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            id={`material-qty-${idx}`}
+                            type="number"
+                            min="1"
+                            value={mat.qty}
+                            onChange={(e) => handleMaterialChange(idx, 'qty', e.target.value)}
+                            className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                            required
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="text"
+                            placeholder="Nos"
+                            value={mat.unit}
+                            onChange={(e) => handleMaterialChange(idx, 'unit', e.target.value)}
+                            className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            value={mat.price}
+                            onChange={(e) => handleMaterialChange(idx, 'price', e.target.value)}
+                            className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            id={`material-barcode-${idx}`}
+                            type="text"
+                            placeholder="Barcode *"
+                            value={mat.barcode}
+                            onChange={(e) => handleMaterialChange(idx, 'barcode', e.target.value)}
+                            className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                            required
+                          />
+                        </td>
+                        <td className="px-4 py-2 text-sm font-semibold">
+                          ₹{(mat.qty * mat.price).toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMaterial(idx)}
+                            disabled={materials.length === 1}
+                            className="text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Card Layout for Adding Materials */}
+              <div className="flex flex-col gap-4 md:hidden">
+                {materials.map((mat, idx) => (
+                  <div key={idx} className="bg-slate-50 dark:bg-slate-900 border border-slate-205/85 dark:border-slate-800 rounded-xl p-4 flex flex-col gap-3 relative shadow-sm">
+                    {/* Header / Number & Remove */}
+                    <div className="flex justify-between items-center border-b border-slate-200/60 dark:border-slate-800 pb-2">
+                      <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">Material #{idx + 1}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveMaterial(idx)}
+                        disabled={materials.length === 1}
+                        className="text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:pointer-events-none cursor-pointer p-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Inputs Grid */}
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="col-span-2 flex flex-col gap-1">
+                        <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Material Name *</label>
                         <input
+                          id={`material-name-mob-${idx}`}
                           type="text"
                           placeholder="Name"
-                          value={mat.name}
+                          value={mat.name ?? ''}
                           onChange={(e) => handleMaterialChange(idx, 'name', e.target.value)}
-                          className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
                           required
                         />
-                      </td>
-                      <td className="px-3 py-2">
+                      </div>
+
+                      <div className="col-span-2 flex flex-col gap-1">
+                        <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Description</label>
                         <input
                           type="text"
-                          placeholder="e.g. Specifications"
-                          value={mat.description}
+                          placeholder="e.g. Blue, large"
+                          value={mat.description ?? ''}
                           onChange={(e) => handleMaterialChange(idx, 'description', e.target.value)}
-                          className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
                         />
-                      </td>
-                      <td className="px-3 py-2">
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Qty *</label>
                         <input
+                          id={`material-qty-mob-${idx}`}
                           type="number"
                           min="1"
-                          value={mat.qty}
+                          value={mat.qty ?? 0}
                           onChange={(e) => handleMaterialChange(idx, 'qty', e.target.value)}
-                          className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
                           required
                         />
-                      </td>
-                      <td className="px-3 py-2">
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Unit</label>
                         <input
                           type="text"
-                          placeholder="Nos"
-                          value={mat.unit}
+                          placeholder="e.g. Nos, Kg"
+                          value={mat.unit ?? ''}
                           onChange={(e) => handleMaterialChange(idx, 'unit', e.target.value)}
-                          className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
                         />
-                      </td>
-                      <td className="px-3 py-2">
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Price (₹)</label>
                         <input
                           type="number"
                           min="0"
-                          value={mat.price}
+                          value={mat.price ?? 0}
                           onChange={(e) => handleMaterialChange(idx, 'price', e.target.value)}
-                          className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
                         />
-                      </td>
-                      <td className="px-3 py-2">
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Barcode *</label>
                         <input
+                          id={`material-barcode-mob-${idx}`}
                           type="text"
-                          placeholder="Barcode *"
-                          value={mat.barcode}
+                          placeholder="Barcode"
+                          value={mat.barcode ?? ''}
                           onChange={(e) => handleMaterialChange(idx, 'barcode', e.target.value)}
-                          className="w-full bg-transparent border-0 border-b border-transparent focus:border-indigo-500 px-1 py-1 text-sm focus:outline-none dark:text-white"
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
                           required
                         />
-                      </td>
-                      <td className="px-4 py-2 text-sm font-semibold">
-                        ₹{(mat.qty * mat.price).toLocaleString()}
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveMaterial(idx)}
-                          disabled={materials.length === 1}
-                          className="text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </div>
 
-            {/* Mobile Card Layout for Adding Materials */}
-            <div className="flex flex-col gap-4 md:hidden">
-              {materials.map((mat, idx) => (
-                <div key={idx} className="bg-slate-50 dark:bg-slate-900 border border-slate-205/85 dark:border-slate-800 rounded-xl p-4 flex flex-col gap-3 relative shadow-sm">
-                  {/* Header / Number & Remove */}
-                  <div className="flex justify-between items-center border-b border-slate-200/60 dark:border-slate-800 pb-2">
-                    <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">Material #{idx + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveMaterial(idx)}
-                      disabled={materials.length === 1}
-                      className="text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:pointer-events-none cursor-pointer p-1"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {/* Inputs Grid */}
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div className="col-span-2 flex flex-col gap-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Material Name *</label>
-                      <input
-                        type="text"
-                        placeholder="Name"
-                        value={mat.name ?? ''}
-                        onChange={(e) => handleMaterialChange(idx, 'name', e.target.value)}
-                        className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
-                        required
-                      />
-                    </div>
-
-                    <div className="col-span-2 flex flex-col gap-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Description</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Blue, large"
-                        value={mat.description ?? ''}
-                        onChange={(e) => handleMaterialChange(idx, 'description', e.target.value)}
-                        className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Qty *</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={mat.qty ?? 0}
-                        onChange={(e) => handleMaterialChange(idx, 'qty', e.target.value)}
-                        className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
-                        required
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Unit</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Nos, Kg"
-                        value={mat.unit ?? ''}
-                        onChange={(e) => handleMaterialChange(idx, 'unit', e.target.value)}
-                        className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Price (₹)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={mat.price ?? 0}
-                        onChange={(e) => handleMaterialChange(idx, 'price', e.target.value)}
-                        className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Barcode *</label>
-                      <input
-                        type="text"
-                        placeholder="Barcode"
-                        value={mat.barcode ?? ''}
-                        onChange={(e) => handleMaterialChange(idx, 'barcode', e.target.value)}
-                        className="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
-                        required
-                      />
-                    </div>
-
-                    <div className="col-span-2 flex justify-between items-center bg-slate-100 dark:bg-slate-950 px-3 py-2 rounded-lg mt-1">
-                      <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Item Total</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">
-                        {(() => {
-                          const itemTotal = (Number(mat.qty) || 0) * (Number(mat.price) || 0);
-                          return `₹${isFinite(itemTotal) ? itemTotal.toLocaleString() : '0'}`;
-                        })()}
-                      </span>
+                      <div className="col-span-2 flex justify-between items-center bg-slate-100 dark:bg-slate-950 px-3 py-2 rounded-lg mt-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Item Total</span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200">
+                          {(() => {
+                            const itemTotal = (Number(mat.qty) || 0) * (Number(mat.price) || 0);
+                            return `₹${isFinite(itemTotal) ? itemTotal.toLocaleString() : '0'}`;
+                          })()}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
 
               <div className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-800 rounded-lg">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -584,7 +610,7 @@ const ExternalReceivingPage = () => {
               Cancel
             </Button>
             <Button type="submit" size="sm" loading={loading} icon={Save}>
-              Log External Receipt
+              Submit External Receipt
             </Button>
           </div>
         </form>

@@ -33,6 +33,16 @@ const CreateEmployeePage = () => {
   // Password feedback modal
   const [tempPassword, setTempPassword] = useState('');
 
+  const focusAndScroll = (id) => {
+    setTimeout(() => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.focus();
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  };
+
   useEffect(() => {
     const fetchMasters = async () => {
       setLoading(true);
@@ -61,8 +71,19 @@ const CreateEmployeePage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!deptId || !desigId || !locId) {
-      setError('Please configure Department, Designation, and Location.');
+    if (!deptId) {
+      setError('Department configuration is required.');
+      focusAndScroll('department');
+      return;
+    }
+    if (!desigId) {
+      setError('Designation configuration is required.');
+      focusAndScroll('designation');
+      return;
+    }
+    if (!locId) {
+      setError('Work Location configuration is required.');
+      focusAndScroll('workLocation');
       return;
     }
 

@@ -20,26 +20,23 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
   const [uploading, setUploading] = useState(false);
   const [devices, setDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [cameraMode, setCameraMode] = useState('environment');
+  const isMobileBrowser = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
   // Initialize camera and location
-  const startCamera = async () => {
+  const startCamera = async (mode = cameraMode) => {
     try {
       setCameraError(null);
       setCapturedPhoto(null);
 
-      // Request location in parallel
-      getPosition().catch(err => console.warn('Pre-fetching location failed:', err));
-
-      // Build constraints: prefer explicit deviceId when selected, otherwise prefer environment then user
-      let videoConstraints = {
+      const videoConstraints = {
         width: { ideal: 1280 },
-        height: { ideal: 720 }
+        height: { ideal: 720 },
+        facingMode: mode,
       };
 
       if (selectedDeviceId) {
         videoConstraints.deviceId = { exact: selectedDeviceId };
-      } else {
-        videoConstraints.facingMode = { ideal: 'environment' };
       }
 
       const constraints = { video: videoConstraints, audio: false };
@@ -48,14 +45,26 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       } catch (err) {
-        // If facingMode failed (common on desktops), try a generic user-facing camera
         console.warn('Primary getUserMedia failed, trying fallback facingMode:user', err);
         const fallback = { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false };
         mediaStream = await navigator.mediaDevices.getUserMedia(fallback);
       }
+
+      const video = videoRef.current;
       setStream(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
+      if (video) {
+        video.srcObject = mediaStream;
+        await new Promise((resolve, reject) => {
+          const handleLoaded = () => {
+            video.play().then(resolve).catch(reject);
+          };
+          video.addEventListener('loadedmetadata', handleLoaded, { once: true });
+          setTimeout(() => {
+            if (!video.videoWidth || !video.videoHeight) {
+              resolve();
+            }
+          }, 1500);
+        });
       }
       setCameraActive(true);
     } catch (err) {
@@ -81,34 +90,37 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
   };
 
   const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
+    const currentStream = videoRef.current?.srcObject || stream;
+    if (currentStream) {
+      currentStream.getTracks().forEach((track) => track.stop());
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
       setStream(null);
     }
     setCameraActive(false);
   };
 
+  const switchCamera = async () => {
+    const nextMode = cameraMode === 'environment' ? 'user' : 'environment';
+    stopCamera();
+    setCameraMode(nextMode);
+    await startCamera(nextMode);
+  };
+
   useEffect(() => {
-    // Discover devices when component mounts
+    // Discover devices once on mount
     discoverDevices();
     return () => {
       stopCamera();
     };
-  }, [stream]);
+  }, []);
 
   const capturePhoto = async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     try {
-      // Ensure we have coordinates before capture
-      let loc = { lat: 0, lng: 0, accuracy: 0, address: 'Unknown Location' };
-      try {
-        const fetched = await getPosition();
-        loc = fetched;
-      } catch (err) {
-        console.warn('Could not get precise location, using fallbacks:', err);
-      }
-
+      const captureTimestamp = new Date();
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
@@ -117,62 +129,67 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
 
-      // Draw the video frame to canvas
+      // Capture the current frame first
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      stopCamera();
+
+      // Then gather metadata after capture
+      let loc = { lat: 0, lng: 0, accuracy: 0, address: 'Unknown Location' };
+      try {
+        const fetched = await getPosition();
+        loc = fetched;
+      } catch (err) {
+        console.warn('Could not get precise location after capture:', err);
+      }
+
+      const browserDetails = navigator.userAgent || 'Unknown Browser';
+      const deviceDetails = {
+        platform: navigator.platform || 'Unknown Platform',
+        vendor: navigator.vendor || 'Unknown Vendor',
+        product: navigator.product || 'Unknown Product',
+        hardwareConcurrency: navigator.hardwareConcurrency || 'Unknown',
+        maxTouchPoints: navigator.maxTouchPoints || 'Unknown',
+      };
+
+      const timestamp = captureTimestamp.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
 
       // Add semi-transparent overlay banner at the bottom (20% of canvas height)
       const bannerHeight = Math.floor(canvas.height * 0.22);
       ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
       ctx.fillRect(0, canvas.height - bannerHeight, canvas.width, bannerHeight);
-
-      // Overlay text formatting
       ctx.fillStyle = '#ffffff';
       ctx.textBaseline = 'top';
-
       const fontSize = Math.max(12, Math.floor(canvas.height * 0.025));
       ctx.font = `600 ${fontSize}px sans-serif`;
-
       const paddingLeft = Math.floor(canvas.width * 0.04);
       let textTop = canvas.height - bannerHeight + Math.floor(bannerHeight * 0.1);
       const lineSpacing = Math.floor(fontSize * 1.3);
 
-      const timestamp = new Date().toLocaleString();
       const employeeDetails = `Employee: ${user?.fullName || 'Unknown'} (${user?.employeeId || 'N/A'})`;
       const coordsText = `Lat: ${loc.lat.toFixed(6)}, Lng: ${loc.lng.toFixed(6)} (Acc: ${Math.round(loc.accuracy)}m)`;
       const addressText = `Addr: ${loc.address || 'Address not resolved'}`;
+      const browserText = browserDetails;
 
-      // Write lines
       ctx.fillText(employeeDetails, paddingLeft, textTop);
       textTop += lineSpacing;
       ctx.fillText(timestamp, paddingLeft, textTop);
       textTop += lineSpacing;
       ctx.fillText(coordsText, paddingLeft, textTop);
       textTop += lineSpacing;
+      ctx.fillText(addressText, paddingLeft, textTop);
+      textTop += lineSpacing;
+      ctx.fillText(`Browser: ${browserText}`, paddingLeft, textTop);
 
-      // Wrap address text if it's too long
-      const maxAddressWidth = canvas.width - (paddingLeft * 2);
-      const words = addressText.split(' ');
-      let currentLine = '';
-
-      for (let n = 0; n < words.length; n++) {
-        let testLine = currentLine + words[n] + ' ';
-        let metrics = ctx.measureText(testLine);
-        if (metrics.width > maxAddressWidth && n > 0) {
-          ctx.fillText(currentLine, paddingLeft, textTop);
-          currentLine = words[n] + ' ';
-          textTop += lineSpacing;
-        } else {
-          currentLine = testLine;
-        }
-      }
-      ctx.fillText(currentLine, paddingLeft, textTop);
-
-      // Generate base64 string
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       setCapturedPhoto(dataUrl);
-      stopCamera();
 
-      // Upload base64 image immediately to server
       setUploading(true);
       const response = await api.post('/upload/base64', {
         image: dataUrl,
@@ -181,9 +198,11 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
           lng: loc.lng,
           accuracy: loc.accuracy,
           address: loc.address,
-          device: navigator.userAgent,
-          capturedAt: new Date(),
-        }
+          capturedAt: captureTimestamp.toISOString(),
+          timestamp,
+          browserDetails,
+          deviceDetails,
+        },
       });
 
       setUploading(false);
@@ -195,9 +214,11 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
           lng: loc.lng,
           accuracy: loc.accuracy,
           address: loc.address,
-          device: navigator.userAgent,
-          capturedAt: new Date(),
-        }
+          capturedAt: captureTimestamp.toISOString(),
+          timestamp,
+          browserDetails,
+          deviceDetails,
+        },
       };
 
       onCapture(uploadData);
@@ -230,23 +251,22 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
         )}
 
         {/* Live Camera Feed */}
-        {cameraActive && !capturedPhoto && (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover"
-          />
-        )}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          controls={false}
+          className={`w-full h-full object-cover ${cameraActive && !capturedPhoto ? '' : 'hidden'}`}
+        />
 
         {/* Idle/Trigger State */}
         {!cameraActive && !capturedPhoto && (
           <div className="flex flex-col items-center gap-2">
             <Camera className="w-12 h-12 text-slate-500" />
             <p className="text-sm font-medium">No live feed active</p>
-            <Button size="sm" onClick={startCamera} icon={Camera}>
-              Start Camera
+            <Button size="sm" onClick={() => startCamera(cameraMode)} icon={Camera}>
+              Capture Live Photo
             </Button>
           </div>
         )}
@@ -296,7 +316,7 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
 
       {/* Control Actions */}
       {/* Camera device selector */}
-      {devices.length > 1 && (
+      {!isMobileBrowser && devices.length > 1 && (
         <div className="flex items-center gap-2 w-full">
           <label className="text-xs text-slate-500">Camera:</label>
           <select
@@ -318,6 +338,9 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
             <Button variant="outline" size="sm" onClick={stopCamera} className="flex-1">
               Cancel
             </Button>
+            <Button variant="outline" size="sm" onClick={switchCamera} className="flex-1" disabled={geoLoading || uploading}>
+              Switch Camera
+            </Button>
             <Button
               size="sm"
               onClick={capturePhoto}
@@ -330,7 +353,7 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
           </>
         )}
         {capturedPhoto && (
-          <Button variant="outline" size="sm" onClick={startCamera} icon={Camera} className="w-full">
+          <Button variant="outline" size="sm" onClick={() => startCamera(cameraMode)} icon={Camera} className="w-full">
             Recapture Photo
           </Button>
         )}

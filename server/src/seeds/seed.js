@@ -11,11 +11,16 @@ const Notification = require('../models/Notification');
 
 // ── Helper: generate a unique TXN id ────────────────────────────
 let txnCounter = 0;
+const initTxnCounter = async () => {
+  const existing = await Transaction.countDocuments();
+  txnCounter = existing;
+};
 const makeTxnId = () => {
   txnCounter += 1;
   const now = new Date();
   const d = now.toISOString().slice(0, 10).replace(/-/g, '');
-  return `TXN-${d}-${String(txnCounter).padStart(6, '0')}`;
+  const rand = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `TXN-${d}-${String(txnCounter).padStart(6, '0')}-${rand}`;
 };
 
 // ── Helper: random pick ─────────────────────────────────────────
@@ -152,11 +157,11 @@ const seedAll = async () => {
     console.log('\n── Seeding Employees ──\n');
 
     const sampleEmployees = [
-      { employeeId: 'EMP001', fullName: 'Abhay Sharma', email: 'abhay@mms.com', phone: '9876543210', role: 'employee' },
-      { employeeId: 'EMP002', fullName: 'Ayush Patel', email: 'ayush@mms.com', phone: '9876543211', role: 'employee' },
-      { employeeId: 'EMP003', fullName: 'Amit Kumar', email: 'amit@mms.com', phone: '9876543212', role: 'employee' },
-      { employeeId: 'EMP004', fullName: 'Shreyas Desai', email: 'shreyas@mms.com', phone: '9876543213', role: 'employee' },
-      { employeeId: 'EMP005', fullName: 'Vikram Singh', email: 'vikram@mms.com', phone: '9876543214', role: 'employee' },
+      { employeeId: 'EMP001', fullName: 'Abhay Mudgal', email: 'abhay@mms.com', phone: '9876543210', role: 'employee' },
+      { employeeId: 'EMP002', fullName: 'Ayush Patil', email: 'ayush@mms.com', phone: '9876543211', role: 'employee' },
+      { employeeId: 'EMP003', fullName: 'Prathmesh Joshi', email: 'prathmesh@mms.com', phone: '9876543212', role: 'employee' },
+      { employeeId: 'EMP004', fullName: 'Shreyas Kadam', email: 'shreyas@mms.com', phone: '9876543213', role: 'employee' },
+      { employeeId: 'EMP005', fullName: 'Sanket Karande', email: 'sanket@mms.com', phone: '9876543214', role: 'employee' },
     ];
 
     const empDocs = [];
@@ -194,6 +199,8 @@ const seedAll = async () => {
     //  SEED TRANSACTIONS – 7+ per employee (diverse statuses/types)
     // ══════════════════════════════════════════════════════════════
     console.log('\n── Seeding Transactions ──\n');
+
+    await initTxnCounter();
 
     const docTypes = ['DC', 'RDC', 'Invoice', 'Emergency Send'];
     const statuses = ['pending', 'accepted', 'rejected', 'completed', 'pending', 'accepted', 'pending'];

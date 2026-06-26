@@ -42,24 +42,28 @@ const uploadBase64 = async (req, res) => {
     if (useMock) {
       // Decode base64 image data
       // e.g. "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
-      const matches = image.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      const matches = image && image.match && image.match(/^data:([A-Za-z\-+\/]+);base64,(.+)$/);
       let buffer;
       let extension = 'jpg';
-      
+
       if (matches && matches.length === 3) {
+        // Proper data URI
         buffer = Buffer.from(matches[2], 'base64');
         const mimeType = matches[1];
         if (mimeType.includes('png')) extension = 'png';
-      } else {
-        // Fallback if not a data URI format, just standard base64 string
+      } else if (/^[A-Za-z0-9+/=\r\n]+$/.test(image)) {
+        // Plain base64 string
         buffer = Buffer.from(image, 'base64');
+      } else {
+        // Invalid data — return error instead of writing malformed file
+        return res.status(400).json({ message: 'Invalid base64 image data provided.' });
       }
 
       const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
       const uploadPath = path.join(__dirname, '../../uploads', filename);
-      
+
       await fs.promises.writeFile(uploadPath, buffer);
-      
+
       const port = process.env.PORT || 5000;
       return res.json({
         url: `http://localhost:${port}/uploads/${filename}`,
@@ -85,24 +89,26 @@ const uploadBase64 = async (req, res) => {
       });
     } catch (cloudinaryErr) {
       console.warn('⚠️ Cloudinary base64 upload failed. Falling back to local storage:', cloudinaryErr.message);
-      
-      const matches = image.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-      let buffer;
-      let extension = 'jpg';
-      
-      if (matches && matches.length === 3) {
-        buffer = Buffer.from(matches[2], 'base64');
-        const mimeType = matches[1];
-        if (mimeType.includes('png')) extension = 'png';
+
+      const matches2 = image && image.match && image.match(/^data:([A-Za-z\-+\/]+);base64,(.+)$/);
+      let buffer2;
+      let extension2 = 'jpg';
+
+      if (matches2 && matches2.length === 3) {
+        buffer2 = Buffer.from(matches2[2], 'base64');
+        const mimeType = matches2[1];
+        if (mimeType.includes('png')) extension2 = 'png';
+      } else if (/^[A-Za-z0-9+/=\r\n]+$/.test(image)) {
+        buffer2 = Buffer.from(image, 'base64');
       } else {
-        buffer = Buffer.from(image, 'base64');
+        return res.status(400).json({ message: 'Invalid base64 image data provided.' });
       }
 
-      const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
+      const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension2}`;
       const uploadPath = path.join(__dirname, '../../uploads', filename);
-      
-      await fs.promises.writeFile(uploadPath, buffer);
-      
+
+      await fs.promises.writeFile(uploadPath, buffer2);
+
       const port = process.env.PORT || 5000;
       res.json({
         url: `http://localhost:${port}/uploads/${filename}`,
