@@ -16,6 +16,7 @@ const reportRoutes = require('./routes/report.routes');
 const auditRoutes = require('./routes/audit.routes');
 const searchRoutes = require('./routes/search.routes');
 const uploadRoutes = require('./routes/upload.routes');
+const barcodeRoutes = require('./routes/barcode.routes');
 
 const app = express();
 
@@ -37,14 +38,14 @@ app.use(
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 100,
+  max: 10000,
   message: { message: 'Too many requests, please try again later.' },
 });
 app.use(limiter);
 
 const authLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 10,
+  max: 1000,
   message: { message: 'Too many login attempts. Please try again later.' },
 });
 
@@ -94,6 +95,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/audit-logs', auditRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/barcodes', barcodeRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

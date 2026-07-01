@@ -1,6 +1,9 @@
 const Transaction = require('../models/Transaction');
 const Notification = require('../models/Notification');
 const ActivityLog = require('../models/ActivityLog');
+const Barcode = require('../models/Barcode');
+const BarcodeChat = require('../models/BarcodeChat');
+const User = require('../models/User');
 const { createAuditLog } = require('../middleware/audit.middleware');
 const { emitToUser } = require('../config/socket');
 const { uploadToCloudinary } = require('../config/cloudinary');
@@ -124,29 +127,62 @@ const createTransaction = async (req, res) => {
       approvalScreenshot,
       senderGeo,
       senderDevice,
+      priority,
+      dueDate,
+      costCenter,
+      dcType,
     } = req.body;
 
-    // Normalize materials into schema shape
-    const processedMaterials = (materials || []).map((m) => ({
-      name: m.name || '',
-      description: m.description || '',
-      quantity: Number(m.quantity || m.qty || 0),
-      qty: Number(m.quantity || m.qty || 0),
-      unit: m.unit || 'Nos',
-      price: Number(m.price || 0),
-      barcode: m.barcode || '',
-      total: Number(m.price || 0) * Number(m.quantity || m.qty || 0),
-      photos: m.photos || [] // Include material photos
-    }));
+    const processedMaterials = (materials || []).map((m) => {
+      const barcodeStr = Array.isArray(m.barcodes) ? (m.barcodes[0] || '') : (m.barcode || '');
+      return {
+        name: m.name || '',
+        description: m.description || '',
+        quantity: Number(m.quantity || m.qty || 0),
+        qty: Number(m.quantity || m.qty || 0),
+        unit: m.unit || 'Nos',
+        price: Number(m.price || 0),
+        barcode: barcodeStr,
+        total: Number(m.price || 0) * Number(m.quantity || m.qty || 0),
+        photos: m.photos || []
+      };
+    });
 
-    for (let i = 0; i < processedMaterials.length; i++) {
-      if (!processedMaterials[i].barcode || !processedMaterials[i].barcode.trim()) {
-        return res.status(400).json({ message: `Material ${i + 1} barcode is required.` });
+    const barcodeStrings = [];
+    for (let i = 0; i < materials.length; i++) {
+      const m = materials[i];
+      const barcodes = m.barcodes || (m.barcode ? [m.barcode] : []);
+      if (barcodes.length === 0 || barcodes.some(b => !b.trim())) {
+        return res.status(400).json({ message: `Material ${i + 1} requires barcode scan for each unit.` });
       }
+      barcodeStrings.push(...barcodes);
+    }
+
+    const existingActive = await Barcode.find({
+      barcode: { $in: barcodeStrings },
+      status: 'Active'
+    });
+    if (existingActive.length > 0) {
+      return res.status(400).json({
+        message: `The following barcodes are already active in the system: ${existingActive.map(b => b.barcode).join(', ')}`
+      });
     }
 
     const grandTotal = processedMaterials.reduce((sum, m) => sum + (m.total || 0), 0);
     const isOther = receiver === 'other';
+
+    let crossDepartment = false;
+    if (!isOther && receiver) {
+      const receiverUser = await User.findById(receiver);
+      if (receiverUser && req.user.department) {
+        if (receiverUser.department.toString() !== req.user.department.toString()) {
+          crossDepartment = true;
+        }
+      }
+    }
+
+    const isTeamLead = req.user.role === 'team_lead';
+    const status = isOther ? 'completed' : 'submitted';
 
     const transaction = new Transaction({
       sender: req.user._id,
@@ -161,22 +197,24 @@ const createTransaction = async (req, res) => {
       senderGeo,
       senderDevice,
       photos: photos || [],
-      documentPhotos: req.body.documentPhotos || [], // Include document photos
+      documentPhotos: req.body.documentPhotos || [],
       approvalScreenshot: approvalScreenshot || '',
       grandTotal,
-      status: isOther ? 'completed' : 'pending',
+      priority: priority || 'medium',
+      dueDate,
+      costCenter,
+      crossDepartment,
+      dcType: dcType || 'DC-Internal',
+      status,
     });
 
-    // Ensure transactionId is unique; retry on duplicate key collisions
     const generateTxnId = () => {
       const now = new Date();
       const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-      // Random 6-digit suffix to reduce collision probability
       const rand = Math.floor(Math.random() * 900000) + 100000;
       return `TXN-${dateStr}-${String(rand).padStart(6, '0')}`;
     };
 
-    // If model pre-save would generate an ID, we override with our deterministic one to avoid duplicates
     transaction.transactionId = generateTxnId();
 
     let saved = null;
@@ -186,7 +224,6 @@ const createTransaction = async (req, res) => {
       try {
         saved = await transaction.save();
       } catch (err) {
-        // Duplicate transactionId -> regenerate and retry
         if (err && err.code === 11000 && err.keyPattern && err.keyPattern.transactionId) {
           transaction.transactionId = generateTxnId();
           continue;
@@ -194,27 +231,56 @@ const createTransaction = async (req, res) => {
         throw err;
       }
     }
+
     if (!saved) throw new Error('Failed to create transaction after multiple attempts');
 
-    if (!isOther && receiver) {
-      // Create notification for receiver
-      const notification = await Notification.create({
-        recipient: receiver,
-        type: 'assigned',
-        title: 'New Material Request',
-        message: `${req.user.fullName} has sent you a material request (${transaction.transactionId})`,
-        relatedTransaction: transaction._id,
-      });
-
-      // Real-time notification
-      emitToUser(receiver, 'notification:new', notification);
+    for (const m of materials) {
+      const barcodes = m.barcodes || (m.barcode ? [m.barcode] : []);
+      for (const bc of barcodes) {
+        const barcodeDoc = new Barcode({
+          barcode: bc,
+          transactionId: transaction.transactionId,
+          materialName: m.name,
+          status: 'Active',
+          owner: req.user._id,
+          gps: senderGeo,
+          history: [
+            {
+              action: 'Created',
+              user: req.user._id,
+              remarks: `Registered in transaction request ${transaction.transactionId}`,
+              gps: senderGeo
+            }
+          ]
+        });
+        await barcodeDoc.save();
+      }
     }
 
-    // Activity log
+    if (!isOther && receiver) {
+      let notifyUsers = [];
+      if (isTeamLead || crossDepartment) {
+        notifyUsers = await User.find({ role: 'department_admin', departmentAdminType: 'management' });
+      } else {
+        notifyUsers = await User.find({ role: 'team_lead', department: req.user.department });
+      }
+
+      for (const recipientUser of notifyUsers) {
+        const notification = await Notification.create({
+          recipient: recipientUser._id,
+          type: 'assigned',
+          title: 'Approval Required',
+          message: `${req.user.fullName} submitted transaction ${transaction.transactionId} requiring your approval.`,
+          relatedTransaction: transaction._id,
+        });
+        emitToUser(recipientUser._id.toString(), 'notification:new', notification);
+      }
+    }
+
     await ActivityLog.create({
       user: req.user._id,
       action: 'Created transaction',
-      details: `Transaction ${transaction.transactionId} created and sent to receiver`,
+      details: `Transaction ${transaction.transactionId} created and approvals initiated`,
       entityType: 'Transaction',
       entityId: transaction.transactionId,
     });
@@ -235,11 +301,6 @@ const createTransaction = async (req, res) => {
     res.status(201).json({ data: populated, message: 'Transaction created successfully.' });
   } catch (error) {
     console.error('Create transaction error:', error);
-    // Return mongoose validation errors with 400 to help client diagnose issues
-    if (error.name === 'ValidationError') {
-      const messages = Object.values(error.errors).map((e) => e.message);
-      return res.status(400).json({ message: 'Validation failed.', errors: messages });
-    }
     res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
@@ -352,60 +413,98 @@ const deleteTransaction = async (req, res) => {
 // PATCH /api/transactions/:id/accept
 const acceptTransaction = async (req, res) => {
   try {
+    const { remarks } = req.body;
     const transaction = await Transaction.findById(req.params.id);
     if (!transaction) {
       return res.status(404).json({ message: 'Transaction not found.' });
     }
 
-    if (transaction.receiver.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Only the receiver can accept this transaction.' });
-    }
-
-    if (transaction.status !== 'pending') {
-      return res.status(400).json({ message: 'Only pending transactions can be accepted.' });
-    }
-
     const oldData = transaction.toObject();
-    transaction.status = 'accepted';
+
+    if (req.user.role === 'team_lead') {
+      if (transaction.status !== 'submitted') {
+        return res.status(400).json({ message: 'Transaction is not awaiting Team Lead approval.' });
+      }
+
+      transaction.approvalChain.push({
+        user: req.user._id,
+        role: 'team_lead',
+        action: 'approved',
+        remarks: remarks || 'Team Lead Approved',
+        timestamp: new Date()
+      });
+
+      const senderUser = await User.findById(transaction.sender);
+      const reqsMgt = (senderUser && senderUser.role === 'team_lead') || transaction.crossDepartment;
+
+      if (reqsMgt) {
+        transaction.status = 'tl_approved';
+        const managers = await User.find({ role: 'department_admin', departmentAdminType: 'management' });
+        for (const manager of managers) {
+          const notification = await Notification.create({
+            recipient: manager._id,
+            type: 'assigned',
+            title: 'Management Approval Required',
+            message: `Transaction ${transaction.transactionId} approved by Team Lead; awaits Management approval.`,
+            relatedTransaction: transaction._id,
+          });
+          emitToUser(manager._id.toString(), 'notification:new', notification);
+        }
+      } else {
+        transaction.status = 'ready_for_dispatch';
+        const storeAdmins = await User.find({ role: 'department_admin', departmentAdminType: 'store' });
+        for (const store of storeAdmins) {
+          const notification = await Notification.create({
+            recipient: store._id,
+            type: 'assigned',
+            title: 'Material Sourcing Pending',
+            message: `Transaction ${transaction.transactionId} approved and ready for store action.`,
+            relatedTransaction: transaction._id,
+          });
+          emitToUser(store._id.toString(), 'notification:new', notification);
+        }
+      }
+
+    } else if (req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management')) {
+      if (!['submitted', 'tl_approved'].includes(transaction.status)) {
+        return res.status(400).json({ message: 'Transaction does not require management approval.' });
+      }
+
+      transaction.approvalChain.push({
+        user: req.user._id,
+        role: 'management',
+        action: 'approved',
+        remarks: remarks || 'Management Approved',
+        timestamp: new Date()
+      });
+
+      transaction.status = 'ready_for_dispatch';
+      
+      const storeAdmins = await User.find({ role: 'department_admin', departmentAdminType: 'store' });
+      for (const store of storeAdmins) {
+        const notification = await Notification.create({
+          recipient: store._id,
+          type: 'assigned',
+          title: 'Material Sourcing Pending',
+          message: `Transaction ${transaction.transactionId} approved by Management and ready for store action.`,
+          relatedTransaction: transaction._id,
+        });
+        emitToUser(store._id.toString(), 'notification:new', notification);
+      }
+    } else {
+      return res.status(403).json({ message: 'You do not have approval permissions.' });
+    }
+
     transaction.versions.push({
       data: oldData,
       modifiedBy: req.user._id,
-      action: 'accept',
+      action: 'approve',
     });
 
     await transaction.save();
-
-    // Notify sender
-    const notification = await Notification.create({
-      recipient: transaction.sender,
-      type: 'accepted',
-      title: 'Transaction Accepted',
-      message: `${req.user.fullName} has accepted transaction ${transaction.transactionId}`,
-      relatedTransaction: transaction._id,
-    });
-
-    emitToUser(transaction.sender.toString(), 'notification:new', notification);
-
-    await ActivityLog.create({
-      user: req.user._id,
-      action: 'Accepted transaction',
-      details: `Transaction ${transaction.transactionId} accepted`,
-      entityType: 'Transaction',
-      entityId: transaction.transactionId,
-    });
-
-    await createAuditLog({
-      user: req.user._id,
-      action: 'approve',
-      entity: 'Transaction',
-      entityId: transaction.transactionId,
-      oldData,
-      newData: transaction.toObject(),
-      req,
-    });
-
-    res.json({ data: transaction, message: 'Transaction accepted.' });
+    res.json({ data: transaction, message: 'Transaction approved successfully.' });
   } catch (error) {
+    console.error('Accept transaction error:', error);
     res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
@@ -419,17 +518,26 @@ const rejectTransaction = async (req, res) => {
       return res.status(404).json({ message: 'Transaction not found.' });
     }
 
-    if (transaction.receiver.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Only the receiver can reject this transaction.' });
-    }
+    const canReject = req.user.role === 'super_admin' || 
+      req.user.role === 'team_lead' || 
+      (req.user.role === 'department_admin' && ['management', 'store'].includes(req.user.departmentAdminType));
 
-    if (transaction.status !== 'pending') {
-      return res.status(400).json({ message: 'Only pending transactions can be rejected.' });
+    if (!canReject) {
+      return res.status(403).json({ message: 'Access denied. You cannot reject this transaction.' });
     }
 
     const oldData = transaction.toObject();
     transaction.status = 'rejected';
-    transaction.rejectionReason = rejectionReason || '';
+    transaction.rejectionReason = rejectionReason || 'Rejected by Approver';
+    
+    transaction.approvalChain.push({
+      user: req.user._id,
+      role: req.user.role,
+      action: 'rejected',
+      remarks: rejectionReason || 'Rejected',
+      timestamp: new Date()
+    });
+
     transaction.versions.push({
       data: oldData,
       modifiedBy: req.user._id,
@@ -438,37 +546,293 @@ const rejectTransaction = async (req, res) => {
 
     await transaction.save();
 
-    // Notify sender
     const notification = await Notification.create({
       recipient: transaction.sender,
       type: 'rejected',
       title: 'Transaction Rejected',
-      message: `${req.user.fullName} has rejected transaction ${transaction.transactionId}. Reason: ${rejectionReason}`,
+      message: `Transaction ${transaction.transactionId} was rejected. Reason: ${rejectionReason}`,
       relatedTransaction: transaction._id,
     });
-
     emitToUser(transaction.sender.toString(), 'notification:new', notification);
+
+    res.json({ data: transaction, message: 'Transaction rejected successfully.' });
+  } catch (error) {
+    console.error('Reject transaction error:', error);
+    res.status(500).json({ message: 'Server error.', error: error.message });
+  }
+};
+
+// PATCH /api/transactions/:id/store-action
+const storeActionTransaction = async (req, res) => {
+  try {
+    const { actionType, handlerId, remarks } = req.body;
+    const transaction = await Transaction.findById(req.params.id);
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction not found.' });
+    }
+
+    const oldData = transaction.toObject();
+
+    if (actionType === 'accept') {
+      transaction.status = 'store_accepted';
+    } else if (actionType === 'assign_handler') {
+      if (!handlerId) {
+        return res.status(400).json({ message: 'Handler ID is required.' });
+      }
+      transaction.status = 'handler_assigned';
+      transaction.receiver = handlerId;
+      
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { 
+          $set: { owner: handlerId },
+          $push: { 
+            history: { 
+              action: 'Handler Assigned', 
+              user: req.user._id, 
+              remarks: `Assigned to handler` 
+            } 
+          }
+        }
+      );
+
+      const notification = await Notification.create({
+        recipient: handlerId,
+        type: 'assigned',
+        title: 'Delivery Job Assigned',
+        message: `You are assigned to deliver materials for ${transaction.transactionId}.`,
+        relatedTransaction: transaction._id,
+      });
+      emitToUser(handlerId, 'notification:new', notification);
+
+    } else if (actionType === 'direct_dispatch') {
+      transaction.status = 'dispatched';
+      
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { 
+          $push: { 
+            history: { 
+              action: 'Store Dispatched', 
+              user: req.user._id, 
+              remarks: `Materials directly dispatched by Store` 
+            } 
+          }
+        }
+      );
+
+      const notification = await Notification.create({
+        recipient: transaction.sender,
+        type: 'assigned',
+        title: 'Materials Dispatched',
+        message: `Store has dispatched materials for ${transaction.transactionId}.`,
+        relatedTransaction: transaction._id,
+      });
+      emitToUser(transaction.sender.toString(), 'notification:new', notification);
+    }
+
+    transaction.versions.push({
+      data: oldData,
+      modifiedBy: req.user._id,
+      action: 'store_action',
+    });
+
+    await transaction.save();
+    res.json({ data: transaction, message: 'Store action completed.' });
+  } catch (error) {
+    console.error('Store action error:', error);
+    res.status(500).json({ message: 'Server error.', error: error.message });
+  }
+};
+
+// PATCH /api/transactions/:id/handler-action
+const handlerActionTransaction = async (req, res) => {
+  try {
+    const { actionType, newHandlerId, remarks } = req.body;
+    const transaction = await Transaction.findById(req.params.id);
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction not found.' });
+    }
+
+    const oldData = transaction.toObject();
+
+    if (actionType === 'accept') {
+      // confirm acceptance
+    } else if (actionType === 'transfer') {
+      if (!newHandlerId) {
+        return res.status(400).json({ message: 'New handler ID is required.' });
+      }
+      transaction.receiver = newHandlerId;
+      
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { 
+          $set: { owner: newHandlerId },
+          $push: { 
+            history: { 
+              action: 'Handler Transferred', 
+              user: req.user._id, 
+              remarks: `Transferred to new handler` 
+            } 
+          }
+        }
+      );
+
+      const notification = await Notification.create({
+        recipient: newHandlerId,
+        type: 'assigned',
+        title: 'Delivery Job Transferred',
+        message: `You are the new assigned handler for ${transaction.transactionId}.`,
+        relatedTransaction: transaction._id,
+      });
+      emitToUser(newHandlerId, 'notification:new', notification);
+    } else if (actionType === 'dispatch') {
+      transaction.status = 'dispatched';
+
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { 
+          $push: { 
+            history: { 
+              action: 'Dispatched', 
+              user: req.user._id, 
+              remarks: `Materials in transit` 
+            } 
+          }
+        }
+      );
+
+      const notification = await Notification.create({
+        recipient: transaction.sender,
+        type: 'assigned',
+        title: 'Materials Dispatched',
+        message: `Handler has dispatched materials for ${transaction.transactionId}.`,
+        relatedTransaction: transaction._id,
+      });
+      emitToUser(transaction.sender.toString(), 'notification:new', notification);
+    }
+
+    transaction.versions.push({
+      data: oldData,
+      modifiedBy: req.user._id,
+      action: 'handler_action',
+    });
+
+    await transaction.save();
+    res.json({ data: transaction, message: 'Handler action completed.' });
+  } catch (error) {
+    console.error('Handler action error:', error);
+    res.status(500).json({ message: 'Server error.', error: error.message });
+  }
+};
+
+// PATCH /api/transactions/:id/receive
+const receiveTransaction = async (req, res) => {
+  try {
+    const { receiverGeo, materialCondition, remarks, photo } = req.body;
+    const transaction = await Transaction.findById(req.params.id);
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction not found.' });
+    }
+
+    const oldData = transaction.toObject();
+    transaction.status = 'received';
+    transaction.receiver = transaction.sender;
+
+    const originalRequester = transaction.sender;
+
+    await Barcode.updateMany(
+      { transactionId: transaction.transactionId },
+      {
+        $set: { 
+          owner: originalRequester,
+          gps: receiverGeo
+        },
+        $push: {
+          history: {
+            action: 'Received',
+            user: originalRequester,
+            remarks: remarks || `Received. Condition: ${materialCondition || 'Good'}`,
+            gps: receiverGeo,
+            photo: photo || ''
+          }
+        }
+      }
+    );
+
+    if (photo) {
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        {
+          $push: {
+            photos: {
+              url: photo,
+              lat: receiverGeo?.lat,
+              lng: receiverGeo?.lng,
+              address: receiverGeo?.address
+            }
+          }
+        }
+      );
+    }
+
+    transaction.versions.push({
+      data: oldData,
+      modifiedBy: req.user._id,
+      action: 'receive',
+    });
+
+    await transaction.save();
 
     await ActivityLog.create({
       user: req.user._id,
-      action: 'Rejected transaction',
-      details: `Transaction ${transaction.transactionId} rejected. Reason: ${rejectionReason}`,
+      action: 'Received materials',
+      details: `Materials for transaction ${transaction.transactionId} received`,
       entityType: 'Transaction',
       entityId: transaction.transactionId,
     });
 
-    await createAuditLog({
-      user: req.user._id,
-      action: 'reject',
-      entity: 'Transaction',
-      entityId: transaction.transactionId,
-      oldData,
-      newData: transaction.toObject(),
-      req,
+    res.json({ data: transaction, message: 'Materials received and barcode ownership established.' });
+  } catch (error) {
+    console.error('Receive transaction error:', error);
+    res.status(500).json({ message: 'Server error.', error: error.message });
+  }
+};
+
+// POST /api/transactions/:id/invoice-match
+const invoiceMatchTransaction = async (req, res) => {
+  try {
+    const { invoiceNumber, invoiceDate, invoiceTotal } = req.body;
+    const transaction = await Transaction.findById(req.params.id);
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction not found.' });
+    }
+
+    const oldData = transaction.toObject();
+    const isMatched = Math.abs(transaction.grandTotal - Number(invoiceTotal)) < 0.01;
+
+    transaction.invoiceNumber = invoiceNumber;
+    transaction.invoiceDate = invoiceDate;
+    transaction.invoiceTotal = Number(invoiceTotal);
+    transaction.invoiceMatchStatus = isMatched ? 'matched' : 'discrepant';
+    transaction.rdcStatus = isMatched ? 'matched' : 'discrepant';
+
+    transaction.versions.push({
+      data: oldData,
+      modifiedBy: req.user._id,
+      action: 'invoice_match',
     });
 
-    res.json({ data: transaction, message: 'Transaction rejected.' });
+    await transaction.save();
+
+    res.json({
+      data: transaction,
+      message: isMatched 
+        ? 'RDC 3-Way match successful.' 
+        : 'Discrepancy detected between invoice total and expected grand total.'
+    });
   } catch (error) {
+    console.error('Invoice matching error:', error);
     res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
@@ -490,21 +854,23 @@ const resubmitTransaction = async (req, res) => {
     }
 
     const oldData = transaction.toObject();
-
-    // Apply updates from body
     const { materials, ...updateData } = req.body;
+    
     if (materials) {
-      const processedMaterials = (materials || []).map((m) => ({
-        name: m.name || '',
-        description: m.description || '',
-        quantity: Number(m.quantity || m.qty || 0),
-        qty: Number(m.quantity || m.qty || 0),
-        unit: m.unit || 'Nos',
-        price: Number(m.price || 0),
-        barcode: m.barcode || '',
-        total: (Number(m.quantity || m.qty || 0)) * (Number(m.price || 0)),
-        photos: m.photos || [] // Include material photos on resubmit
-      }));
+      const processedMaterials = (materials || []).map((m) => {
+        const barcodeStr = Array.isArray(m.barcodes) ? (m.barcodes[0] || '') : (m.barcode || '');
+        return {
+          name: m.name || '',
+          description: m.description || '',
+          quantity: Number(m.quantity || m.qty || 0),
+          qty: Number(m.quantity || m.qty || 0),
+          unit: m.unit || 'Nos',
+          price: Number(m.price || 0),
+          barcode: barcodeStr,
+          total: (Number(m.quantity || m.qty || 0)) * (Number(m.price || 0)),
+          photos: m.photos || []
+        };
+      });
 
       for (let i = 0; i < processedMaterials.length; i++) {
         if (!processedMaterials[i].barcode || !processedMaterials[i].barcode.trim()) {
@@ -515,13 +881,14 @@ const resubmitTransaction = async (req, res) => {
       transaction.materials = processedMaterials;
       transaction.grandTotal = processedMaterials.reduce((sum, m) => sum + m.total, 0);
     }
+    
     Object.keys(updateData).forEach((key) => {
       if (updateData[key] !== undefined) {
         transaction[key] = updateData[key];
       }
     });
 
-    transaction.status = 'pending';
+    transaction.status = 'submitted';
     transaction.rejectionReason = '';
     transaction.versions.push({
       data: oldData,
@@ -530,28 +897,6 @@ const resubmitTransaction = async (req, res) => {
     });
 
     await transaction.save();
-
-    // Notify receiver
-    const notification = await Notification.create({
-      recipient: transaction.receiver,
-      type: 'resubmitted',
-      title: 'Transaction Resubmitted',
-      message: `${req.user.fullName} has resubmitted transaction ${transaction.transactionId}`,
-      relatedTransaction: transaction._id,
-    });
-
-    emitToUser(transaction.receiver.toString(), 'notification:new', notification);
-
-    await createAuditLog({
-      user: req.user._id,
-      action: 'resubmit',
-      entity: 'Transaction',
-      entityId: transaction.transactionId,
-      oldData,
-      newData: transaction.toObject(),
-      req,
-    });
-
     res.json({ data: transaction, message: 'Transaction resubmitted.' });
   } catch (error) {
     res.status(500).json({ message: 'Server error.', error: error.message });
@@ -790,4 +1135,8 @@ module.exports = {
   resubmitTransaction,
   exportSingleTransaction,
   exportSingleTransactionPDF,
+  storeActionTransaction,
+  handlerActionTransaction,
+  receiveTransaction,
+  invoiceMatchTransaction,
 };

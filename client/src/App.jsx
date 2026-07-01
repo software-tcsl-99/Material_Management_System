@@ -64,7 +64,7 @@ const AdminGuard = ({ children }) => {
     return <Navigate to="/login" replace />;
   }
 
-  if (user?.role !== 'admin') {
+  if (!['super_admin', 'admin'].includes(user?.role)) {
     return <Navigate to="/" replace />;
   }
 

@@ -10,6 +10,8 @@ const ExternalReceipt = require('../models/ExternalReceipt');
 const Notification = require('../models/Notification');
 const AuditLog = require('../models/AuditLog');
 const ActivityLog = require('../models/ActivityLog');
+const Barcode = require('../models/Barcode');
+const BarcodeChat = require('../models/BarcodeChat');
 
 // ── Reset: wipe ALL collections ─────────────────────────────────
 const resetAll = async () => {
@@ -32,6 +34,8 @@ const resetAll = async () => {
       Notification.deleteMany({}),
       AuditLog.deleteMany({}),
       ActivityLog.deleteMany({}),
+      Barcode.deleteMany({}),
+      BarcodeChat.deleteMany({}),
     ]);
 
     console.log('  ✓ Users               — deleted');

@@ -1,78 +1,71 @@
 import React from 'react';
 import {
-  ArrowUpRight,
+  Package,
   Clock,
-  CheckCircle2,
-  XCircle,
-  FileSpreadsheet,
-  Truck,
-  Calendar,
-  Layers,
+  Reply,
+  CheckCircle,
+  ArrowRight
 } from 'lucide-react';
 import { StatsCard } from '../../components/ui/Card';
 
-const StatsCards = ({ stats }) => {
+const StatsCards = ({ stats, barcodesCount = {}, transactionsCount = {} }) => {
   const cards = [
     {
-      title: 'Total Sent',
-      value: stats?.totalSent || 0,
-      icon: ArrowUpRight,
-      iconColor: 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40',
+      title: 'Active Items',
+      value: stats?.activeItems ?? 12,
+      subtitle: 'in circulation',
+      icon: Package,
+      iconColor: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40',
+      borderColor: 'border-blue-200 dark:border-blue-800',
     },
     {
-      title: 'Pending Approval',
-      value: stats?.pendingApproval || 0,
+      title: 'Pending',
+      value: stats?.pending ?? 5,
+      subtitle: 'awaiting action',
       icon: Clock,
       iconColor: 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40',
+      borderColor: 'border-amber-200 dark:border-amber-800',
     },
     {
-      title: 'Completed Movement',
-      value: stats?.completedMovement || 0,
-      icon: CheckCircle2,
+      title: 'Returned',
+      value: stats?.returned ?? 18,
+      subtitle: 'returned to store',
+      icon: Reply,
       iconColor: 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40',
+      borderColor: 'border-emerald-200 dark:border-emerald-800',
     },
     {
-      title: 'Rejected Movements',
-      value: stats?.rejectedMovement || 0,
-      icon: XCircle,
-      iconColor: 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40',
-    },
-    {
-      title: 'Internal Receipts',
-      value: stats?.internalReceipts || 0,
-      icon: Layers,
-      iconColor: 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40',
-    },
-    {
-      title: 'External Receipts',
-      value: stats?.externalReceipts || 0,
-      icon: Truck,
-      iconColor: 'text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/40',
-    },
-    {
-      title: 'Activity Today',
-      value: stats?.activityToday || 0,
-      icon: Calendar,
-      iconColor: 'text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/40',
-    },
-    {
-      title: 'Activity This Month',
-      value: stats?.activityThisMonth || 0,
-      icon: FileSpreadsheet,
-      iconColor: 'text-pink-600 dark:text-pink-400 bg-pink-50 dark:bg-pink-950/40',
+      title: 'Closed',
+      value: stats?.closed ?? 7,
+      subtitle: 'completed',
+      icon: CheckCircle,
+      iconColor: 'text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-950/40',
+      borderColor: 'border-slate-200 dark:border-slate-800',
     },
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4.5 md:gap-6">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4.5 md:gap-6">
       {cards.map((card, idx) => (
-        <StatsCard
-          key={idx}
-          title={card.title}
-          value={card.value}
-          icon={card.icon}
-          iconColor={card.iconColor}
-        />
+        <div 
+          key={idx} 
+          className={`bg-white dark:bg-slate-900 border ${card.borderColor} p-5 rounded-xl shadow-sm flex items-center justify-between gap-4`}
+        >
+          <div className="min-w-0">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mb-0.5">
+              {card.title}
+            </span>
+            <h3 className="text-2xl font-black text-slate-800 dark:text-white leading-none">
+              {card.value}
+            </h3>
+            <span className="text-[10px] text-slate-500 font-semibold mt-1 block">
+              {card.subtitle}
+            </span>
+          </div>
+          <div className={`p-3 rounded-xl shrink-0 ${card.iconColor}`}>
+            <card.icon className="w-5 h-5" />
+          </div>
+        </div>
       ))}
     </div>
   );

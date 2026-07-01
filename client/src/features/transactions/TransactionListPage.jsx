@@ -1,6 +1,6 @@
-import { ArrowRight, Calendar, Download, Edit2, Eye, Plus, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowRight, Calendar, Download, Edit2, Eye, Plus, Trash2, Search, ArrowLeftRight, CheckCircle, Clock } from 'lucide-react';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import DataTable from '../../components/ui/DataTable';
@@ -12,14 +12,21 @@ import useAuthStore from '../../store/authStore';
 const TransactionListPage = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const typeParam = searchParams.get('type');
+  const allParam = searchParams.get('all') === 'true';
+
   const [loading, setLoading] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
+  // Tab Filtering (All, In Progress, Pending, Completed, Closed)
+  const [activeTab, setActiveTab] = useState('All');
+
   // Filters state
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
   const [docType, setDocType] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -29,22 +36,35 @@ const TransactionListPage = () => {
   const fetchTransactions = async () => {
     setLoading(true);
     try {
+      let statusFilter = '';
+      if (activeTab === 'Pending') statusFilter = 'submitted';
+      else if (activeTab === 'In Progress') statusFilter = 'tl_approved'; // Or multiple progress states
+      else if (activeTab === 'Completed') statusFilter = 'completed';
+      else if (activeTab === 'Closed') statusFilter = 'rejected';
+
       const params = {
         page: currentPage,
         limit: 10,
         search,
-        status,
+        status: statusFilter,
         documentType: docType,
         startDate,
         endDate,
+        // If not looking at all transactions, show only user's transactions
+        sender: (!isAdmin && !allParam) ? user?._id : undefined,
       };
 
       const response = await api.get('/transactions', { params });
-      const data = response.data.data || [];
-      const pages = response.data.pagination?.pages || 1;
+      let data = response.data.data || [];
+
+      // Manual filtering for in-progress statuses if needed
+      if (activeTab === 'In Progress') {
+        // Find any transaction that is in workflow states between submission and completion
+        data = data.filter(t => ['tl_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received'].includes(t.status));
+      }
 
       setTransactions(data || []);
-      setTotalPages(pages || 1);
+      setTotalPages(response.data.pagination?.pages || 1);
     } catch (err) {
       console.error('Error fetching transactions:', err);
     } finally {
@@ -54,20 +74,18 @@ const TransactionListPage = () => {
 
   useEffect(() => {
     fetchTransactions();
-  }, [currentPage, status, docType, startDate, endDate]);
+  }, [currentPage, activeTab, docType, startDate, endDate, allParam, tabParam, typeParam]);
 
   const handleDownloadAll = async () => {
     try {
-      const params = {
-        search,
-        status,
-        documentType: docType,
-        startDate,
-        endDate,
-      };
       const response = await api.get('/reports/export', {
         responseType: 'blob',
-        params,
+        params: {
+          search,
+          documentType: docType,
+          startDate,
+          endDate,
+        },
       });
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
@@ -77,7 +95,7 @@ const TransactionListPage = () => {
       link.click();
       link.remove();
     } catch (err) {
-      console.error('Download all error:', err);
+      console.error('Download error:', err);
     }
   };
 
@@ -88,12 +106,11 @@ const TransactionListPage = () => {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this transaction?')) return;
+    if (!window.confirm('Delete this transaction permanently?')) return;
     try {
       await api.delete(`/transactions/${id}`);
       fetchTransactions();
     } catch (err) {
-      console.error('Delete transaction error:', err);
       alert(err.response?.data?.message || 'Failed to delete transaction');
     }
   };
@@ -102,96 +119,97 @@ const TransactionListPage = () => {
     {
       header: 'Transaction ID',
       cell: (row) => (
-        <span className="font-bold text-indigo-600 dark:text-indigo-400">
+        <span className="font-bold text-blue-600 dark:text-blue-400 font-mono text-xs">
           {row.transactionId}
         </span>
       ),
     },
     {
-      header: 'Doc Type',
+      header: 'Requester',
       cell: (row) => (
         <div className="flex flex-col">
-          <span className="font-semibold text-slate-800 dark:text-slate-200">
-            {row.documentType}
-          </span>
-          <span className="text-[10px] text-slate-500 font-medium truncate max-w-[120px]">
-            No: {row.documentNumber || 'N/A'}
-          </span>
-        </div>
-      ),
-    },
-    {
-      header: 'Sender',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold">{row.sender?.fullName}</span>
-          <span className="text-[10px] text-slate-500 font-medium">{row.sender?.employeeId}</span>
-        </div>
-      ),
-    },
-    {
-      header: 'Receiver',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold">{row.receiver?.fullName || row.otherReceiverName || 'Other'}</span>
-          {row.receiver && <span className="text-[10px] text-slate-500 font-medium">{row.receiver?.employeeId}</span>}
+          <span className="font-extrabold text-slate-800 dark:text-slate-200">{row.sender?.fullName}</span>
+          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{row.sender?.employeeId}</span>
         </div>
       ),
     },
     {
       header: 'Date',
       cell: (row) => (
-        <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+        <span className="text-[11px] text-slate-500 font-semibold">
           {new Date(row.createdAt).toLocaleDateString()}
         </span>
       ),
     },
     {
-      header: 'Grand Total',
+      header: 'Status',
       cell: (row) => (
-        <span className="font-bold text-slate-900 dark:text-white">
-          ₹{(row.grandTotal || 0).toLocaleString()}
-        </span>
+        <Badge variant={row.status === 'rejected' ? 'danger' : row.status === 'completed' ? 'success' : 'primary'}>
+          {row.status.toUpperCase()}
+        </Badge>
       ),
     },
     {
-      header: 'Status',
-      cell: (row) => <Badge>{row.status}</Badge>,
+      header: 'Progress',
+      cell: (row) => {
+        // Calculate progress percentage
+        let progress = 10;
+        if (row.status === 'tl_approved') progress = 30;
+        else if (row.status === 'mgt_approved' || row.status === 'ready_for_dispatch') progress = 45;
+        else if (row.status === 'store_accepted') progress = 60;
+        else if (row.status === 'handler_assigned') progress = 70;
+        else if (row.status === 'dispatched') progress = 85;
+        else if (row.status === 'received') progress = 95;
+        else if (row.status === 'completed') progress = 100;
+        else if (row.status === 'rejected') progress = 100;
+
+        return (
+          <div className="flex items-center gap-2 w-28">
+            <div className="flex-1 bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full ${row.status === 'rejected' ? 'bg-red-500' : 'bg-blue-600'}`} 
+                style={{ width: `${progress}%` }} 
+              />
+            </div>
+            <span className="text-[9px] font-black text-slate-650 dark:text-slate-400 shrink-0">
+              {progress}%
+            </span>
+          </div>
+        );
+      },
     },
     {
       header: 'Actions',
       cell: (row) => {
-        // Can edit/delete if own transaction and status is draft/pending
         const isOwner = row.sender?._id === user?._id || row.sender === user?._id;
-        const canModify = isOwner && ['draft', 'pending'].includes(row.status);
-
+        const canModify = isOwner && ['draft', 'submitted'].includes(row.status);
         return (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <Button
-              size="sm"
+              size="xs"
               variant="ghost"
               onClick={() => navigate(`/transactions/${row._id}`)}
-              className="p-1.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800"
-              title="View Details"
+              className="p-1 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400"
+              title="Open Detail dossier"
             >
               <Eye className="w-4 h-4" />
             </Button>
             {canModify && (
               <>
                 <Button
-                  size="sm"
+                  size="xs"
                   variant="ghost"
                   onClick={() => navigate(`/transactions/edit/${row._id}`)}
-                  className="p-1.5 text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-slate-800"
-                  title="Edit"
+                  className="p-1 text-slate-500 hover:text-amber-500"
+                  title="Modify Challan"
                 >
                   <Edit2 className="w-4 h-4" />
                 </Button>
                 <Button
-                  size="sm"
+                  size="xs"
                   variant="ghost"
                   onClick={() => handleDelete(row._id)}
-                  className="p-1.5 text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-slate-800"
+                  className="p-1 text-slate-500 hover:text-red-500"
                   title="Delete"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -205,15 +223,15 @@ const TransactionListPage = () => {
   ];
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 animate-in fade-in duration-200">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white m-0">
-            Material Movements
+          <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white m-0">
+            {allParam ? 'Enterprise Sourcing Directory' : 'My Transactions dossier'}
           </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Browse and track material transfers across company locations
+          <p className="text-xs text-slate-500 mt-1">
+            Browse and monitor full material logistics loop transactions
           </p>
         </div>
         <div className="flex items-center gap-2 self-start sm:self-center">
@@ -223,7 +241,7 @@ const TransactionListPage = () => {
             onClick={handleDownloadAll}
             icon={Download}
           >
-            Export Report
+            Export Logs
           </Button>
           {!isAdmin && (
             <Button
@@ -231,53 +249,54 @@ const TransactionListPage = () => {
               onClick={() => navigate('/transactions/create')}
               icon={Plus}
             >
-              Send Material
+              Send Request
             </Button>
           )}
         </div>
       </div>
 
-      {/* Filter Options Bar */}
-      <form onSubmit={handleSearchSubmit} className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col gap-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-          {/* Text Search */}
-          <div className="lg:col-span-2">
-            <Input
-              id="search"
-              placeholder="Search by ID, doc number, materials..."
+      {/* Tabs list matching mockup Panel 2 */}
+      <div className="flex border-b border-slate-200 dark:border-slate-850 gap-6 select-none">
+        {['All', 'In Progress', 'Pending', 'Completed', 'Closed'].map(tab => (
+          <button
+            key={tab}
+            onClick={() => {
+              setActiveTab(tab);
+              setCurrentPage(1);
+            }}
+            className={`pb-2.5 text-[10px] font-extrabold uppercase tracking-widest border-b-2 transition-all cursor-pointer
+              ${activeTab === tab
+                ? 'border-blue-600 text-blue-600 font-black'
+                : 'border-transparent text-slate-400 hover:text-slate-650 dark:hover:text-slate-200'
+              }
+            `}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      {/* Advanced Filter Form */}
+      <form onSubmit={handleSearchSubmit} className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="lg:col-span-2 relative">
+            <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by Challan ID, description, material name..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="[&_input]:py-2"
+              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 text-xs font-semibold rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
 
-          {/* Status Dropdown */}
-          <Select
-            id="status-filter"
-            placeholder="All Statuses"
-            options={[
-              { label: 'Draft', value: 'draft' },
-              { label: 'Pending Approval', value: 'pending' },
-              { label: 'Accepted', value: 'accepted' },
-              { label: 'Rejected', value: 'rejected' },
-              { label: 'Completed', value: 'completed' },
-            ]}
-            value={status}
-            onChange={(e) => {
-              setStatus(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="[&_select]:py-2"
-          />
-
-          {/* Doc Type Dropdown */}
           <Select
             id="doctype-filter"
-            placeholder="All Doc Types"
+            placeholder="All Document Types"
             options={[
               { label: 'Delivery Challan (DC)', value: 'DC' },
               { label: 'Returnable DC (RDC)', value: 'RDC' },
-              { label: 'Invoice', value: 'Invoice' },
+              { label: 'Invoice Challan', value: 'Invoice' },
               { label: 'Emergency Send', value: 'Emergency Send' },
             ]}
             value={docType}
@@ -285,22 +304,21 @@ const TransactionListPage = () => {
               setDocType(e.target.value);
               setCurrentPage(1);
             }}
-            className="[&_select]:py-2"
+            className="[&_select]:py-2 [&_select]:text-xs"
           />
 
-          {/* Submit Search button on Mobile / Search trigger */}
-          <Button type="submit" size="sm" className="hidden lg:flex items-center justify-center py-2 h-[42px] mt-auto">
-            Search
+          <Button type="submit" size="sm" className="h-[36px] mt-auto">
+            Search dossier
           </Button>
         </div>
 
-        {/* Date Filter Panel */}
+        {/* Date Filters */}
         <div className="flex flex-wrap items-center gap-3.5 pt-3.5 border-t border-slate-100 dark:border-slate-800 text-xs">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
             <Calendar className="w-4 h-4 text-slate-400" />
-            <span className="font-semibold text-slate-600 dark:text-slate-400">Date Range:</span>
+            <span>Filter Date Range:</span>
           </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-2">
             <input
               type="date"
               value={startDate}
@@ -308,7 +326,7 @@ const TransactionListPage = () => {
                 setStartDate(e.target.value);
                 setCurrentPage(1);
               }}
-              className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
             />
             <span className="text-slate-400"><ArrowRight className="w-3.5 h-3.5" /></span>
             <input
@@ -318,21 +336,20 @@ const TransactionListPage = () => {
                 setEndDate(e.target.value);
                 setCurrentPage(1);
               }}
-              className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
             />
           </div>
-          {(search || status || docType || startDate || endDate) && (
+          {(search || docType || startDate || endDate) && (
             <button
               type="button"
               onClick={() => {
                 setSearch('');
-                setStatus('');
                 setDocType('');
                 setStartDate('');
                 setEndDate('');
                 setCurrentPage(1);
               }}
-              className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer ml-auto"
+              className="text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer ml-auto"
             >
               Clear Filters
             </button>

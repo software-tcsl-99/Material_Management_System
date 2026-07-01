@@ -59,8 +59,8 @@ const transactionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['draft', 'pending', 'accepted', 'rejected', 'completed'],
-      default: 'pending',
+      enum: ['draft', 'pending', 'accepted', 'rejected', 'completed', 'submitted', 'tl_approved', 'mgt_approved', 'ready_for_dispatch', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'cancelled', 'closed'],
+      default: 'submitted',
       index: true,
     },
     documentType: {
@@ -68,6 +68,42 @@ const transactionSchema = new mongoose.Schema(
       enum: ['DC', 'RDC', 'Invoice', 'Emergency Send'],
       required: true,
     },
+    priority: {
+      type: String,
+      enum: ['low', 'medium', 'high', 'critical'],
+      default: 'medium',
+    },
+    dueDate: { type: Date },
+    escalated: { type: Boolean, default: false },
+    crossDepartment: { type: Boolean, default: false },
+    costCenter: { type: String, default: '' },
+    rdcStatus: {
+      type: String,
+      enum: ['draft', 'posted', 'matched', 'discrepant'],
+      default: 'draft',
+    },
+    invoiceNumber: { type: String, default: '' },
+    invoiceDate: { type: Date },
+    invoiceTotal: { type: Number, default: 0 },
+    invoiceMatchStatus: {
+      type: String,
+      enum: ['matched', 'discrepant', 'pending'],
+      default: 'pending',
+    },
+    dcType: {
+      type: String,
+      enum: ['DC-Internal', 'DC-FOC'],
+      default: 'DC-Internal',
+    },
+    approvalChain: [
+      {
+        user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        role: String,
+        action: String, // 'approved', 'rejected'
+        timestamp: { type: Date, default: Date.now },
+        remarks: String,
+      }
+    ],
     documentNumber: { type: String, default: '' },
     expectedReturnDate: { type: Date },
     description: { type: String, default: '' },

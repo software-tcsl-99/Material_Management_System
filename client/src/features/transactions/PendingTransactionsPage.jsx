@@ -1,794 +1,408 @@
-import { ArrowRight, Calendar, Clock, Download, Edit2, Eye, FileText, Plus, Search, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Badge from '../../components/ui/Badge';
-import Button from '../../components/ui/Button';
-import DataTable from '../../components/ui/DataTable';
-import Input from '../../components/ui/Input';
-import Modal from '../../components/ui/Modal';
-import Select from '../../components/ui/Select';
+import { 
+  Search, CheckCircle, XCircle, Clock, Eye, AlertTriangle, 
+  ArrowRight, Shield, Layers, FileText, CheckSquare, Square
+} from 'lucide-react';
 import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
+import useActiveRole from '../../hooks/useActiveRole';
+import Badge from '../../components/ui/Badge';
+import Button from '../../components/ui/Button';
 
 const PendingTransactionsPage = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const isAdmin = ['super_admin', 'admin'].includes(user?.role);
+  const activeRole = useActiveRole();
 
-  const [activeTab, setActiveTab] = useState('pending'); // 'pending' | 'all'
-
-  // Pending approvals state
-  const [pendingTxns, setPendingTxns] = useState([]);
-  const [pendingLoading, setPendingLoading] = useState(false);
-  const [pendingPage, setPendingPage] = useState(1);
-  const [pendingPages, setPendingPages] = useState(1);
-  const [pendingSearch, setPendingSearch] = useState('');
-
-  // All transactions state
-  const [allTxns, setAllTxns] = useState([]);
-  const [allLoading, setAllLoading] = useState(false);
-  const [allPage, setAllPage] = useState(1);
-  const [allPages, setAllPages] = useState(1);
-
-  // All transactions filters
-  const [allSearch, setAllSearch] = useState('');
-  const [allStatus, setAllStatus] = useState('');
-  const [allDocType, setAllDocType] = useState('');
-  const [allStartDate, setAllStartDate] = useState('');
-  const [allEndDate, setAllEndDate] = useState('');
-
-  // Approve / Reject action modals state
-  const [actionModal, setActionModal] = useState(''); // 'accept' | 'reject'
+  const [loading, setLoading] = useState(true);
+  const [txns, setTxns] = useState([]);
   const [selectedTxn, setSelectedTxn] = useState(null);
-  const [remarks, setRemarks] = useState('');
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  
+  // Search & Filters
+  const [search, setSearch] = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
+  const [filterDept, setFilterDept] = useState('');
+  const [filterDueToday, setFilterDueToday] = useState(false);
+  const [filterEscalated, setFilterEscalated] = useState(false);
+  const [filterCrossDept, setFilterCrossDept] = useState(false);
+  const [statusTab, setStatusTab] = useState('pending'); // 'pending' | 'approved' | 'rejected'
+
+  // Selection for bulk actions
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  
+  // Action state
   const [actionError, setActionError] = useState('');
+  const [actionRemarks, setActionRemarks] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleDownloadAll = async () => {
+  const fetchApprovals = async () => {
+    setLoading(true);
     try {
-      const params = {
-        search: activeTab === 'pending' ? pendingSearch : allSearch,
-        status: activeTab === 'pending' ? 'pending' : allStatus,
-        documentType: allDocType,
-        startDate: allStartDate,
-        endDate: allEndDate,
-      };
-      const response = await api.get('/reports/export', {
-        responseType: 'blob',
-        params,
-      });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `Transactions_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (err) {
-      console.error('Download all error:', err);
-    }
-  };
-
-  // Fetch pending transactions (only where user is receiver)
-  const fetchPendingTransactions = async () => {
-    setPendingLoading(true);
-    try {
-      const params = {
-        page: pendingPage,
-        limit: 10,
-        status: 'pending',
-        search: pendingSearch,
-        receiver: user?._id,
-      };
-      const response = await api.get('/transactions', { params });
-      setPendingTxns(response.data.data || []);
-      setPendingPages(response.data.pagination?.pages || 1);
-    } catch (err) {
-      console.error('Error fetching pending transactions:', err);
-    } finally {
-      setPendingLoading(false);
-    }
-  };
-
-  // Fetch all transactions
-  const fetchAllTransactions = async () => {
-    setAllLoading(true);
-    try {
-      const params = {
-        page: allPage,
-        limit: 10,
-        search: allSearch,
-        status: allStatus,
-        documentType: allDocType,
-        startDate: allStartDate,
-        endDate: allEndDate,
-      };
-      const response = await api.get('/transactions', { params });
-      setAllTxns(response.data.data || []);
-      setAllPages(response.data.pagination?.pages || 1);
-    } catch (err) {
-      console.error('Error fetching all transactions:', err);
-    } finally {
-      setAllLoading(false);
-    }
-  };
-
-  // Run fetches based on active tab and page changes
-  useEffect(() => {
-    if (activeTab === 'pending') {
-      fetchPendingTransactions();
-    } else {
-      fetchAllTransactions();
-    }
-  }, [activeTab, pendingPage, allPage, allStatus, allDocType, allStartDate, allEndDate]);
-
-  const handlePendingSearchSubmit = (e) => {
-    e.preventDefault();
-    setPendingPage(1);
-    fetchPendingTransactions();
-  };
-
-  const handleAllSearchSubmit = (e) => {
-    e.preventDefault();
-    setAllPage(1);
-    fetchAllTransactions();
-  };
-
-  const handleDecisionClick = (txn, actionType) => {
-    setSelectedTxn(txn);
-    setActionModal(actionType);
-    setRemarks('');
-    setRejectionReason('');
-    setActionError('');
-  };
-
-  const handleDecisionSubmit = async () => {
-    if (!selectedTxn) return;
-    setSubmitting(true);
-    setActionError('');
-
-    try {
-      if (actionModal === 'accept') {
-        await api.patch(`/transactions/${selectedTxn._id}/accept`, { remarks });
-      } else if (actionModal === 'reject') {
-        if (!rejectionReason.trim()) {
-          setActionError('Rejection reason is required');
-          setSubmitting(false);
-          return;
-        }
-        await api.patch(`/transactions/${selectedTxn._id}/reject`, { rejectionReason });
+      const res = await api.get('/transactions');
+      setTxns(res.data.data || []);
+      
+      // Select first item by default if available
+      const pendingList = (res.data.data || []).filter(t => t.status === 'submitted' || t.status === 'tl_approved');
+      if (pendingList.length > 0) {
+        setSelectedTxn(pendingList[0]);
       }
-      setActionModal('');
-      setSelectedTxn(null);
-      fetchPendingTransactions();
-      if (activeTab === 'all') fetchAllTransactions();
     } catch (err) {
-      console.error('Decision submit error:', err);
-      setActionError(err.response?.data?.message || 'Failed to submit decision');
+      console.error('Error fetching approvals:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchApprovals();
+  }, [activeRole.role, activeRole.adminType]);
+
+  // Apply filters
+  const filteredTxns = txns.filter(t => {
+    // 1. Status mapping
+    if (statusTab === 'pending') {
+      // Pending approvals for Team Lead vs Management
+      if (activeRole.role === 'team_lead') {
+        if (t.status !== 'submitted') return false;
+      } else if (activeRole.role === 'department_admin' && activeRole.adminType === 'management') {
+        if (!['submitted', 'tl_approved'].includes(t.status)) return false;
+      } else {
+        // Fallback: show standard submitted if not a designated approver
+        if (!['submitted', 'tl_approved'].includes(t.status)) return false;
+      }
+    } else if (statusTab === 'approved') {
+      if (!['ready_for_dispatch', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'closed'].includes(t.status)) return false;
+    } else if (statusTab === 'rejected') {
+      if (t.status !== 'rejected') return false;
+    }
+
+    // 2. Search query
+    if (search) {
+      const q = search.toLowerCase();
+      const matchId = t.transactionId.toLowerCase().includes(q);
+      const matchDesc = t.description?.toLowerCase().includes(q);
+      const matchSender = t.sender?.fullName?.toLowerCase().includes(q);
+      if (!matchId && !matchDesc && !matchSender) return false;
+    }
+
+    // 3. Priority filter
+    if (filterPriority && t.priority !== filterPriority) return false;
+
+    // 4. Department filter
+    if (filterDept && t.sender?.department?.name !== filterDept) return false;
+
+    // 5. Due Today filter
+    if (filterDueToday) {
+      const today = new Date().toDateString();
+      const isDueToday = t.dueDate && new Date(t.dueDate).toDateString() === today;
+      if (!isDueToday) return false;
+    }
+
+    // 6. Escalated filter
+    if (filterEscalated && !t.escalated) return false;
+
+    // 7. Cross Dept filter
+    if (filterCrossDept && !t.crossDepartment) return false;
+
+    return true;
+  });
+
+  const handleSelectAll = () => {
+    if (selectedIds.size === filteredTxns.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredTxns.map(t => t._id)));
+    }
+  };
+
+  const handleToggleSelect = (id) => {
+    const updated = new Set(selectedIds);
+    if (updated.has(id)) updated.delete(id);
+    else updated.add(id);
+    setSelectedIds(updated);
+  };
+
+  const handleApproveReject = async (action, txnId = null) => {
+    setActionError('');
+    setSubmitting(true);
+    const idsToProcess = txnId ? [txnId] : Array.from(selectedIds);
+    if (idsToProcess.length === 0) {
+      setActionError('Select at least one transaction to process.');
+      setSubmitting(false);
+      return;
+    }
+
+    try {
+      const promises = idsToProcess.map(id => {
+        const endpoint = action === 'approve' ? `/transactions/${id}/accept` : `/transactions/${id}/reject`;
+        return api.patch(endpoint, { 
+          remarks: actionRemarks,
+          rejectionReason: actionRemarks || 'Rejected in bulk action' 
+        });
+      });
+
+      await Promise.all(promises);
+      alert(`${action === 'approve' ? 'Approved' : 'Rejected'} ${idsToProcess.length} requests.`);
+      setSelectedIds(new Set());
+      setActionRemarks('');
+      fetchApprovals();
+    } catch (err) {
+      setActionError(err.response?.data?.message || 'Approval action failed.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this transaction?')) return;
-    try {
-      await api.delete(`/transactions/${id}`);
-      fetchAllTransactions();
-    } catch (err) {
-      console.error('Delete transaction error:', err);
-      alert(err.response?.data?.message || 'Failed to delete transaction');
-    }
-  };
-
-  // Table columns for Pending requests
-  const pendingColumns = [
-    {
-      header: 'Transaction ID',
-      cell: (row) => (
-        <span className="font-bold text-indigo-600 dark:text-indigo-400">
-          {row.transactionId}
-        </span>
-      ),
-    },
-    {
-      header: 'Doc Type',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold text-slate-800 dark:text-slate-200">
-            {row.documentType}
-          </span>
-          <span className="text-[10px] text-slate-500 font-medium">
-            No: {row.documentNumber || 'N/A'}
-          </span>
-        </div>
-      ),
-    },
-    {
-      header: 'Sender',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold">{row.sender?.fullName}</span>
-          <span className="text-[10px] text-slate-500 font-medium">{row.sender?.employeeId}</span>
-        </div>
-      ),
-    },
-    {
-      header: 'Receiver',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold">{row.receiver?.fullName || row.otherReceiverName || 'Other'}</span>
-          {row.receiver && <span className="text-[10px] text-slate-500 font-medium">{row.receiver?.employeeId}</span>}
-        </div>
-      ),
-    },
-    {
-      header: 'Date',
-      cell: (row) => (
-        <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-          {new Date(row.createdAt).toLocaleDateString()}
-        </span>
-      ),
-    },
-    {
-      header: 'Grand Total',
-      cell: (row) => (
-        <span className="font-bold text-slate-900 dark:text-white">
-          ₹{(row.grandTotal || 0).toLocaleString()}
-        </span>
-      ),
-    },
-    {
-      header: 'Status',
-      cell: (row) => <Badge>{row.status}</Badge>,
-    },
-    {
-      header: 'Decisions / Actions',
-      cell: (row) => {
-        const isReceiver = row.receiver?._id === user?._id || row.receiver === user?._id;
-        const isOwner = row.sender?._id === user?._id || row.sender === user?._id;
-        const canModify = isOwner && ['draft', 'pending'].includes(row.status);
-        
-        return (
-          <div className="flex items-center gap-1.5">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => navigate(`/transactions/${row._id}`)}
-              className="p-1.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800"
-              title="View Details"
-            >
-              <Eye className="w-4.5 h-4.5" />
-            </Button>
-            {isReceiver ? (
-              <>
-                <Button
-                  size="sm"
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-2.5 py-1"
-                  onClick={() => handleDecisionClick(row, 'accept')}
-                >
-                  Approve
-                </Button>
-                <Button
-                  size="sm"
-                  className="bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs px-2.5 py-1"
-                  onClick={() => handleDecisionClick(row, 'reject')}
-                >
-                  Reject
-                </Button>
-              </>
-            ) : null}
-            {canModify ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => navigate(`/transactions/edit/${row._id}`)}
-                className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800"
-                title="Edit"
-              >
-                <Edit2 className="w-4.5 h-4.5" />
-              </Button>
-            ) : isOwner ? (
-              <span className="text-[10px] text-slate-400 font-medium italic">Sent by you (Pending approval)</span>
-            ) : null}
-          </div>
-        );
-      },
-    },
-  ];
-
-  // Table columns for All transactions
-  const allColumns = [
-    {
-      header: 'Transaction ID',
-      cell: (row) => (
-        <span className="font-bold text-indigo-600 dark:text-indigo-400">
-          {row.transactionId}
-        </span>
-      ),
-    },
-    {
-      header: 'Doc Type',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold text-slate-800 dark:text-slate-200">
-            {row.documentType}
-          </span>
-          <span className="text-[10px] text-slate-500 font-medium">
-            No: {row.documentNumber || 'N/A'}
-          </span>
-        </div>
-      ),
-    },
-    {
-      header: 'Sender',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold">{row.sender?.fullName}</span>
-          <span className="text-[10px] text-slate-500 font-medium">{row.sender?.employeeId}</span>
-        </div>
-      ),
-    },
-    {
-      header: 'Receiver',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold">{row.receiver?.fullName}</span>
-          <span className="text-[10px] text-slate-500 font-medium">{row.receiver?.employeeId}</span>
-        </div>
-      ),
-    },
-    {
-      header: 'Date',
-      cell: (row) => (
-        <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-          {new Date(row.createdAt).toLocaleDateString()}
-        </span>
-      ),
-    },
-    {
-      header: 'Grand Total',
-      cell: (row) => (
-        <span className="font-bold text-slate-900 dark:text-white">
-          ₹{(row.grandTotal || 0).toLocaleString()}
-        </span>
-      ),
-    },
-    {
-      header: 'Status',
-      cell: (row) => <Badge>{row.status}</Badge>,
-    },
-    {
-      header: 'Actions',
-      cell: (row) => {
-        const isOwner = row.sender?._id === user?._id || row.sender === user?._id;
-        const canModify = isOwner && ['draft', 'pending'].includes(row.status);
-
-        return (
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => navigate(`/transactions/${row._id}`)}
-              className="p-1.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800"
-              title="View Details"
-            >
-              <Eye className="w-4 h-4" />
-            </Button>
-            {canModify && (
-              <>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => navigate(`/transactions/edit/${row._id}`)}
-                  className="p-1.5 text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-slate-800"
-                  title="Edit"
-                >
-                  <Edit2 className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleDelete(row._id)}
-                  className="p-1.5 text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-slate-800"
-                  title="Delete"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </>
-            )}
-          </div>
-        );
-      },
-    },
-  ];
-
   return (
-    <div className="flex flex-col gap-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="flex flex-col gap-5 h-[calc(100vh-7rem)] overflow-hidden">
+      {/* Top action header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white m-0">
-            {isAdmin ? 'All Transactions' : 'Pending requests & transactions'}
+            Approvals Command Center
           </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            {isAdmin ? 'Browse and manage all material transfers' : 'Review pending material transfers or view and search all company material logs'}
-          </p>
+          <p className="text-xs text-slate-500 mt-1">Active Role Profile: <span className="font-bold text-blue-600 dark:text-blue-400">{activeRole.label}</span></p>
         </div>
-        <div className="flex items-center gap-2 self-start sm:self-center">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleDownloadAll}
-            icon={Download}
-          >
-            Export Report
-          </Button>
-          {!isAdmin && (
-            <Button
-              size="sm"
-              onClick={() => navigate('/transactions/create')}
-              icon={Plus}
-              className="self-start sm:self-center"
-            >
-              Send Material
+
+        {/* Bulk Action Panel */}
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-2 bg-indigo-500/10 border border-indigo-500/20 px-3.5 py-1.5 rounded-xl animate-in slide-in-from-top-2">
+            <span className="text-xs font-bold text-indigo-700 dark:text-indigo-400 mr-2">{selectedIds.size} Selected</span>
+            <Button size="xs" variant="success" onClick={() => handleApproveReject('approve')} disabled={submitting}>
+              Bulk Approve
             </Button>
-          )}
+            <Button size="xs" className="bg-rose-600 hover:bg-rose-700 text-white" onClick={() => handleApproveReject('reject')} disabled={submitting}>
+              Bulk Reject
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6 shrink-0">
+        <button onClick={() => setStatusTab('pending')} className={`pb-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'pending' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>
+          Pending Approvals
+        </button>
+        <button onClick={() => setStatusTab('approved')} className={`pb-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'approved' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>
+          Approved History
+        </button>
+        <button onClick={() => setStatusTab('rejected')} className={`pb-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'rejected' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>
+          Rejected List
+        </button>
+      </div>
+
+      {/* Filters and search block */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4.5 rounded-xl shadow-sm flex flex-col md:flex-row gap-3.5 shrink-0">
+        <div className="flex-1 relative">
+          <Search className="absolute left-3 top-2.5 h-4.5 w-4.5 text-slate-400" />
+          <input
+            type="search"
+            placeholder="Search request ID, sender..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-4 py-1.5 text-sm bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg focus:outline-none focus:border-indigo-500"
+          />
+        </div>
+
+        <select
+          value={filterPriority}
+          onChange={(e) => setFilterPriority(e.target.value)}
+          className="text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3 py-1.5 focus:outline-none font-bold"
+        >
+          <option value="">All Priorities</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="critical">Critical</option>
+        </select>
+
+        {/* Toggle checkboxes */}
+        <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-slate-600 dark:text-slate-400">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={filterDueToday} onChange={(e) => setFilterDueToday(e.target.checked)} className="rounded text-indigo-600" />
+            <span>Due Today</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={filterEscalated} onChange={(e) => setFilterEscalated(e.target.checked)} className="rounded text-indigo-600" />
+            <span>Escalated</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={filterCrossDept} onChange={(e) => setFilterCrossDept(e.target.checked)} className="rounded text-indigo-600" />
+            <span>Cross-Dept</span>
+          </label>
         </div>
       </div>
 
-      {/* Tabs - Only show if not admin */}
-      {!isAdmin && (
-        <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6">
-          <button
-            onClick={() => {
-              setActiveTab('pending');
-              setPendingPage(1);
-            }}
-            className={`pb-3 text-sm font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${activeTab === 'pending'
-              ? 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-          >
-            <Clock className="w-4 h-4" />
-            Pending Approvals
-          </button>
-          <button
-            onClick={() => {
-              setActiveTab('all');
-              setAllPage(1);
-            }}
-            className={`pb-3 text-sm font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${activeTab === 'all'
-              ? 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-          >
-            <FileText className="w-4 h-4" />
-            All Transactions
-          </button>
-        </div>
-      )}
-
-      {/* Admin always sees all transactions tab content */}
-      {isAdmin ? (
-        <div className="flex flex-col gap-6">
-          <form onSubmit={handleAllSearchSubmit} className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col gap-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-              <div className="lg:col-span-2">
-                <Input
-                  id="allSearch"
-                  placeholder="Search by ID, doc number, materials..."
-                  value={allSearch}
-                  onChange={(e) => setAllSearch(e.target.value)}
-                  className="[&_input]:py-2"
-                />
-              </div>
-
-              <Select
-                id="status-filter"
-                placeholder="All Statuses"
-                options={[
-                  { label: 'Draft', value: 'draft' },
-                  { label: 'Pending Approval', value: 'pending' },
-                  { label: 'Accepted', value: 'accepted' },
-                  { label: 'Rejected', value: 'rejected' },
-                  { label: 'Completed', value: 'completed' },
-                ]}
-                value={allStatus}
-                onChange={(e) => {
-                  setAllStatus(e.target.value);
-                  setAllPage(1);
-                }}
-                className="[&_select]:py-2"
-              />
-
-              <Select
-                id="doctype-filter"
-                placeholder="All Doc Types"
-                options={[
-                  { label: 'Delivery Challan (DC)', value: 'DC' },
-                  { label: 'Returnable DC (RDC)', value: 'RDC' },
-                  { label: 'Invoice', value: 'Invoice' },
-                  { label: 'Emergency Send', value: 'Emergency Send' },
-                ]}
-                value={allDocType}
-                onChange={(e) => {
-                  setAllDocType(e.target.value);
-                  setAllPage(1);
-                }}
-                className="[&_select]:py-2"
-              />
-
-              <Button type="submit" size="sm" className="flex items-center justify-center py-2 h-[42px] w-full lg:w-auto lg:mt-auto">
-                Search
-              </Button>
+      {/* Main split display layout */}
+      <div className="flex-1 flex gap-5 overflow-hidden min-h-0">
+        {/* Left Side: Cards Queue list */}
+        <div className="w-full md:w-[350px] lg:w-[380px] flex flex-col gap-3 overflow-y-auto pr-1">
+          {filteredTxns.length === 0 ? (
+            <div className="text-center py-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
+              <Clock className="w-10 h-10 text-slate-300 mx-auto mb-2.5" />
+              <p className="text-sm font-semibold text-slate-500">Queue is empty</p>
             </div>
-
-            <div className="flex flex-wrap items-center gap-3.5 pt-3.5 border-t border-slate-100 dark:border-slate-800 text-xs">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-slate-400" />
-                <span className="font-semibold text-slate-600 dark:text-slate-400">Date Range:</span>
-              </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <input
-                  type="date"
-                  value={allStartDate}
-                  onChange={(e) => {
-                    setAllStartDate(e.target.value);
-                    setAllPage(1);
-                  }}
-                  className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                />
-                <span className="text-slate-400"><ArrowRight className="w-3.5 h-3.5" /></span>
-                <input
-                  type="date"
-                  value={allEndDate}
-                  onChange={(e) => {
-                    setAllEndDate(e.target.value);
-                    setAllPage(1);
-                  }}
-                  className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                />
-              </div>
-              {(allSearch || allStatus || allDocType || allStartDate || allEndDate) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAllSearch('');
-                    setAllStatus('');
-                    setAllDocType('');
-                    setAllStartDate('');
-                    setAllEndDate('');
-                    setAllPage(1);
-                  }}
-                  className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer ml-auto"
-                >
-                  Clear Filters
+          ) : (
+            <>
+              {/* Select All */}
+              <div className="flex justify-between items-center bg-slate-100/50 dark:bg-slate-800/40 p-2.5 rounded-lg text-xs font-semibold">
+                <button onClick={handleSelectAll} className="flex items-center gap-2 cursor-pointer text-slate-600 dark:text-slate-300">
+                  {selectedIds.size === filteredTxns.length ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4" />}
+                  Select All listed
                 </button>
-              )}
-            </div>
-          </form>
-
-          <DataTable
-            columns={allColumns}
-            data={allTxns}
-            loading={allLoading}
-            currentPage={allPage}
-            totalPages={allPages}
-            onPageChange={(page) => setAllPage(page)}
-            emptyMessage="No material movements match your selection."
-          />
-        </div>
-      ) : (
-        <>
-          {/* Pending requests Tab Content */}
-          {activeTab === 'pending' && (
-            <div className="flex flex-col gap-6">
-              <form onSubmit={handlePendingSearchSubmit} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center gap-3">
-                <div className="flex-1">
-                  <Input
-                    id="pendingSearch"
-                    placeholder="Search pending requests by ID, doc number, materials..."
-                    value={pendingSearch}
-                    onChange={(e) => setPendingSearch(e.target.value)}
-                    className="[&_input]:py-2"
-                  />
-                </div>
-                <Button type="submit" size="sm" className="h-[42px] px-5 flex items-center gap-2">
-                  <Search className="w-4 h-4" /> Search
-                </Button>
-              </form>
-
-              <DataTable
-                columns={pendingColumns}
-                data={pendingTxns}
-                loading={pendingLoading}
-                currentPage={pendingPage}
-                totalPages={pendingPages}
-                onPageChange={(page) => setPendingPage(page)}
-                emptyMessage="No pending requests require your action at the moment."
-              />
-            </div>
-          )}
-
-          {/* All transactions Tab Content */}
-          {activeTab === 'all' && (
-            <div className="flex flex-col gap-6">
-              <form onSubmit={handleAllSearchSubmit} className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col gap-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-                  <div className="lg:col-span-2">
-                    <Input
-                      id="allSearch"
-                      placeholder="Search by ID, doc number, materials..."
-                      value={allSearch}
-                      onChange={(e) => setAllSearch(e.target.value)}
-                      className="[&_input]:py-2"
-                    />
-                  </div>
-
-                  <Select
-                    id="status-filter"
-                    placeholder="All Statuses"
-                    options={[
-                      { label: 'Draft', value: 'draft' },
-                      { label: 'Pending Approval', value: 'pending' },
-                      { label: 'Accepted', value: 'accepted' },
-                      { label: 'Rejected', value: 'rejected' },
-                      { label: 'Completed', value: 'completed' },
-                    ]}
-                    value={allStatus}
-                    onChange={(e) => {
-                      setAllStatus(e.target.value);
-                      setAllPage(1);
-                    }}
-                    className="[&_select]:py-2"
-                  />
-
-                  <Select
-                    id="doctype-filter"
-                    placeholder="All Doc Types"
-                    options={[
-                      { label: 'Delivery Challan (DC)', value: 'DC' },
-                      { label: 'Returnable DC (RDC)', value: 'RDC' },
-                      { label: 'Invoice', value: 'Invoice' },
-                      { label: 'Emergency Send', value: 'Emergency Send' },
-                    ]}
-                    value={allDocType}
-                    onChange={(e) => {
-                      setAllDocType(e.target.value);
-                      setAllPage(1);
-                    }}
-                    className="[&_select]:py-2"
-                  />
-
-                  <Button type="submit" size="sm" className="flex items-center justify-center py-2 h-[42px] w-full lg:w-auto lg:mt-auto">
-                    Search
-                  </Button>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3.5 pt-3.5 border-t border-slate-100 dark:border-slate-800 text-xs">
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-slate-400" />
-                    <span className="font-semibold text-slate-600 dark:text-slate-400">Date Range:</span>
-                  </div>
-                  <div className="flex items-center gap-2 w-full sm:w-auto">
-                    <input
-                      type="date"
-                      value={allStartDate}
-                      onChange={(e) => {
-                        setAllStartDate(e.target.value);
-                        setAllPage(1);
-                      }}
-                      className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                    />
-                    <span className="text-slate-400"><ArrowRight className="w-3.5 h-3.5" /></span>
-                    <input
-                      type="date"
-                      value={allEndDate}
-                      onChange={(e) => {
-                        setAllEndDate(e.target.value);
-                        setAllPage(1);
-                      }}
-                      className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                    />
-                  </div>
-                  {(allSearch || allStatus || allDocType || allStartDate || allEndDate) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAllSearch('');
-                        setAllStatus('');
-                        setAllDocType('');
-                        setAllStartDate('');
-                        setAllEndDate('');
-                        setAllPage(1);
-                      }}
-                      className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer ml-auto"
-                    >
-                      Clear Filters
-                    </button>
-                  )}
-                </div>
-              </form>
-
-              <DataTable
-                columns={allColumns}
-                data={allTxns}
-                loading={allLoading}
-                currentPage={allPage}
-                totalPages={allPages}
-                onPageChange={(page) => setAllPage(page)}
-                emptyMessage="No material movements match your selection."
-              />
-            </div>
-          )}
-
-          {/* Decision confirmation Modal */}
-          <Modal
-            isOpen={!!actionModal}
-            onClose={() => {
-              setActionModal('');
-              setSelectedTxn(null);
-            }}
-            title={actionModal === 'accept' ? 'Approve & Accept Transfer' : 'Reject Movement Request'}
-          >
-            {selectedTxn && (
-              <div className="flex flex-col gap-4">
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Confirm decision for transfer dossier <span className="font-bold text-slate-800 dark:text-white">{selectedTxn.transactionId}</span>.
-                </p>
-
-                {actionError && (
-                  <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs font-semibold text-red-400">
-                    {actionError}
-                  </div>
-                )}
-
-                {actionModal === 'accept' ? (
-                  <Input
-                    id="remarks"
-                    label="Remarks (Optional)"
-                    placeholder="e.g. Verified quantity, approved for dispatch"
-                    value={remarks}
-                    onChange={(e) => setRemarks(e.target.value)}
-                  />
-                ) : (
-                  <Input
-                    id="rejectionReason"
-                    label="Rejection Reason"
-                    placeholder="e.g. Mismatched materials or quality issues"
-                    value={rejectionReason}
-                    onChange={(e) => setRejectionReason(e.target.value)}
-                    required
-                  />
-                )}
-
-                <div className="flex items-center justify-end gap-2.5 mt-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setActionModal('');
-                      setSelectedTxn(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant={actionModal === 'accept' ? 'success' : 'danger'}
-                    size="sm"
-                    loading={submitting}
-                    onClick={handleDecisionSubmit}
-                  >
-                    Confirm
-                  </Button>
-                </div>
               </div>
-            )}
-          </Modal>
-        </>
-      )}
+
+              {filteredTxns.map(t => {
+                const isSelected = selectedIds.has(t._id);
+                const isActive = selectedTxn?._id === t._id;
+                return (
+                  <div 
+                    key={t._id} 
+                    onClick={() => setSelectedTxn(t)}
+                    className={`p-4 bg-white dark:bg-slate-900 border rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2
+                      ${isActive ? 'border-indigo-500 ring-1 ring-indigo-500/20' : 'border-slate-200/80 dark:border-slate-800'}
+                    `}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        {/* Checkbox select */}
+                        <button onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleSelect(t._id);
+                        }} className="text-slate-400 hover:text-indigo-600">
+                          {isSelected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4" />}
+                        </button>
+                        <span className="text-xs font-bold text-slate-500">{t.transactionId}</span>
+                      </div>
+                      {t.priority === 'high' || t.priority === 'critical' ? (
+                        <Badge variant="danger">{t.priority}</Badge>
+                      ) : (
+                        <Badge>{t.priority}</Badge>
+                      )}
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 line-clamp-1">{t.description || 'Logistics Request'}</h4>
+                      <p className="text-xs text-slate-400 mt-0.5">Sender: <span className="font-semibold">{t.sender?.fullName}</span></p>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2 font-bold uppercase tracking-wider">
+                      <span>{t.documentType} No: {t.documentNumber || '-'}</span>
+                      <span className="text-slate-700 dark:text-slate-300 font-extrabold">₹{t.grandTotal.toLocaleString()}</span>
+                    </div>
+
+                    {t.crossDepartment && (
+                      <span className="absolute top-2.5 right-20 text-[9px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/20 px-1.5 py-0.5 rounded">Cross-Dept</span>
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+
+        {/* Right Side: Selected details preview workspace */}
+        <div className="hidden md:flex flex-1 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex-col">
+          {selectedTxn ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Workspace Header */}
+              <div className="p-5 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-400">{selectedTxn.transactionId}</span>
+                    <Badge variant={selectedTxn.status === 'rejected' ? 'danger' : 'primary'}>{selectedTxn.status}</Badge>
+                  </div>
+                  <h3 className="text-base font-extrabold text-slate-800 dark:text-white mt-1">{selectedTxn.description || 'Material Logistics Dossier'}</h3>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => navigate(`/transactions/${selectedTxn._id}`)}>
+                  Open full transaction view
+                </Button>
+              </div>
+
+              {/* Workspace Body scroll */}
+              <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+                {/* Basic Stats row */}
+                <div className="grid grid-cols-3 gap-4.5 bg-slate-50 dark:bg-slate-950/40 p-4 rounded-xl border border-slate-100 dark:border-slate-800 text-xs">
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-0.5">SENDER</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">{selectedTxn.sender?.fullName}</span>
+                    <span className="block text-slate-400 text-[10px]">{selectedTxn.sender?.department?.name || 'Engineering'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-0.5">EXPECTED RETURN</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">{selectedTxn.expectedReturnDate ? new Date(selectedTxn.expectedReturnDate).toLocaleDateString() : 'N/A'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-0.5">GRAND TOTAL</span>
+                    <span className="font-extrabold text-indigo-600 dark:text-indigo-400">₹{selectedTxn.grandTotal?.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                {/* Materials Table */}
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Item Breakdown & Barcode Maps</h4>
+                  <div className="border border-slate-100 dark:border-slate-800 rounded-xl overflow-hidden">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-slate-50 dark:bg-slate-950/40 text-slate-500 font-bold">
+                        <tr>
+                          <th className="px-4 py-2">Material / Barcode</th>
+                          <th className="px-4 py-2">Quantity</th>
+                          <th className="px-4 py-2 text-right">Price</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {selectedTxn.materials?.map((mat, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
+                            <td className="px-4 py-2.5">
+                              <span className="font-bold text-slate-800 dark:text-slate-200">{mat.name}</span>
+                              <span className="block text-[10px] text-indigo-600 dark:text-indigo-400 mt-0.5 font-semibold font-mono">{mat.barcode}</span>
+                            </td>
+                            <td className="px-4 py-2.5">{mat.quantity} {mat.unit}</td>
+                            <td className="px-4 py-2.5 text-right font-semibold">₹{mat.total?.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Approval Comments Form (only if status is pending) */}
+                {statusTab === 'pending' && (
+                  <div className="mt-auto border-t border-slate-100 dark:border-slate-800 pt-5 flex flex-col gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Decision Comments / Remarks</label>
+                      <textarea
+                        value={actionRemarks}
+                        onChange={(e) => setActionRemarks(e.target.value)}
+                        placeholder="Add optional remarks or rejection reason..."
+                        rows="3"
+                        className="w-full text-sm bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-indigo-500 dark:text-white px-3.5 py-2"
+                      />
+                    </div>
+
+                    {actionError && <p className="text-xs text-rose-500 font-bold">{actionError}</p>}
+
+                    <div className="flex gap-3 justify-end">
+                      <Button variant="outline" className="text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => handleApproveReject('reject', selectedTxn._id)} disabled={submitting}>
+                        Reject
+                      </Button>
+                      <Button variant="success" onClick={() => handleApproveReject('approve', selectedTxn._id)} disabled={submitting}>
+                        Approve & Forward
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8">
+              <Clock className="w-12 h-12 mb-3.5 text-slate-300" />
+              <p className="text-sm font-semibold">Select a request card to inspect</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

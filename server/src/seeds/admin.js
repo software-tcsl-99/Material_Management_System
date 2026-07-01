@@ -58,7 +58,7 @@ const seedAdminOnly = async () => {
       }
     }
 
-    // Seed Admin
+    // Seed Admin — role must be 'super_admin' (valid enum in User model)
     const adminExists = await User.findOne({ employeeId: 'ADMIN001' });
     if (!adminExists) {
       await User.create({
@@ -70,14 +70,15 @@ const seedAdminOnly = async () => {
         department: deptDocs[0]._id,
         designation: desgDocs[0]._id,
         workLocation: locDocs[0]._id,
-        role: 'admin',
+        role: 'super_admin',
+        departmentAdminType: null,
         status: 'active',
         mustChangePassword: true,
         joiningDate: new Date(),
       });
-      console.log('\n✓ Admin created:');
+      console.log('\n✓ Super Admin created:');
     } else {
-      console.log('\n✓ Admin already exists');
+      console.log('\n✓ Super Admin already exists');
     }
 
     console.log('\n🌱 Admin seeding completed successfully! No sample employees created.');

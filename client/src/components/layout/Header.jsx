@@ -4,11 +4,13 @@ import { Sun, Moon, Laptop, Search, Menu, User, LogOut } from 'lucide-react';
 import useThemeStore from '../../store/themeStore';
 import useAuthStore from '../../store/authStore';
 import NotificationBell from '../notifications/NotificationBell';
+import useActiveRole from '../../hooks/useActiveRole';
 
 const Header = ({ onMenuClick }) => {
   const navigate = useNavigate();
   const { theme, setTheme } = useThemeStore();
   const { user, clearAuth } = useAuthStore();
+  const activeRole = useActiveRole();
   const [searchQuery, setSearchQuery] = useState('');
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
 
@@ -45,6 +47,7 @@ const Header = ({ onMenuClick }) => {
 
       {/* Action items */}
       <div className="flex items-center gap-4.5 shrink-0">
+
         {/* Theme Selector */}
         <div className="flex items-center border border-slate-200 dark:border-slate-800 rounded-lg p-0.5">
           <button

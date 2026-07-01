@@ -1,120 +1,264 @@
-import {
-  ArrowLeftRight,
-  Clock,
-  Database,
-  Download,
-  FileText,
-  LayoutDashboard,
-  LogOut,
-  Package,
-  User,
-  Users,
-} from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import api from '../../lib/axios';
+import {
+  LayoutDashboard,
+  ArrowLeftRight,
+  Plus,
+  FileSpreadsheet,
+  Database,
+  Users,
+  Bell,
+  User,
+  LogOut,
+  ChevronDown,
+  ChevronRight,
+  Clock
+} from 'lucide-react';
 import useAuthStore from '../../store/authStore';
+import useActiveRole from '../../hooks/useActiveRole';
+import api from '../../lib/axios';
 
 const Sidebar = ({ className = '', onNavigate }) => {
   const { user, clearAuth } = useAuthStore();
-  const isAdmin = ['super_admin', 'admin'].includes(user?.role);
+  const activeRole = useActiveRole();
   const location = useLocation();
-
-  const menuItems = [
-    { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { label: 'Transactions', path: '/transactions', icon: ArrowLeftRight },
-    ...(!isAdmin ? [{ label: 'Pending Requests', path: '/pending', icon: Clock }] : []),
-    ...(!isAdmin ? [{ label: 'Receiving', path: '/receiving', icon: Download }] : []),
-    ...(isAdmin
-      ? [
-        { label: 'Employees', path: '/employees', icon: Users },
-        { label: 'Master Data', path: '/masters', icon: Database },
-      ]
-      : []),
-    { label: 'Reports', path: '/reports', icon: FileText },
-    { label: 'Profile', path: '/profile', icon: User },
-  ];
-
+  const [txnOpen, setTxnOpen] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
 
-  const fetchPendingCount = useCallback(async () => {
-    try {
-      const res = await api.get('/transactions', { params: { status: 'pending', receiver: user?._id, limit: 1 } });
-      const total = res.data?.pagination?.total ?? 0;
-      setPendingCount(total);
-    } catch (err) {
-      // ignore
-    }
-  }, [user?._id]);
+  const isAdmin = activeRole.role === 'super_admin';
 
-  // Re-fetch pending count on mount and on every route change
+  // Fetch pending notifications count
   useEffect(() => {
-    if (!isAdmin && user?._id) {
+    const fetchPendingCount = async () => {
+      try {
+        const res = await api.get('/notifications', { params: { read: false, limit: 50 } });
+        const unread = res.data?.data?.filter(n => !n.read).length || 0;
+        setPendingCount(unread);
+      } catch (err) {
+        // ignore
+      }
+    };
+    if (user?._id) {
       fetchPendingCount();
+      const interval = setInterval(fetchPendingCount, 30000);
+      return () => clearInterval(interval);
     }
-  }, [isAdmin, user?._id, fetchPendingCount, location.pathname]);
+  }, [user?._id, location.pathname]);
+
+  const toggleTxn = () => setTxnOpen(!txnOpen);
 
   return (
-    <aside className={`w-64 border-r border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col h-full ${className}`}>
-      {/* Brand Logo */}
-      <div className="h-16 flex items-center gap-2.5 px-6 border-b border-slate-200/80 dark:border-slate-800 shrink-0">
-        <div className="p-1.5 bg-indigo-600 rounded-lg text-white">
-          <Package className="w-5 h-5" />
+    <aside className={`w-64 border-r border-slate-200/80 dark:border-slate-800 bg-slate-900 text-slate-300 flex flex-col h-full shrink-0 ${className}`}>
+      {/* Brand Header */}
+      <div className="h-16 flex items-center gap-2.5 px-6 border-b border-slate-800 shrink-0 bg-slate-950">
+        <div className="p-1.5 bg-blue-600 rounded-lg text-white">
+          <ArrowLeftRight className="w-5 h-5" />
         </div>
-        <span className="font-bold text-sm tracking-wide text-indigo-600 dark:text-indigo-400 uppercase">
-          MMS Portal
-        </span>
+        <div className="flex flex-col">
+          <span className="font-extrabold text-sm tracking-wide text-white uppercase">
+            MMS Enterprise
+          </span>
+          <span className="text-[9px] text-blue-400 font-bold uppercase tracking-widest">
+            Lifecycle Platform
+          </span>
+        </div>
       </div>
 
-      {/* Nav Menu */}
-      <nav className="flex-1 py-6 px-4 flex flex-col gap-1 overflow-y-auto">
-        {menuItems.map((item) => (
+      {/* Navigation */}
+      <nav className="flex-1 py-4 px-3 flex flex-col gap-1 overflow-y-auto custom-scrollbar">
+        {/* Dashboard */}
+        <NavLink
+          to="/"
+          onClick={onNavigate}
+          className={({ isActive }) => `
+            flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all
+            ${isActive 
+              ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-500 font-black' 
+              : 'hover:bg-slate-800 hover:text-white'
+            }
+          `}
+        >
+          <LayoutDashboard className="w-4 h-4 shrink-0" />
+          <span>Dashboard</span>
+        </NavLink>
+
+        {/* Transactions Group */}
+        <div className="flex flex-col">
+          <button
+            onClick={toggleTxn}
+            className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all hover:bg-slate-800 hover:text-white w-full text-left"
+          >
+            <div className="flex items-center gap-3">
+              <ArrowLeftRight className="w-4 h-4 shrink-0" />
+              <span>Transactions</span>
+            </div>
+            {txnOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+
+          {txnOpen && (
+            <div className="pl-6 pr-1 flex flex-col gap-1 mt-1 border-l border-slate-800 ml-5">
+              <NavLink
+                to="/transactions"
+                end
+                onClick={onNavigate}
+                className={({ isActive }) => `
+                  flex items-center gap-2.5 py-2 px-3 rounded-md text-xs font-semibold transition-all
+                  ${isActive && !location.pathname.includes('/create')
+                    ? 'text-blue-400 bg-slate-800' 
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }
+                `}
+              >
+                <span>My Transactions</span>
+              </NavLink>
+              
+              <NavLink
+                to="/transactions?all=true"
+                onClick={onNavigate}
+                className={() => `
+                  flex items-center gap-2.5 py-2 px-3 rounded-md text-xs font-semibold transition-all
+                  ${location.search.includes('all=true')
+                    ? 'text-blue-400 bg-slate-800' 
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }
+                `}
+              >
+                <span>All Transactions</span>
+              </NavLink>
+
+              <NavLink
+                to="/transactions/create"
+                onClick={onNavigate}
+                className={({ isActive }) => `
+                  flex items-center gap-2.5 py-2 px-3 rounded-md text-xs font-semibold transition-all
+                  ${isActive 
+                    ? 'text-blue-400 bg-slate-800' 
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }
+                `}
+              >
+                <Plus className="w-3 h-3 text-blue-500" />
+                <span>Create Request</span>
+              </NavLink>
+            </div>
+          )}
+        </div>
+
+        {/* Approvals Center */}
+        {['super_admin', 'team_lead', 'department_admin'].includes(activeRole.role) && (
           <NavLink
-            key={item.path}
-            to={item.path}
-            onClick={() => onNavigate?.()}
+            to="/pending"
+            onClick={onNavigate}
             className={({ isActive }) => `
-              flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer
-              ${isActive
-                ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400'
-                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-200'
+              flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all
+              ${isActive && location.pathname === '/pending'
+                ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-500 font-black' 
+                : 'hover:bg-slate-800 hover:text-white'
               }
             `}
           >
-            <item.icon className="w-4 h-4 shrink-0" />
-            <span className="flex items-center gap-2">
-              <span>{item.label}</span>
-              {item.path === '/pending' && pendingCount > 0 && (
-                <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400">
-                  {pendingCount}
-                </span>
-              )}
-            </span>
+            <Clock className="w-4 h-4 shrink-0" />
+            <span>Approvals Center</span>
           </NavLink>
-        ))}
+        )}
+
+        {/* Reports */}
+        <NavLink
+          to="/reports"
+          onClick={onNavigate}
+          className={({ isActive }) => `
+            flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all
+            ${isActive && location.pathname.includes('/reports')
+              ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-500 font-black' 
+              : 'hover:bg-slate-800 hover:text-white'
+            }
+          `}
+        >
+          <FileSpreadsheet className="w-4 h-4 shrink-0" />
+          <span>Reports</span>
+        </NavLink>
+
+        {/* Master Data */}
+        {isAdmin && (
+          <NavLink
+            to="/masters"
+            onClick={onNavigate}
+            className={({ isActive }) => `
+              flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all
+              ${isActive && location.pathname.includes('/masters')
+                ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-500 font-black' 
+                : 'hover:bg-slate-800 hover:text-white'
+              }
+            `}
+          >
+            <Database className="w-4 h-4 shrink-0" />
+            <span>Masters</span>
+          </NavLink>
+        )}
+
+        {/* Users & Roles */}
+        {isAdmin && (
+          <NavLink
+            to="/employees"
+            onClick={onNavigate}
+            className={({ isActive }) => `
+              flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all
+              ${isActive && location.pathname.includes('/employees')
+                ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-500 font-black' 
+                : 'hover:bg-slate-800 hover:text-white'
+              }
+            `}
+          >
+            <Users className="w-4 h-4 shrink-0" />
+            <span>Users & Roles</span>
+          </NavLink>
+        )}
+
+        {/* Profile */}
+        <NavLink
+          to="/profile"
+          onClick={onNavigate}
+          className={({ isActive }) => `
+            flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all
+            ${isActive && location.pathname.includes('/profile')
+              ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-500 font-black' 
+              : 'hover:bg-slate-800 hover:text-white'
+            }
+          `}
+        >
+          <div className="flex items-center gap-3">
+            <User className="w-4 h-4 shrink-0" />
+            <span>Profile</span>
+          </div>
+          {pendingCount > 0 && (
+            <span className="bg-red-500 text-white font-extrabold text-[9px] px-1.5 py-0.5 rounded-full shrink-0">
+              {pendingCount}
+            </span>
+          )}
+        </NavLink>
       </nav>
 
-      {/* Footer Info */}
-      <div className="p-4 border-t border-slate-200/80 dark:border-slate-800 shrink-0 flex flex-col gap-2 bg-slate-50/50 dark:bg-slate-950/20">
+      {/* Footer / Profile Info */}
+      <div className="p-4 border-t border-slate-800 shrink-0 bg-slate-950/60 flex flex-col gap-2.5">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-slate-800 flex items-center justify-center text-indigo-700 dark:text-indigo-400 font-bold text-xs select-none">
+          <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-blue-400 font-bold text-xs uppercase border border-slate-700 select-none">
             {user?.fullName?.charAt(0) || 'U'}
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+            <span className="text-xs font-bold text-white truncate">
               {user?.fullName || 'User'}
             </span>
-            <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
-              {['super_admin', 'admin'].includes(user?.role) ? 'Admin' : 'Employee'}
+            <span className="text-[9px] text-blue-400 font-bold uppercase tracking-wide">
+              {activeRole.label}
             </span>
           </div>
         </div>
 
         <button
           onClick={clearAuth}
-          className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all cursor-pointer text-left w-full mt-2"
+          className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider text-red-400 hover:bg-red-500/10 transition-all cursor-pointer text-left w-full"
         >
-          <LogOut className="w-4 h-4 shrink-0" />
+          <LogOut className="w-3.5 h-3.5 shrink-0" />
           <span>Logout</span>
         </button>
       </div>

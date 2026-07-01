@@ -8,13 +8,11 @@ const Transaction = require('../models/Transaction');
 const InternalReceipt = require('../models/InternalReceipt');
 const ExternalReceipt = require('../models/ExternalReceipt');
 const Notification = require('../models/Notification');
+const Barcode = require('../models/Barcode');
+const BarcodeChat = require('../models/BarcodeChat');
 
 // ── Helper: generate a unique TXN id ────────────────────────────
 let txnCounter = 0;
-const initTxnCounter = async () => {
-  const existing = await Transaction.countDocuments();
-  txnCounter = existing;
-};
 const makeTxnId = () => {
   txnCounter += 1;
   const now = new Date();
@@ -23,116 +21,39 @@ const makeTxnId = () => {
   return `TXN-${d}-${String(txnCounter).padStart(6, '0')}-${rand}`;
 };
 
-// ── Helper: random pick ─────────────────────────────────────────
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-
-// ── Material catalogue (realistic Indian industrial items) ──────
-const materialCatalogue = [
-  { name: 'Bolt M8x40', description: 'SS304 hex bolt', unit: 'pcs', price: 3 },
-  { name: 'Nut M8', description: 'Hex nut zinc plated', unit: 'pcs', price: 1 },
-  { name: 'Bearing 6205', description: 'Deep groove ball bearing', unit: 'pcs', price: 85 },
-  { name: 'Conveyor Belt 3m', description: 'Rubber conveyor belt', unit: 'mtr', price: 450 },
-  { name: 'Lubricant 5L', description: 'Industrial machine oil', unit: 'ltr', price: 120 },
-  { name: 'Copper Wire 2.5mm', description: 'Electrical grade copper', unit: 'kg', price: 680 },
-  { name: 'Gasket Set', description: 'Pump gasket kit', unit: 'set', price: 250 },
-  { name: 'V-Belt B68', description: 'Industrial V-belt', unit: 'pcs', price: 180 },
-  { name: 'Safety Helmet', description: 'IS-2925 certified', unit: 'pcs', price: 350 },
-  { name: 'Welding Rod 3.15mm', description: 'E6013 mild steel', unit: 'kg', price: 95 },
-  { name: 'MS Plate 6mm', description: 'Mild steel plate 4x8 ft', unit: 'pcs', price: 2800 },
-  { name: 'PVC Pipe 4"', description: 'Schedule 40 PVC', unit: 'mtr', price: 220 },
-  { name: 'Hydraulic Hose', description: '1/2" SAE 100R2AT', unit: 'mtr', price: 340 },
-  { name: 'Air Filter', description: 'Compressor air filter element', unit: 'pcs', price: 560 },
-  { name: 'Thermocouple K-type', description: 'Temperature sensor', unit: 'pcs', price: 420 },
-  { name: 'Gear Oil 20L', description: 'EP 90 gear lubricant', unit: 'pcs', price: 1850 },
-  { name: 'Toggle Clamp', description: 'Horizontal hold-down', unit: 'pcs', price: 275 },
-  { name: 'Drill Bit 10mm', description: 'HSS twist drill', unit: 'pcs', price: 45 },
-  { name: 'Cable Tie 300mm', description: 'Nylon cable ties (100 pack)', unit: 'pkt', price: 65 },
-  { name: 'Limit Switch', description: 'Roller lever micro switch', unit: 'pcs', price: 190 },
-];
-
-const randomMaterials = (count) => {
-  const selected = [];
-  const used = new Set();
-  for (let i = 0; i < count; i++) {
-    let idx;
-    do { idx = Math.floor(Math.random() * materialCatalogue.length); } while (used.has(idx));
-    used.add(idx);
-    const m = materialCatalogue[idx];
-    const qty = Math.floor(Math.random() * 50) + 1;
-    selected.push({
-      name: m.name,
-      description: m.description,
-      quantity: qty,
-      qty: qty,
-      unit: m.unit,
-      price: m.price,
-      total: qty * m.price,
-      barcode: `BR${String(idx + 1000).padStart(6, '0')}`,
-    });
-  }
-  return selected;
-};
-
-const grandTotalOf = (mats) => mats.reduce((s, m) => s + m.total, 0);
-
-// ── Vendor / customer names for external receipts ───────────────
-const vendors = [
-  { name: 'ACME Industrial Supplies', address: 'MIDC Pune, Maharashtra' },
-  { name: 'Bharat Engineering Works', address: 'Pimpri-Chinchwad, Pune' },
-  { name: 'Tata Metaliks Ltd.', address: 'Kharagpur, West Bengal' },
-  { name: 'Mahindra CIE Automotive', address: 'Nashik, Maharashtra' },
-  { name: 'Precision Fasteners Ltd.', address: 'Thane, Maharashtra' },
-];
-
-const customers = [
-  { name: 'Larsen & Toubro Ltd.', address: 'Powai, Mumbai' },
-  { name: 'Kirloskar Brothers', address: 'Kirloskarvadi, Sangli' },
-  { name: 'Thermax Limited', address: 'Chinchwad, Pune' },
-];
-
-// ══════════════════════════════════════════════════════════════════
-//  MAIN SEED FUNCTION
-//  Seeds: Departments, Designations, Locations, Employees,
-//         Transactions, Internal Receipts, External Receipts
-//  Does NOT seed: Super Admin (use admin.js for that)
-// ══════════════════════════════════════════════════════════════════
 const seedAll = async () => {
   try {
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/material-management');
     console.log('Connected to MongoDB');
-    console.log('\n── Seeding Master Data ──\n');
 
     // ── Departments ─────────────────────────────────────────────
-    const departments = ['Engineering', 'Production', 'Quality', 'Stores', 'Purchase', 'Maintenance', 'HR', 'Finance', 'IT'];
+    console.log('\n── Seeding Departments ──\n');
+    const departments = ['Engineering', 'Production', 'Quality', 'Stores', 'Purchase', 'Maintenance', 'HR', 'Finance', 'IT', 'Admin'];
     const deptDocs = [];
     for (const name of departments) {
-      const existing = await Department.findOne({ name });
-      if (!existing) {
-        const dept = await Department.create({ name });
-        deptDocs.push(dept);
+      let dept = await Department.findOne({ name });
+      if (!dept) {
+        dept = await Department.create({ name });
         console.log(`  ✓ Department: ${name}`);
-      } else {
-        deptDocs.push(existing);
-        console.log(`  ○ Department exists: ${name}`);
       }
+      deptDocs.push(dept);
     }
 
     // ── Designations ────────────────────────────────────────────
+    console.log('\n── Seeding Designations ──\n');
     const designations = ['Manager', 'Engineer', 'Supervisor', 'Technician', 'Operator', 'Executive', 'Director', 'Coordinator', 'Analyst', 'Clerk'];
     const desgDocs = [];
     for (const name of designations) {
-      const existing = await Designation.findOne({ name });
-      if (!existing) {
-        const desg = await Designation.create({ name });
-        desgDocs.push(desg);
+      let desg = await Designation.findOne({ name });
+      if (!desg) {
+        desg = await Designation.create({ name });
         console.log(`  ✓ Designation: ${name}`);
-      } else {
-        desgDocs.push(existing);
-        console.log(`  ○ Designation exists: ${name}`);
       }
+      desgDocs.push(desg);
     }
 
     // ── Locations ───────────────────────────────────────────────
+    console.log('\n── Seeding Locations ──\n');
     const locations = [
       { name: 'Head Office', address: 'Mumbai, Maharashtra', coordinates: { lat: 19.076, lng: 72.8777 } },
       { name: 'Plant 1', address: 'Pune, Maharashtra', coordinates: { lat: 18.5204, lng: 73.8567 } },
@@ -142,280 +63,368 @@ const seedAll = async () => {
     ];
     const locDocs = [];
     for (const loc of locations) {
-      const existing = await Location.findOne({ name: loc.name });
-      if (!existing) {
-        const location = await Location.create(loc);
-        locDocs.push(location);
+      let location = await Location.findOne({ name: loc.name });
+      if (!location) {
+        location = await Location.create(loc);
         console.log(`  ✓ Location: ${loc.name}`);
-      } else {
-        locDocs.push(existing);
-        console.log(`  ○ Location exists: ${loc.name}`);
       }
+      locDocs.push(location);
     }
 
-    // ── Sample Employees (NO super_admin — use admin.js for that) ──
-    console.log('\n── Seeding Employees ──\n');
+    // ── Users ───────────────────────────────────────────────────
+    console.log('\n── Seeding Users (Credentials, Roles, and Departments) ──\n');
 
-    const sampleEmployees = [
-      { employeeId: 'EMP001', fullName: 'Abhay Mudgal', email: 'abhay@mms.com', phone: '9876543210', role: 'employee' },
-      { employeeId: 'EMP002', fullName: 'Ayush Patil', email: 'ayush@mms.com', phone: '9876543211', role: 'employee' },
-      { employeeId: 'EMP003', fullName: 'Prathmesh Joshi', email: 'prathmesh@mms.com', phone: '9876543212', role: 'employee' },
-      { employeeId: 'EMP004', fullName: 'Shreyas Kadam', email: 'shreyas@mms.com', phone: '9876543213', role: 'employee' },
-      { employeeId: 'EMP005', fullName: 'Sanket Karande', email: 'sanket@mms.com', phone: '9876543214', role: 'employee' },
+    const userSpecs = [
+      {
+        employeeId: 'ADMIN001',
+        fullName: 'Adesh Bhongale',
+        email: 'admin@mms.com',
+        phone: '9999999959',
+        password: 'Admin@1234',
+        role: 'super_admin',
+        departmentAdminType: null,
+        deptName: 'Admin',
+        desgName: 'Director',
+        locName: 'Head Office'
+      },
+      {
+        employeeId: 'STORE001',
+        fullName: 'Prathmesh Joshi',
+        email: 'store@mms.com',
+        phone: '9876543210',
+        password: 'Store@1234',
+        role: 'department_admin',
+        departmentAdminType: 'store',
+        deptName: 'Stores',
+        desgName: 'Manager',
+        locName: 'Warehouse A'
+      },
+      {
+        employeeId: 'ACC001',
+        fullName: 'Shreyas Kadam',
+        email: 'accounts@mms.com',
+        phone: '9876543211',
+        password: 'Acc@1234',
+        role: 'department_admin',
+        departmentAdminType: 'accounts',
+        deptName: 'Finance',
+        desgName: 'Executive',
+        locName: 'Head Office'
+      },
+      {
+        employeeId: 'MGT001',
+        fullName: 'Sanket Karande',
+        email: 'management@mms.com',
+        phone: '9876543212',
+        password: 'Mgt@1234',
+        role: 'department_admin',
+        departmentAdminType: 'management',
+        deptName: 'Admin',
+        desgName: 'Director',
+        locName: 'Head Office'
+      },
+      {
+        employeeId: 'TL001',
+        fullName: 'Ayush Patil',
+        email: 'teamlead@mms.com',
+        phone: '9876543213',
+        password: 'Tl@1234',
+        role: 'team_lead',
+        departmentAdminType: null,
+        deptName: 'Engineering',
+        desgName: 'Supervisor',
+        locName: 'Plant 1'
+      },
+      {
+        employeeId: 'EMP001',
+        fullName: 'Abhay Mudgal',
+        email: 'abhay@mms.com',
+        phone: '9876543214',
+        password: 'password123',
+        role: 'employee',
+        departmentAdminType: null,
+        deptName: 'Engineering',
+        desgName: 'Engineer',
+        locName: 'Plant 1'
+      },
+      {
+        employeeId: 'EMP002',
+        fullName: 'Sneha Kulkarni',
+        email: 'sneha@mms.com',
+        phone: '9876543215',
+        password: 'password123',
+        role: 'employee',
+        departmentAdminType: null,
+        deptName: 'Production',
+        desgName: 'Technician',
+        locName: 'Plant 2'
+      }
     ];
 
-    const empDocs = [];
-    for (let i = 0; i < sampleEmployees.length; i++) {
-      const emp = sampleEmployees[i];
-      const exists = await User.findOne({ employeeId: emp.employeeId });
-      if (!exists) {
-        const created = await User.create({
-          ...emp,
-          password: 'password123',
-          department: deptDocs[i % deptDocs.length]._id,
-          designation: desgDocs[i % desgDocs.length]._id,
-          workLocation: locDocs[i % locDocs.length]._id,
+    const seededUsers = {};
+    for (const spec of userSpecs) {
+      let usr = await User.findOne({ employeeId: spec.employeeId });
+      if (!usr) {
+        const dept = deptDocs.find(d => d.name === spec.deptName);
+        const desg = desgDocs.find(d => d.name === spec.desgName);
+        const loc = locDocs.find(l => l.name === spec.locName);
+        usr = await User.create({
+          employeeId: spec.employeeId,
+          fullName: spec.fullName,
+          email: spec.email,
+          phone: spec.phone,
+          password: spec.password,
+          department: dept._id,
+          designation: desg._id,
+          workLocation: loc._id,
+          role: spec.role,
+          departmentAdminType: spec.departmentAdminType,
           status: 'active',
           mustChangePassword: false,
         });
-        empDocs.push(created);
-        console.log(`  ✓ Employee: ${emp.fullName} (${emp.employeeId})`);
-      } else {
-        empDocs.push(exists);
-        console.log(`  ○ Employee exists: ${emp.fullName} (${emp.employeeId})`);
+        console.log(`  ✓ User: ${spec.fullName} (${spec.employeeId}) [${spec.role} / ${spec.deptName}]`);
       }
+      seededUsers[spec.employeeId] = usr;
     }
 
-    // All users (employees only) for transaction pairing
-    const allUsers = empDocs;
+    // Convenience variables
+    const admin = seededUsers['ADMIN001'];
+    const store = seededUsers['STORE001'];
+    const accounts = seededUsers['ACC001'];
+    const management = seededUsers['MGT001'];
+    const teamlead = seededUsers['TL001'];
+    const abhay = seededUsers['EMP001'];
+    const sneha = seededUsers['EMP002'];
 
-    if (allUsers.length < 2) {
-      console.log('\n⚠️  Need at least 2 employees to seed transactions. Skipping transaction seeding.');
-      printSummary(sampleEmployees);
-      process.exit(0);
-    }
+    // ── Transactions (RDC default, 5 specific transactions with subloops) ──
+    console.log('\n── Seeding RDC Transactions and Barcode Sub-Loops ──\n');
 
-    // ══════════════════════════════════════════════════════════════
-    //  SEED TRANSACTIONS – 7+ per employee (diverse statuses/types)
-    // ══════════════════════════════════════════════════════════════
-    console.log('\n── Seeding Transactions ──\n');
+    // 1. Transaction 1: Active RDC loop with multiple barcodes
+    const txn1Id = makeTxnId();
+    const txn1 = await Transaction.create({
+      transactionId: txn1Id,
+      sender: abhay._id,
+      receiver: sneha._id,
+      documentType: 'RDC',
+      documentNumber: 'RDC-SEED-001',
+      expectedReturnDate: new Date(Date.now() + 14 * 86400000),
+      status: 'received',
+      description: 'Transfer of high-precision encoders to shop floor Plant 2',
+      priority: 'high',
+      costCenter: 'DEPT-ENG-2026',
+      grandTotal: 170,
+      materials: [
+        { name: 'Bearing 6205', description: 'Deep groove ball bearing', quantity: 2, qty: 2, unit: 'pcs', price: 85, total: 170, barcode: 'BC-00001-9923' }
+      ]
+    });
 
-    await initTxnCounter();
-
-    const docTypes = ['DC', 'RDC', 'Invoice', 'Emergency Send'];
-    const statuses = ['pending', 'accepted', 'rejected', 'completed', 'pending', 'accepted', 'pending'];
-    const descriptions = [
-      'Dispatch of fasteners and fittings to production line',
-      'Urgent transfer of spare parts for scheduled maintenance',
-      'Return of calibration instruments after quality audit',
-      'Emergency supply of PPE kits for safety compliance',
-      'Monthly stores replenishment – bearings and belts',
-      'Transfer of welding consumables to fabrication shop',
-      'Dispatch of electrical components for panel upgrade',
-      'Return of excess materials from completed project',
-      'Shift handover – tools and gauges transfer',
-      'Inter-plant transfer of raw materials for batch production',
+    // Create subloop barcodes for Transaction 1
+    const barcodes1 = [
+      { barcode: 'BC-00001-9923', status: 'Active', owner: sneha._id, remark: 'Initial transfer accepted' },
+      { barcode: 'BC-00002-8841', status: 'Returned', owner: store._id, remark: 'Material returned back to store stock shelves' }
     ];
 
-    const createdTxns = [];
-
-    for (const emp of allUsers) {
-      for (let t = 0; t < 7; t++) {
-        let receiver;
-        do { receiver = pick(allUsers); } while (receiver._id.toString() === emp._id.toString());
-
-        const docType = docTypes[t % docTypes.length];
-        const status = statuses[t % statuses.length];
-        const mats = randomMaterials(Math.floor(Math.random() * 3) + 1);
-        const gt = grandTotalOf(mats);
-
-        const daysAgo = Math.floor(Math.random() * 30);
-        const createdAt = new Date(Date.now() - daysAgo * 86400000);
-
-        const txn = await Transaction.create({
-          transactionId: makeTxnId(),
-          sender: emp._id,
-          receiver: receiver._id,
-          documentType: docType,
-          documentNumber: `${docType.replace(/\s/g, '')}-${1000 + txnCounter}`,
-          expectedReturnDate: docType === 'RDC' ? new Date(Date.now() + 14 * 86400000) : undefined,
-          status,
-          description: descriptions[t % descriptions.length],
-          remarks: t % 3 === 0 ? 'Handle with care – fragile components' : '',
-          materials: mats,
-          grandTotal: gt,
-          rejectionReason: status === 'rejected' ? 'Quantity mismatch found during physical verification' : '',
-          photos: [],
-          createdAt,
-          updatedAt: createdAt,
-        });
-        createdTxns.push(txn);
-        console.log(`  ✓ TXN ${txn.transactionId} | ${emp.fullName} → ${receiver.fullName} | ${docType} | ${status}`);
-
-        // Create notification for receiver
-        await Notification.create({
-          recipient: receiver._id,
-          type: status === 'rejected' ? 'rejected' : 'assigned',
-          title: `Material Request – ${txn.transactionId}`,
-          message: `${emp.fullName} sent you a ${docType} request (${txn.transactionId})`,
-          relatedTransaction: txn._id,
-          createdAt,
-        });
-      }
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    //  SEED INTERNAL RECEIPTS – for all "completed" transactions
-    // ══════════════════════════════════════════════════════════════
-    console.log('\n── Seeding Internal Receipts ──\n');
-
-    const completedTxns = createdTxns.filter((tx) => tx.status === 'completed');
-    for (const tx of completedTxns) {
-      await InternalReceipt.create({
-        transaction: tx._id,
-        receiver: tx.receiver,
-        materialCondition: pick(['Good', 'Good', 'Good', 'Minor damage', 'Acceptable']),
-        remarks: pick([
-          'All items received in good condition',
-          'Verified quantity matches DC. No discrepancies.',
-          'Received and stored in bay 3',
-          'Minor packaging damage but materials intact',
-          'Items tallied and accepted',
-        ]),
-        receiverGeo: {
-          lat: 18.5204 + (Math.random() * 0.01),
-          lng: 73.8567 + (Math.random() * 0.01),
-          accuracy: Math.floor(Math.random() * 15) + 3,
-          address: pick(locations).address,
-        },
-        createdAt: tx.createdAt,
+    for (const bc of barcodes1) {
+      await Barcode.create({
+        barcode: bc.barcode,
+        transactionId: txn1Id,
+        materialName: 'Bearing 6205',
+        status: bc.status,
+        owner: bc.owner,
+        history: [
+          { action: 'Created', user: abhay._id, remarks: 'Registered in request RDC-SEED-001' },
+          { action: 'Sourced', user: store._id, remarks: 'Store dispatched' },
+          { action: 'Accepted', user: sneha._id, remarks: bc.remark }
+        ]
       });
-      console.log(`  ✓ Internal Receipt for ${tx.transactionId}`);
 
-      // Notification to sender
-      await Notification.create({
-        recipient: tx.sender,
-        type: 'completed',
-        title: 'Material Received',
-        message: `Materials for ${tx.transactionId} have been received by the receiver`,
-        relatedTransaction: tx._id,
-        createdAt: tx.createdAt,
+      // Seed chat messages
+      await BarcodeChat.create({
+        barcode: bc.barcode,
+        transactionId: txn1Id,
+        sender: abhay._id,
+        message: `Barcode ${bc.barcode} delivered to Sneha. Verification complete.`
       });
     }
+    console.log(`  ✓ Transaction ${txn1Id}: Active RDC with 2 barcodes`);
 
-    // ══════════════════════════════════════════════════════════════
-    //  SEED EXTERNAL RECEIPTS – vendor & customer (3 per employee)
-    // ══════════════════════════════════════════════════════════════
-    console.log('\n── Seeding External Receipts ──\n');
-    let extCounter = 0;
+    // 2. Transaction 2: Pending Store assignment
+    const txn2Id = makeTxnId();
+    const txn2 = await Transaction.create({
+      transactionId: txn2Id,
+      sender: sneha._id,
+      receiver: abhay._id,
+      documentType: 'RDC',
+      documentNumber: 'RDC-SEED-002',
+      expectedReturnDate: new Date(Date.now() + 7 * 86400000),
+      status: 'ready_for_dispatch',
+      description: 'Lubricant drum transfer for maintenance machine oiling',
+      priority: 'medium',
+      costCenter: 'DEPT-MAINT-2026',
+      grandTotal: 120,
+      materials: [
+        { name: 'Lubricant 5L', description: 'Industrial machine oil', quantity: 1, qty: 1, unit: 'ltr', price: 120, total: 120, barcode: 'BC-00003-7281' }
+      ]
+    });
 
-    for (const emp of allUsers) {
-      for (let e = 0; e < 3; e++) {
-        const isVendor = e < 2;
-        const mats = randomMaterials(Math.floor(Math.random() * 3) + 1);
-        const gt = grandTotalOf(mats);
-        const daysAgo = Math.floor(Math.random() * 25);
-        const createdAt = new Date(Date.now() - daysAgo * 86400000);
+    await Barcode.create({
+      barcode: 'BC-00003-7281',
+      transactionId: txn2Id,
+      materialName: 'Lubricant 5L',
+      status: 'Active',
+      owner: store._id,
+      history: [
+        { action: 'Created', user: sneha._id, remarks: 'Request submitted' }
+      ]
+    });
+    console.log(`  ✓ Transaction ${txn2Id}: Pending store dispatch`);
 
-        if (isVendor) {
-          const v = pick(vendors);
-          extCounter += 1;
-          await ExternalReceipt.create({
-            receiptId: `EXT-SEED-${String(extCounter).padStart(6, '0')}`,
-            type: 'vendor',
-            vendorName: v.name,
-            vendorAddress: v.address,
-            prNumber: `PR-${5000 + txnCounter + e}`,
-            poNumber: `PO-${7000 + txnCounter + e}`,
-            orderedBy: pick(allUsers)._id,
-            receiver: emp._id,
-            materials: mats,
-            grandTotal: gt,
-            remarks: pick([
-              'Urgent order – expedited delivery',
-              'Annual maintenance contract supply',
-              'Replacement parts for breakdown',
-              'Project material indent',
-            ]),
-            receiverGeo: {
-              lat: 19.076 + (Math.random() * 0.01),
-              lng: 72.8777 + (Math.random() * 0.01),
-              accuracy: Math.floor(Math.random() * 10) + 5,
-              address: pick(locations).address,
-            },
-            photos: [],
-            createdAt,
-            updatedAt: createdAt,
-          });
-          console.log(`  ✓ Vendor Receipt  | ${v.name} → ${emp.fullName}`);
-        } else {
-          const c = pick(customers);
-          extCounter += 1;
-          await ExternalReceipt.create({
-            receiptId: `EXT-SEED-${String(extCounter).padStart(6, '0')}`,
-            type: 'customer',
-            customerName: c.name,
-            customerAddress: c.address,
-            documentNumber: `CUST-${8000 + txnCounter}`,
-            documentDescription: 'Customer return / incoming material',
-            orderedBy: pick(allUsers)._id,
-            receiver: emp._id,
-            materials: mats,
-            grandTotal: gt,
-            remarks: 'Customer returned unused surplus materials',
-            receiverGeo: {
-              lat: 18.5204 + (Math.random() * 0.01),
-              lng: 73.8567 + (Math.random() * 0.01),
-              accuracy: Math.floor(Math.random() * 10) + 5,
-              address: pick(locations).address,
-            },
-            photos: [],
-            createdAt,
-            updatedAt: createdAt,
-          });
-          console.log(`  ✓ Customer Receipt | ${c.name} → ${emp.fullName}`);
-        }
-      }
-    }
+    // 3. Transaction 3: Split Barcode Loop
+    const txn3Id = makeTxnId();
+    const txn3 = await Transaction.create({
+      transactionId: txn3Id,
+      sender: abhay._id,
+      receiver: sneha._id,
+      documentType: 'RDC',
+      documentNumber: 'RDC-SEED-003',
+      expectedReturnDate: new Date(Date.now() + 10 * 86400000),
+      status: 'received',
+      description: 'Bulk copper wire split delivery to assembly desk',
+      priority: 'high',
+      costCenter: 'DEPT-ENG-2026',
+      grandTotal: 1360,
+      materials: [
+        { name: 'Copper Wire 2.5mm', description: 'Electrical grade copper', quantity: 2, qty: 2, unit: 'kg', price: 680, total: 1360, barcode: 'BC-00004-9210' }
+      ]
+    });
 
-    // ── Final summary ───────────────────────────────────────────
-    printSummary(sampleEmployees);
-    process.exit(0);
-  } catch (error) {
-    console.error('Seed error:', error);
+    // Parent barcode split
+    await Barcode.create({
+      barcode: 'BC-00004-9210',
+      transactionId: txn3Id,
+      materialName: 'Copper Wire 2.5mm',
+      status: 'Active',
+      owner: sneha._id,
+      history: [
+        { action: 'Created', user: abhay._id, remarks: 'Challan request registered' },
+        { action: 'Split Parent', user: sneha._id, remarks: 'Split into child barcode BC-00005-9211' }
+      ]
+    });
+
+    // Child split barcode
+    await Barcode.create({
+      barcode: 'BC-00005-9211',
+      transactionId: txn3Id,
+      materialName: 'Copper Wire 2.5mm',
+      status: 'Active',
+      owner: sneha._id,
+      history: [
+        { action: 'Split Child Created', user: sneha._id, remarks: 'Created from split event of parent BC-00004-9210' }
+      ]
+    });
+    console.log(`  ✓ Transaction ${txn3Id}: Split Barcode Loop (Parent & Child active)`);
+
+    // 4. Transaction 4: RDC Converted to DC (Permanently consumed)
+    const txn4Id = makeTxnId();
+    const txn4 = await Transaction.create({
+      transactionId: txn4Id,
+      sender: abhay._id,
+      receiver: sneha._id,
+      documentType: 'DC', // Converted type
+      documentNumber: 'DC-CONV-004',
+      status: 'completed',
+      description: 'Fasteners and safety helmets for project erection (Permanently Consumed)',
+      priority: 'low',
+      costCenter: 'DEPT-CIVIL-2026',
+      grandTotal: 353,
+      materials: [
+        { name: 'Bolt M8x40', quantity: 1, qty: 1, unit: 'pcs', price: 3, total: 3, barcode: 'BC-00006-1182' },
+        { name: 'Safety Helmet', quantity: 1, qty: 1, unit: 'pcs', price: 350, total: 350, barcode: 'BC-00007-1183' }
+      ]
+    });
+
+    await Barcode.create({
+      barcode: 'BC-00006-1182',
+      transactionId: txn4Id,
+      materialName: 'Bolt M8x40',
+      status: 'Returned',
+      owner: store._id,
+      history: [
+        { action: 'Created', user: abhay._id },
+        { action: 'Consumed', user: sneha._id, remarks: 'Marked consumed after convert DC request' }
+      ]
+    });
+    console.log(`  ✓ Transaction ${txn4Id}: Converted RDC -> DC`);
+
+    // 5. Transaction 5: RDC Converted to Invoice
+    const txn5Id = makeTxnId();
+    const txn5 = await Transaction.create({
+      transactionId: txn5Id,
+      sender: sneha._id,
+      receiver: abhay._id,
+      documentType: 'Invoice', // Converted to billing invoice
+      documentNumber: 'INV-SEED-005',
+      status: 'completed',
+      description: 'Conveyor belts sold and billed via Invoice matching',
+      priority: 'high',
+      costCenter: 'DEPT-SALE-2026',
+      grandTotal: 900,
+      invoiceNumber: 'INV-990812',
+      invoiceDate: new Date(),
+      invoiceTotal: 900,
+      invoiceMatchStatus: 'matched',
+      materials: [
+        { name: 'Conveyor Belt 3m', quantity: 2, qty: 2, unit: 'mtr', price: 450, total: 900, barcode: 'BC-00008-6623' }
+      ]
+    });
+
+    await Barcode.create({
+      barcode: 'BC-00008-6623',
+      transactionId: txn5Id,
+      materialName: 'Conveyor Belt 3m',
+      status: 'Returned',
+      owner: store._id,
+      history: [
+        { action: 'Created', user: sneha._id },
+        { action: 'Billed', user: accounts._id, remarks: 'Invoice Matched' }
+      ]
+    });
+    console.log(`  ✓ Transaction ${txn5Id}: Converted RDC -> Invoice matched`);
+
+    // Print details
+    printSummary();
+
+  } catch (err) {
+    console.error('Seed error:', err);
     process.exit(1);
   }
 };
 
-async function printSummary(sampleEmployees) {
-  const userCount = await User.countDocuments();
-  const txnCount = await Transaction.countDocuments();
-  const intCount = await InternalReceipt.countDocuments();
-  const extCount = await ExternalReceipt.countDocuments();
-  const notifCount = await Notification.countDocuments();
-  const deptCount = await Department.countDocuments();
-  const desigCount = await Designation.countDocuments();
-  const locCount = await Location.countDocuments();
-
-  console.log('\n══════════════════════════════════════');
+const printSummary = () => {
+  console.log('\n══════════════════════════════════════════════════════════════');
   console.log('🌱 Seed completed successfully!');
-  console.log(`   Departments:        ${deptCount}`);
-  console.log(`   Designations:       ${desigCount}`);
-  console.log(`   Locations:          ${locCount}`);
-  console.log(`   Users:              ${userCount}`);
-  console.log(`   Transactions:       ${txnCount}`);
-  console.log(`   Internal Receipts:  ${intCount}`);
-  console.log(`   External Receipts:  ${extCount}`);
-  console.log(`   Notifications:      ${notifCount}`);
-  console.log('══════════════════════════════════════');
-  console.log('\n  Employee Login credentials:');
-  console.log('  ┌────────────────────────────────────────────────┐');
-  for (const emp of sampleEmployees) {
-    const padEmail = (emp.email + '  ').slice(0, 22);
-    console.log(`  │ ${emp.employeeId}: ${padEmail} / password123      │`);
-  }
-  console.log('  └────────────────────────────────────────────────┘');
-  console.log('\n  ℹ️  Admin is NOT seeded here. Run "npm run admin" separately.');
-}
+  console.log('══════════════════════════════════════════════════════════════');
+  console.log('\n🔐 ALL LOGIN CREDENTIALS BY ROLE & DEPARTMENT');
+  console.log('┌───────────────────────┬──────────────────────┬─────────────┬──────────────┐');
+  console.log('│ Employee Name         │ Email                │ Password    │ Role         │');
+  console.log('├───────────────────────┼──────────────────────┼─────────────┼──────────────┤');
+  console.log('│ Adesh Bhongale        │ admin@mms.com        │ Admin@1234  │ super_admin  │');
+  console.log('│ Prathmesh Joshi       │ store@mms.com        │ Store@1234  │ store_admin  │');
+  console.log('│ Shreyas Kadam         │ accounts@mms.com     │ Acc@1234    │ accounts     │');
+  console.log('│ Sanket Karande        │ management@mms.com   │ Mgt@1234    │ management   │');
+  console.log('│ Ayush Patil           │ teamlead@mms.com     │ Tl@1234     │ team_lead    │');
+  console.log('│ Abhay Mudgal          │ abhay@mms.com        │ password123 │ employee     │');
+  console.log('│ Sneha Kulkarni        │ sneha@mms.com        │ password123 │ employee     │');
+  console.log('└───────────────────────┴──────────────────────┴─────────────┴──────────────┘');
+  console.log('\n🏢 DEPARTMENT MAPPINGS:');
+  console.log('  • Adesh Bhongale  → Admin Department');
+  console.log('  • Prathmesh Joshi → Stores Department');
+  console.log('  • Shreyas Kadam   → Finance Department');
+  console.log('  • Sanket Karande  → Admin Department');
+  console.log('  • Ayush Patil     → Engineering Department');
+  console.log('  • Abhay Mudgal    → Engineering Department');
+  console.log('  • Sneha Kulkarni  → Production Department\n');
+  process.exit(0);
+};
 
 seedAll();
