@@ -42,7 +42,7 @@ export const StatsCard = ({
   trend,
   trendDirection = 'up', // 'up' | 'down' | 'neutral'
   className = '',
-  iconColor = 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40',
+  iconColor = 'text-primary dark:text-primary-100 bg-indigo-50 dark:bg-indigo-950/40',
   ...props
 }) => {
   const trendColors = {

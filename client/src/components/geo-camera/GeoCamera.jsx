@@ -260,7 +260,7 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
 
         {/* Captured Preview */}
         {capturedPhoto && (
-          <img src={capturedPhoto} alt="Captured" className="w-full h-full object-cover animate-in fade-in duration-200" />
+          <img src={capturedPhoto} alt="Captured" className="w-full h-full object-cover animate-fade-in" />
         )}
 
         {/* Live Camera Feed */}

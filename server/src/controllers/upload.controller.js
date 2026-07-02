@@ -1,125 +1,35 @@
-const { uploadToCloudinary, useMock } = require('../config/cloudinary');
-const fs = require('fs');
-const path = require('path');
+const multer = require('multer');
+const { uploadToCloudinary } = require('../config/cloudinary');
 
-// Ensure uploads directory exists for local mock storage
-const uploadsDir = path.join(__dirname, '../../uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image and PDF files are allowed.'));
+    }
+  },
+});
 
-// POST /api/upload
-const uploadImage = async (req, res) => {
+exports.uploadMiddleware = upload.single('file');
+
+exports.uploadFile = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded.' });
     }
 
-    const folder = req.body.folder || 'mms/photos';
-    const result = await uploadToCloudinary(req.file.buffer, folder);
+    const result = await uploadToCloudinary(req.file.buffer, 'mms');
 
     res.json({
+      message: 'File uploaded.',
       url: result.secure_url,
       publicId: result.public_id,
-      width: result.width,
-      height: result.height,
-      format: result.format,
     });
   } catch (error) {
     console.error('Upload error:', error);
-    res.status(500).json({ message: 'Upload failed.', error: error.message });
+    res.status(500).json({ message: 'Upload failed.' });
   }
 };
-
-// POST /api/upload/base64
-const uploadBase64 = async (req, res) => {
-  try {
-    const { image, folder = 'mms/photos' } = req.body;
-    if (!image) {
-      return res.status(400).json({ message: 'No image data provided.' });
-    }
-
-    if (useMock) {
-      // Decode base64 image data
-      // e.g. "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
-      const matches = image && image.match && image.match(/^data:([A-Za-z\-+\/]+);base64,(.+)$/);
-      let buffer;
-      let extension = 'jpg';
-
-      if (matches && matches.length === 3) {
-        // Proper data URI
-        buffer = Buffer.from(matches[2], 'base64');
-        const mimeType = matches[1];
-        if (mimeType.includes('png')) extension = 'png';
-      } else if (/^[A-Za-z0-9+/=\r\n]+$/.test(image)) {
-        // Plain base64 string
-        buffer = Buffer.from(image, 'base64');
-      } else {
-        // Invalid data — return error instead of writing malformed file
-        return res.status(400).json({ message: 'Invalid base64 image data provided.' });
-      }
-
-      const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
-      const uploadPath = path.join(__dirname, '../../uploads', filename);
-
-      await fs.promises.writeFile(uploadPath, buffer);
-
-      const port = process.env.PORT || 5000;
-      return res.json({
-        url: `http://localhost:${port}/uploads/${filename}`,
-        publicId: filename,
-      });
-    }
-
-    try {
-      const result = await new Promise((resolve, reject) => {
-        require('cloudinary').v2.uploader.upload(
-          image,
-          { folder, resource_type: 'image' },
-          (error, result) => {
-            if (error) reject(error);
-            else resolve(result);
-          }
-        );
-      });
-
-      res.json({
-        url: result.secure_url,
-        publicId: result.public_id,
-      });
-    } catch (cloudinaryErr) {
-      console.warn('⚠️ Cloudinary base64 upload failed. Falling back to local storage:', cloudinaryErr.message);
-
-      const matches2 = image && image.match && image.match(/^data:([A-Za-z\-+\/]+);base64,(.+)$/);
-      let buffer2;
-      let extension2 = 'jpg';
-
-      if (matches2 && matches2.length === 3) {
-        buffer2 = Buffer.from(matches2[2], 'base64');
-        const mimeType = matches2[1];
-        if (mimeType.includes('png')) extension2 = 'png';
-      } else if (/^[A-Za-z0-9+/=\r\n]+$/.test(image)) {
-        buffer2 = Buffer.from(image, 'base64');
-      } else {
-        return res.status(400).json({ message: 'Invalid base64 image data provided.' });
-      }
-
-      const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension2}`;
-      const uploadPath = path.join(__dirname, '../../uploads', filename);
-
-      await fs.promises.writeFile(uploadPath, buffer2);
-
-      const port = process.env.PORT || 5000;
-      res.json({
-        url: `http://localhost:${port}/uploads/${filename}`,
-        publicId: filename,
-      });
-    }
-  } catch (error) {
-    console.error('Base64 upload error:', error);
-    res.status(500).json({ message: 'Upload failed.', error: error.message });
-  }
-};
-
-module.exports = { uploadImage, uploadBase64 };
-

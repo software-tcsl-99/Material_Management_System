@@ -34,7 +34,7 @@ const PendingApprovals = ({ approvals = [], onRefresh }) => {
         // Redirect to receiving page or submit standard accept.
         // Wait, for incoming transactions, the receiver must accept them.
         // Let's call /api/transactions/:id/accept endpoint
-        await api.patch(`/transactions/${selectedTxn._id}/accept`, {
+        await api.put(`/transactions/${selectedTxn._id}/approve`, {
           remarks,
         });
       } else {
@@ -44,8 +44,8 @@ const PendingApprovals = ({ approvals = [], onRefresh }) => {
           setSubmitting(false);
           return;
         }
-        await api.patch(`/transactions/${selectedTxn._id}/reject`, {
-          rejectionReason,
+        await api.put(`/transactions/${selectedTxn._id}/reject`, {
+          reason: rejectionReason,
         });
       }
 

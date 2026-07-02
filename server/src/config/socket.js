@@ -10,7 +10,6 @@ const initSocket = (httpServer) => {
     },
   });
 
-  // Authentication middleware for socket connections
   io.use((socket, next) => {
     const userId = socket.handshake.auth.userId;
     if (!userId) {
@@ -25,6 +24,25 @@ const initSocket = (httpServer) => {
 
     // Join user's personal room
     socket.join(`user:${socket.userId}`);
+
+    // Join transaction chat room
+    socket.on('join_transaction', (transactionId) => {
+      socket.join(`txn:${transactionId}`);
+      console.log(`User ${socket.userId} joined txn:${transactionId}`);
+    });
+
+    socket.on('leave_transaction', (transactionId) => {
+      socket.leave(`txn:${transactionId}`);
+    });
+
+    // Chat typing indicator
+    socket.on('typing', ({ transactionId, userName }) => {
+      socket.to(`txn:${transactionId}`).emit('user_typing', { userId: socket.userId, userName });
+    });
+
+    socket.on('stop_typing', ({ transactionId }) => {
+      socket.to(`txn:${transactionId}`).emit('user_stop_typing', { userId: socket.userId });
+    });
 
     socket.on('disconnect', () => {
       console.log(`User disconnected: ${socket.userId}`);
@@ -47,10 +65,16 @@ const emitToUser = (userId, event, data) => {
   }
 };
 
+const emitToTransaction = (transactionId, event, data) => {
+  if (io) {
+    io.to(`txn:${transactionId}`).emit(event, data);
+  }
+};
+
 const emitToAll = (event, data) => {
   if (io) {
     io.emit(event, data);
   }
 };
 
-module.exports = { initSocket, getIO, emitToUser, emitToAll };
+module.exports = { initSocket, getIO, emitToUser, emitToTransaction, emitToAll };

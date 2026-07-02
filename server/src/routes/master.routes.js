@@ -1,34 +1,27 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth.middleware');
-const { authorize } = require('../middleware/rbac.middleware');
-const upload = require('../middleware/upload.middleware');
-const {
-  getDepartments, createDepartment, updateDepartment, deleteDepartment,
-  getDesignations, createDesignation, updateDesignation, deleteDesignation,
-  getLocations, createLocation, updateLocation, deleteLocation,
-  uploadMastersCSV,
-} = require('../controllers/master.controller');
+const masterController = require('../controllers/master.controller');
+const auth = require('../middleware/auth');
+const { requirePermission } = require('../middleware/rbac');
 
-// Bulk CSV Upload
-router.post('/upload-csv', authenticate, authorize('super_admin', 'admin'), upload.single('file'), uploadMastersCSV);
+router.use(auth);
 
 // Departments
-router.get('/departments', authenticate, getDepartments);
-router.post('/departments', authenticate, authorize('super_admin', 'admin'), createDepartment);
-router.put('/departments/:id', authenticate, authorize('super_admin', 'admin'), updateDepartment);
-router.delete('/departments/:id', authenticate, authorize('super_admin', 'admin'), deleteDepartment);
+router.get('/departments', requirePermission('master:view'), masterController.getDepartments);
+router.post('/departments', requirePermission('master:create'), masterController.createDepartment);
+router.put('/departments/:id', requirePermission('master:edit'), masterController.updateDepartment);
+router.delete('/departments/:id', requirePermission('master:delete'), masterController.deleteDepartment);
 
 // Designations
-router.get('/designations', authenticate, getDesignations);
-router.post('/designations', authenticate, authorize('super_admin', 'admin'), createDesignation);
-router.put('/designations/:id', authenticate, authorize('super_admin', 'admin'), updateDesignation);
-router.delete('/designations/:id', authenticate, authorize('super_admin', 'admin'), deleteDesignation);
+router.get('/designations', requirePermission('master:view'), masterController.getDesignations);
+router.post('/designations', requirePermission('master:create'), masterController.createDesignation);
+router.put('/designations/:id', requirePermission('master:edit'), masterController.updateDesignation);
+router.delete('/designations/:id', requirePermission('master:delete'), masterController.deleteDesignation);
 
 // Locations
-router.get('/locations', authenticate, getLocations);
-router.post('/locations', authenticate, authorize('super_admin', 'admin'), createLocation);
-router.put('/locations/:id', authenticate, authorize('super_admin', 'admin'), updateLocation);
-router.delete('/locations/:id', authenticate, authorize('super_admin', 'admin'), deleteLocation);
+router.get('/locations', requirePermission('master:view'), masterController.getLocations);
+router.post('/locations', requirePermission('master:create'), masterController.createLocation);
+router.put('/locations/:id', requirePermission('master:edit'), masterController.updateLocation);
+router.delete('/locations/:id', requirePermission('master:delete'), masterController.deleteLocation);
 
 module.exports = router;

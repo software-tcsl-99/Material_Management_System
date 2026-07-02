@@ -7,13 +7,10 @@ const { initSocket } = require('./src/config/socket');
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
-  // Connect to MongoDB
   await connectDB();
 
-  // Create HTTP server
   const server = http.createServer(app);
 
-  // Initialize Socket.IO
   initSocket(server);
 
   server.listen(PORT, () => {

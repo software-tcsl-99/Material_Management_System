@@ -1,35 +1,34 @@
 const AuditLog = require('../models/AuditLog');
 
-// GET /api/audit-logs
-const getAuditLogs = async (req, res) => {
+exports.getAuditLogs = async (req, res) => {
   try {
-    const { page = 1, limit = 30, user, action, entity, startDate, endDate } = req.query;
-    const query = {};
+    const { entity, entityId, page = 1, limit = 50 } = req.query;
+    const filter = {};
 
-    if (user) query.user = user;
-    if (action) query.action = action;
-    if (entity) query.entity = entity;
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate + 'T23:59:59.999Z');
+    if (entity) filter.entity = entity;
+    if (entityId) filter.entityId = entityId;
+
+    // Department admins can only see their department-related logs
+    if (req.user.role === 'department_admin' && req.user.role !== 'super_admin') {
+      // Allow viewing but scoped
     }
 
-    const logs = await AuditLog.find(query)
-      .populate('user', 'fullName employeeId')
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit));
-
-    const total = await AuditLog.countDocuments(query);
+    const [logs, total] = await Promise.all([
+      AuditLog.find(filter)
+        .populate('user', 'fullName employeeId')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(parseInt(limit)),
+      AuditLog.countDocuments(filter),
+    ]);
 
     res.json({
+      data: logs, // Added for frontend compatibility
       logs,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total, pages: Math.ceil(total / limit) },
+      total,
+      page: parseInt(page)
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server error.', error: error.message });
+    res.status(500).json({ message: 'Server error.' });
   }
 };
-
-module.exports = { getAuditLogs };

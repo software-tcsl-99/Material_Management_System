@@ -1,14 +1,15 @@
 {
   "name": "mms-server",
   "version": "1.0.0",
-  "description": "MMS Backend - Express + MongoDB",
+  "description": "Material Management System - Enterprise Backend",
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "seed": "node src/seeds/seed.js",
-    "admin": "node src/seeds/admin.js",
-    "reset": "node src/seeds/reset.js"
+    "seed": "node src/scripts/seed.js",
+    "admin": "node src/scripts/admin.js",
+    "reset": "node src/scripts/reset.js",
+    "test": "node src/scripts/test-flows.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const notificationSchema = new mongoose.Schema(
   {
-    recipient: {
+    user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
@@ -11,43 +11,46 @@ const notificationSchema = new mongoose.Schema(
     type: {
       type: String,
       enum: [
-        'assigned',
-        'accepted',
-        'rejected',
-        'completed',
-        'reminder',
-        'escalation',
-        'daily_summary',
-        'resubmitted',
+        'request_created',
+        'request_approved',
+        'request_rejected',
+        'request_cancelled',
+        'request_escalated',
+        'store_accepted',
+        'handler_assigned',
+        'material_dispatched',
+        'material_received',
+        'transfer_initiated',
+        'transfer_accepted',
+        'transfer_rejected',
+        'return_initiated',
+        'return_accepted',
+        'split_initiated',
+        'split_approved',
+        'split_rejected',
+        'loop_closed',
+        'transaction_closed',
+        'chat_message',
+        'mention',
+        'system',
       ],
       required: true,
     },
-    title: {
+    title: { type: String, required: true },
+    message: { type: String, required: true },
+    transactionId: { type: String },
+    barcodeId: { type: String },
+    actionUrl: { type: String, default: '' },
+    read: { type: Boolean, default: false },
+    priority: {
       type: String,
-      required: true,
-    },
-    message: {
-      type: String,
-      required: true,
-    },
-    relatedTransaction: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Transaction',
-    },
-    relatedExternalReceipt: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'ExternalReceipt',
-    },
-    isRead: {
-      type: Boolean,
-      default: false,
-      index: true,
+      enum: ['low', 'medium', 'high'],
+      default: 'medium',
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
-
-// Compound index for efficient queries
-notificationSchema.index({ recipient: 1, isRead: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Notification', notificationSchema);

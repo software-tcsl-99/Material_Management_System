@@ -1,44 +1,39 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { createAuditLog } = require('../middleware/audit.middleware');
-const { emitToUser } = require('../config/socket');
+const AuditLog = require('../models/AuditLog');
 
-const generateAccessToken = (user) => {
-  return jwt.sign(
-    { id: user._id, role: user.role, employeeId: user.employeeId, sessionVersion: user.sessionVersion || 0 },
+const generateTokens = (user) => {
+  const accessToken = jwt.sign(
+    { id: user._id, role: user.role, sessionVersion: user.sessionVersion },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
+    { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
   );
-};
-
-const generateRefreshToken = (user) => {
-  return jwt.sign(
-    { id: user._id },
+  const refreshToken = jwt.sign(
+    { id: user._id, sessionVersion: user.sessionVersion },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
   );
+  return { accessToken, refreshToken };
 };
 
-// POST /api/auth/login
-const login = async (req, res) => {
+exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ message: 'Email address is required.' });
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required.' });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase().trim() })
+    const user = await User.findOne({ email: email.toLowerCase() })
       .select('+password')
-      .populate('department', 'name')
+      .populate('department', 'name code')
       .populate('designation', 'name')
-      .populate('workLocation', 'name address coordinates');
+      .populate('workLocation', 'name address');
 
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
-    if (user.status === 'disabled') {
+    if (user.status !== 'active') {
       return res.status(403).json({ message: 'Account is disabled. Contact administrator.' });
     }
 
@@ -47,49 +42,48 @@ const login = async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
-    // Invalidate other devices by incrementing session version and sending socket event
-    user.sessionVersion = (user.sessionVersion || 0) + 1;
-    emitToUser(user._id.toString(), 'session:invalid', { message: 'Logged in from another device.' });
+    const { accessToken, refreshToken } = generateTokens(user);
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    // Store ONLY the current refresh token (forces logout of other sessions on next refresh)
-    user.refreshTokens = [{
+    // Store refresh token
+    user.refreshTokens.push({
       token: refreshToken,
-      device: req.headers['user-agent'] || 'Unknown',
-    }];
-
-    // Add to login history
-    user.loginHistory.push({
-      ip: req.ip || req.connection?.remoteAddress,
-      device: req.headers['user-agent'] || 'Unknown',
-      browser: req.body.browser || '',
-      os: req.body.os || '',
+      device: req.headers['user-agent'] || 'unknown',
     });
 
-    // Keep only last 20 login entries
-    if (user.loginHistory.length > 20) {
-      user.loginHistory = user.loginHistory.slice(-20);
+    // Keep only last 5 refresh tokens
+    if (user.refreshTokens.length > 5) {
+      user.refreshTokens = user.refreshTokens.slice(-5);
     }
+
+    // Add login history
+    user.loginHistory.push({
+      ip: req.ip,
+      device: req.headers['user-agent'],
+      browser: req.headers['user-agent'],
+      os: 'unknown',
+    });
 
     await user.save();
 
-    await createAuditLog({
-      user: user._id,
-      action: 'login',
+    // Audit log
+    await AuditLog.create({
+      action: 'LOGIN',
       entity: 'User',
-      entityId: user.employeeId,
-      req,
+      entityId: user._id.toString(),
+      user: user._id,
+      userName: user.fullName,
+      description: `${user.fullName} logged in`,
+      ip: req.ip,
+      device: req.headers['user-agent'],
     });
 
-    const userData = user.toJSON();
+    const userResponse = user.toJSON();
 
     res.json({
-      user: userData,
+      message: 'Login successful',
       accessToken,
       refreshToken,
-      mustChangePassword: user.mustChangePassword,
+      user: userResponse,
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -97,116 +91,60 @@ const login = async (req, res) => {
   }
 };
 
-// POST /api/auth/refresh
-const refreshAccessToken = async (req, res) => {
+exports.refreshToken = async (req, res) => {
   try {
     const { refreshToken } = req.body;
     if (!refreshToken) {
-      return res.status(401).json({ message: 'Refresh token required.' });
+      return res.status(400).json({ message: 'Refresh token is required.' });
     }
 
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await User.findById(decoded.id);
 
-    if (!user) {
-      return res.status(401).json({ message: 'User not found.' });
+    if (!user || user.status !== 'active') {
+      return res.status(401).json({ message: 'Invalid refresh token.' });
     }
 
     const tokenExists = user.refreshTokens.some((t) => t.token === refreshToken);
     if (!tokenExists) {
-      return res.status(401).json({ message: 'Invalid refresh token.' });
+      return res.status(401).json({ message: 'Refresh token not found.' });
     }
 
-    const accessToken = generateAccessToken(user);
-    res.json({ accessToken });
+    // Remove old refresh token
+    user.refreshTokens = user.refreshTokens.filter((t) => t.token !== refreshToken);
+
+    // Generate new tokens
+    const tokens = generateTokens(user);
+    user.refreshTokens.push({
+      token: tokens.refreshToken,
+      device: req.headers['user-agent'] || 'unknown',
+    });
+
+    await user.save();
+
+    res.json({
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    });
   } catch (error) {
-    return res.status(401).json({ message: 'Invalid or expired refresh token.' });
+    return res.status(401).json({ message: 'Invalid refresh token.' });
   }
 };
 
-// POST /api/auth/logout
-const logout = async (req, res) => {
+exports.logout = async (req, res) => {
   try {
     const { refreshToken } = req.body;
-    const user = req.user;
-
-    if (refreshToken) {
-      user.refreshTokens = user.refreshTokens.filter((t) => t.token !== refreshToken);
-      await user.save();
+    if (refreshToken && req.user) {
+      req.user.refreshTokens = req.user.refreshTokens.filter((t) => t.token !== refreshToken);
+      await req.user.save();
     }
-
-    await createAuditLog({
-      user: user._id,
-      action: 'logout',
-      entity: 'User',
-      entityId: user.employeeId,
-      req,
-    });
-
     res.json({ message: 'Logged out successfully.' });
   } catch (error) {
     res.status(500).json({ message: 'Server error during logout.' });
   }
 };
 
-// POST /api/auth/change-password
-const changePassword = async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    const user = await User.findById(req.user._id).select('+password');
-
-    if (!user.mustChangePassword) {
-      const isMatch = await user.comparePassword(currentPassword);
-      if (!isMatch) {
-        return res.status(400).json({ message: 'Current password is incorrect.' });
-      }
-    }
-
-    // Validate password strength
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-    if (!passwordRegex.test(newPassword)) {
-      return res.status(400).json({
-        message: 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.',
-      });
-    }
-
-    user.password = newPassword;
-    user.mustChangePassword = false;
-    user.sessionVersion = (user.sessionVersion || 0) + 1;
-    emitToUser(user._id.toString(), 'session:invalid', { message: 'Password changed. Logging out other sessions.' });
-    user.refreshTokens = [];
-    await user.save();
-
-    await createAuditLog({
-      user: user._id,
-      action: 'password_change',
-      entity: 'User',
-      entityId: user.employeeId,
-      req,
-    });
-
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    user.refreshTokens = [{
-      token: refreshToken,
-      device: req.headers['user-agent'] || 'Unknown',
-    }];
-    await user.save();
-
-    res.json({
-      message: 'Password changed successfully.',
-      accessToken,
-      refreshToken,
-    });
-  } catch (error) {
-    console.error('Change password error:', error);
-    res.status(500).json({ message: 'Server error.' });
-  }
-};
-
-// GET /api/auth/me
-const getMe = async (req, res) => {
+exports.me = async (req, res) => {
   try {
     res.json({ user: req.user });
   } catch (error) {
@@ -214,4 +152,33 @@ const getMe = async (req, res) => {
   }
 };
 
-module.exports = { login, refreshAccessToken, logout, changePassword, getMe };
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current and new password are required.' });
+    }
+
+    const user = await User.findById(req.user._id).select('+password');
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Current password is incorrect.' });
+    }
+
+    user.password = newPassword;
+    user.mustChangePassword = false;
+    user.sessionVersion += 1;
+    user.refreshTokens = [];
+    await user.save();
+
+    const tokens = generateTokens(user);
+
+    res.json({
+      message: 'Password changed successfully.',
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error.' });
+  }
+};

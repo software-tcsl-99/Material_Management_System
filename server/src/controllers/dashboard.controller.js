@@ -1,16 +1,55 @@
 const Transaction = require('../models/Transaction');
+const Barcode = require('../models/Barcode');
+const Notification = require('../models/Notification');
 const InternalReceipt = require('../models/InternalReceipt');
 const ExternalReceipt = require('../models/ExternalReceipt');
-const ActivityLog = require('../models/ActivityLog');
 const AuditLog = require('../models/AuditLog');
-const Notification = require('../models/Notification');
 
-// GET /api/dashboard/stats
-const getStats = async (req, res) => {
+const getTxnFilterForUser = async (user) => {
+  const userId = user._id;
+  const userRole = user.role;
+  const userDept = user.department?._id || user.department;
+  
+  if (userRole === 'super_admin') {
+    return {};
+  }
+
+  if (userRole === 'department_admin') {
+    if (user.departmentAdminType === 'store' || user.departmentAdminType === 'management' || user.departmentAdminType === 'accounts') {
+      return {};
+    }
+  }
+  
+  const userBarcodes = await Barcode.find({ owner: userId });
+  const userTxnIds = userBarcodes.map(b => b.transactionId);
+  
+  const baseFilter = {
+    $or: [
+      { requester: userId },
+      { handler: userId },
+      { teamLead: userId },
+      { managementApprover: userId },
+      { store: userId },
+      { transactionId: { $in: userTxnIds } }
+    ]
+  };
+
+  if (userRole === 'team_lead' || userRole === 'department_admin') {
+    if (userDept) {
+      baseFilter.$or.push({ department: userDept });
+    }
+  }
+
+  return baseFilter;
+};
+
+exports.getStats = async (req, res) => {
   try {
     const userId = req.user._id;
-    const isAdmin = ['super_admin', 'admin'].includes(req.user.role);
-    const baseQuery = isAdmin ? {} : { $or: [{ sender: userId }, { receiver: userId }] };
+    const userRole = req.user.role;
+    const userDept = req.user.department._id || req.user.department;
+
+    const txnFilter = await getTxnFilterForUser(req.user);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -18,15 +57,15 @@ const getStats = async (req, res) => {
 
     const [total, pending, accepted, rejected, completed, todayCount, monthCount, internalCount, externalCount] =
       await Promise.all([
-        Transaction.countDocuments(baseQuery),
-        Transaction.countDocuments({ ...baseQuery, status: 'pending' }),
-        Transaction.countDocuments({ ...baseQuery, status: 'accepted' }),
-        Transaction.countDocuments({ ...baseQuery, status: 'rejected' }),
-        Transaction.countDocuments({ ...baseQuery, status: 'completed' }),
-        Transaction.countDocuments({ ...baseQuery, createdAt: { $gte: today } }),
-        Transaction.countDocuments({ ...baseQuery, createdAt: { $gte: firstDayOfMonth } }),
-        InternalReceipt.countDocuments(isAdmin ? {} : { receiver: userId }),
-        ExternalReceipt.countDocuments(isAdmin ? {} : { receiver: userId }),
+        Transaction.countDocuments(txnFilter),
+        Transaction.countDocuments({ ...txnFilter, status: { $in: ['submitted', 'tl_approved', 'mgt_approved'] } }),
+        Transaction.countDocuments({ ...txnFilter, status: 'store_accepted' }),
+        Transaction.countDocuments({ ...txnFilter, status: 'rejected' }),
+        Transaction.countDocuments({ ...txnFilter, status: 'completed' }),
+        Transaction.countDocuments({ ...txnFilter, createdAt: { $gte: today } }),
+        Transaction.countDocuments({ ...txnFilter, createdAt: { $gte: firstDayOfMonth } }),
+        InternalReceipt.countDocuments(req.user.role === 'super_admin' ? {} : { receiver: userId }),
+        ExternalReceipt.countDocuments(req.user.role === 'super_admin' ? {} : { receiver: userId }),
       ]);
 
     res.json({
@@ -45,26 +84,117 @@ const getStats = async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Stats dashboard error:', error);
     res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
 
-// GET /api/dashboard/charts
-const getChartData = async (req, res) => {
+exports.getChartData = async (req, res) => {
   try {
-    const isAdmin = ['super_admin', 'admin'].includes(req.user.role);
     const userId = req.user._id;
+    const userRole = req.user.role;
+    const userDept = req.user.department._id || req.user.department;
+
+    const txnFilter = await getTxnFilterForUser(req.user);
 
     // Daily transactions for last 30 days
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const matchStage = isAdmin
-      ? { createdAt: { $gte: thirtyDaysAgo } }
-      : { createdAt: { $gte: thirtyDaysAgo }, $or: [{ sender: userId }, { receiver: userId }] };
+    const [dailyTransactions, docTypeDistribution] = await Promise.all([
+      Transaction.aggregate([
+        { $match: { ...txnFilter, createdAt: { $gte: thirtyDaysAgo } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
+      Transaction.aggregate([
+        { $match: txnFilter },
+        { $group: { _id: '$documentType', count: { $sum: 1 } } },
+      ]),
+    ]);
 
-    const dailyTransactions = await Transaction.aggregate([
-      { $match: matchStage },
+    res.json({
+      data: {
+        charts: {
+          dailyTransactions,
+          docTypeDistribution,
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Charts dashboard error:', error);
+    res.status(500).json({ message: 'Server error.', error: error.message });
+  }
+};
+
+exports.getRecentActivities = async (req, res) => {
+  try {
+    const audits = await AuditLog.find()
+      .populate('user', 'fullName employeeId profilePhoto')
+      .sort({ createdAt: -1 })
+      .limit(20);
+
+    const mapped = (audits || []).map((a) => ({
+      _id: a._id,
+      user: a.user,
+      action: a.action,
+      details: a.description || `${a.entity} ${a.entityId}`,
+      createdAt: a.createdAt,
+    }));
+
+    res.json({ data: mapped });
+  } catch (error) {
+    console.error('Recent activities dashboard error:', error);
+    res.status(500).json({ message: 'Server error.', error: error.message });
+  }
+};
+
+exports.getDashboard = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const userRole = req.user.role;
+    const userDept = req.user.department._id || req.user.department;
+
+    const txnFilter = await getTxnFilterForUser(req.user);
+
+    const [
+      totalTransactions,
+      activeItems,
+      pendingCount,
+      returnedCount,
+      closedCount,
+      recentTransactions,
+      unreadNotifications,
+    ] = await Promise.all([
+      Transaction.countDocuments(txnFilter),
+      Transaction.countDocuments({ ...txnFilter, status: { $in: ['received', 'active', 'partially_returned'] } }),
+      Transaction.countDocuments({ ...txnFilter, status: { $in: ['submitted', 'tl_approved', 'mgt_approved'] } }),
+      Transaction.countDocuments({ ...txnFilter, status: 'partially_returned' }),
+      Transaction.countDocuments({ ...txnFilter, status: 'closed' }),
+      Transaction.find(txnFilter)
+        .populate('requester', 'fullName employeeId')
+        .populate('department', 'name')
+        .sort({ createdAt: -1 })
+        .limit(5),
+      Notification.countDocuments({ user: userId, read: false }),
+    ]);
+
+    // Status distribution for chart
+    const statusCounts = await Transaction.aggregate([
+      { $match: txnFilter },
+      { $group: { _id: '$status', count: { $sum: 1 } } },
+    ]);
+
+    // Requests over time (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const requestsOverTime = await Transaction.aggregate([
+      { $match: { ...txnFilter, createdAt: { $gte: thirtyDaysAgo } } },
       {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
@@ -74,104 +204,32 @@ const getChartData = async (req, res) => {
       { $sort: { _id: 1 } },
     ]);
 
-    // Monthly transactions for last 12 months
-    const twelveMonthsAgo = new Date();
-    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+    // Barcode summary
+    let barcodeFilter = {};
+    if (userRole !== 'super_admin') {
+      barcodeFilter.owner = userId;
+    }
 
-    const monthlyMatch = isAdmin
-      ? { createdAt: { $gte: twelveMonthsAgo } }
-      : { createdAt: { $gte: twelveMonthsAgo }, $or: [{ sender: userId }, { receiver: userId }] };
-
-    const monthlyTransactions = await Transaction.aggregate([
-      { $match: monthlyMatch },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } },
-          count: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    // Status distribution
-    const statusDistribution = await Transaction.aggregate([
-      { $match: isAdmin ? {} : { $or: [{ sender: userId }, { receiver: userId }] } },
-      { $group: { _id: '$status', count: { $sum: 1 } } },
-    ]);
-
-    // Document type distribution
-    const docTypeDistribution = await Transaction.aggregate([
-      { $match: isAdmin ? {} : { $or: [{ sender: userId }, { receiver: userId }] } },
-      { $group: { _id: '$documentType', count: { $sum: 1 } } },
+    const [activeBarcodes, returnedBarcodes] = await Promise.all([
+      Barcode.countDocuments({ ...barcodeFilter, status: 'Active' }),
+      Barcode.countDocuments({ ...barcodeFilter, status: 'Returned' }),
     ]);
 
     res.json({
-      data: {
-        charts: {
-          dailyTransactions,
-          monthlyTransactions,
-          statusDistribution,
-          docTypeDistribution,
-        }
-      }
+      kpi: {
+        activeItems: activeBarcodes,
+        pending: pendingCount,
+        returned: returnedBarcodes,
+        closed: closedCount,
+        totalTransactions,
+        unreadNotifications,
+      },
+      statusDistribution: statusCounts,
+      requestsOverTime,
+      recentTransactions,
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server error.', error: error.message });
+    console.error('Dashboard error:', error);
+    res.status(500).json({ message: 'Server error.' });
   }
 };
-
-// GET /api/dashboard/recent
-// Return recent audit logs for admin visibility; fall back to activity logs
-const getRecentActivities = async (req, res) => {
-  try {
-    // Prefer AuditLog (created by audit middleware) as it contains system events
-    const audits = await AuditLog.find()
-      .populate('user', 'fullName employeeId profilePhoto')
-      .sort({ createdAt: -1 })
-      .limit(20);
-
-    if (audits && audits.length > 0) {
-      // Map audits into a shape compatible with client RecentActivities
-      const mapped = audits.map((a) => ({
-        _id: a._id,
-        user: a.user,
-        action: a.action,
-        details: `${a.entity} ${a.entityId} ${a.newData ? '' : ''}`.trim(),
-        createdAt: a.createdAt,
-      }));
-      return res.json({ data: mapped });
-    }
-
-    // Fallback to ActivityLog if no audit records
-    const activities = await ActivityLog.find()
-      .populate('user', 'fullName employeeId profilePhoto')
-      .sort({ createdAt: -1 })
-      .limit(20);
-
-    res.json({ data: activities });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-// GET /api/dashboard/pending
-const getPendingApprovals = async (req, res) => {
-  try {
-    const query = { status: 'pending' };
-    if (!['super_admin', 'admin'].includes(req.user.role)) {
-      query.receiver = req.user._id;
-    }
-
-    const pending = await Transaction.find(query)
-      .populate('sender', 'fullName employeeId')
-      .populate('receiver', 'fullName employeeId')
-      .sort({ createdAt: -1 })
-      .limit(10);
-
-    res.json({ data: pending });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-module.exports = { getStats, getChartData, getRecentActivities, getPendingApprovals };

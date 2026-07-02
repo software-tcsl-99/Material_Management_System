@@ -9,7 +9,7 @@ const Spinner = ({ size = 'md', className = '' }) => {
 
   return (
     <div
-      className={`animate-spin rounded-full border-solid border-slate-200 border-t-indigo-600 dark:border-slate-800 dark:border-t-indigo-400 ${sizes[size]} ${className}`}
+      className={`animate-spin rounded-full border-solid border-slate-200 border-t-primary dark:border-slate-800 dark:border-t-primary-100 ${sizes[size]} ${className}`}
       role="status"
     >
       <span className="sr-only">Loading...</span>

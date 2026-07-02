@@ -4,8 +4,7 @@ import api from '../../lib/axios';
 import Button from '../../components/ui/Button';
 
 const SplitLotModal = ({ isOpen, onClose, barcode, onSuccess }) => {
-  const [newBarcode, setNewBarcode] = useState('');
-  const [remarks, setRemarks] = useState('');
+  const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -13,21 +12,21 @@ const SplitLotModal = ({ isOpen, onClose, barcode, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!newBarcode.trim()) {
-      setError('Please enter a target new barcode ID.');
+    if (!reason.trim()) {
+      setError('Please enter a remark or reason for the split.');
       return;
     }
     setError('');
     setSubmitting(true);
     try {
-      const res = await api.post(`/barcodes/${barcode.barcode}/split`, {
-        newBarcode: newBarcode.trim(),
-        remarks
+      const res = await api.post('/barcodes/split-request', {
+        barcode: barcode.barcode,
+        reason: reason.trim()
       });
-      alert(res.data.message || 'Lot split successfully.');
+      alert('Split request submitted to store successfully!');
       onSuccess();
     } catch (err) {
-      setError(err.response?.data?.message || 'Lot split failed.');
+      setError(err.response?.data?.message || 'Failed to submit split request.');
     } finally {
       setSubmitting(false);
     }
@@ -40,9 +39,9 @@ const SplitLotModal = ({ isOpen, onClose, barcode, onSuccess }) => {
           <div>
             <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
               <Split className="w-5 h-5 text-blue-500" />
-              Split Lot Barcode
+              Request Material Split
             </h3>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Parent: {barcode.barcode}</p>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Parent Barcode: {barcode.barcode}</p>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer">
             <X className="w-5 h-5" />
@@ -50,26 +49,25 @@ const SplitLotModal = ({ isOpen, onClose, barcode, onSuccess }) => {
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4 text-xs">
-          <div>
-            <label className="block text-slate-500 font-extrabold uppercase tracking-wider mb-1">New Target Barcode ID *</label>
-            <input
-              type="text"
-              value={newBarcode}
-              onChange={(e) => setNewBarcode(e.target.value)}
-              required
-              placeholder="e.g. EN120033"
-              className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold font-mono"
-            />
+          <div className="grid grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-950/20 p-3.5 rounded-xl border border-slate-100 dark:border-slate-850">
+            <div>
+              <span className="text-slate-400 font-bold uppercase text-[9px] block">Material</span>
+              <span className="font-extrabold text-slate-700 dark:text-slate-200">{barcode.materialName}</span>
+            </div>
+            <div>
+              <span className="text-slate-400 font-bold uppercase text-[9px] block">Current Owner</span>
+              <span className="font-extrabold text-slate-700 dark:text-slate-200">{barcode.owner?.fullName || 'Active Owner'}</span>
+            </div>
           </div>
 
           <div>
-            <label className="block text-slate-500 font-extrabold uppercase tracking-wider mb-1">Remarks / Details *</label>
+            <label className="block text-slate-500 font-extrabold uppercase tracking-wider mb-1">Remark / Reason for Split *</label>
             <textarea
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
               required
-              placeholder="Provide reason for split (e.g. Lot split for multiple assembly desks)..."
-              rows="2.5"
+              placeholder="Provide reason for split request..."
+              rows="3"
               className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
             />
           </div>
@@ -84,7 +82,7 @@ const SplitLotModal = ({ isOpen, onClose, barcode, onSuccess }) => {
           <div className="flex gap-2 justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
             <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
             <Button variant="primary" type="submit" disabled={submitting}>
-              {submitting ? 'Submitting...' : 'Confirm Split'}
+              {submitting ? 'Sending...' : 'Send Request'}
             </Button>
           </div>
         </form>

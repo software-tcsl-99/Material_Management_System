@@ -15,15 +15,16 @@ const Button = React.forwardRef(({
   const baseStyles = 'inline-flex items-center justify-center font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none active:scale-[0.98] cursor-pointer';
   
   const variants = {
-    primary: 'bg-indigo-600 hover:bg-indigo-700 text-white focus:ring-indigo-500 shadow-md hover:shadow-indigo-500/20',
+    primary: 'bg-primary hover:bg-primary-dark text-white focus:ring-primary shadow-md hover:shadow-primary/20',
     secondary: 'bg-slate-100 hover:bg-slate-200 text-slate-900 focus:ring-slate-400 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100',
-    outline: 'border border-slate-300 bg-transparent hover:bg-slate-50 text-slate-700 focus:ring-indigo-500 dark:border-slate-700 dark:hover:bg-slate-800 dark:text-slate-300',
-    danger: 'bg-red-600 hover:bg-red-700 text-white focus:ring-red-500 shadow-md hover:shadow-red-500/20',
-    success: 'bg-emerald-600 hover:bg-emerald-700 text-white focus:ring-emerald-500 shadow-md hover:shadow-emerald-500/20',
+    outline: 'border border-slate-300 bg-transparent hover:bg-slate-50 text-slate-700 focus:ring-primary dark:border-slate-700 dark:hover:bg-slate-800 dark:text-slate-300',
+    danger: 'bg-danger hover:bg-danger-dark text-white focus:ring-danger shadow-md',
+    success: 'bg-success hover:bg-success-dark text-white focus:ring-success shadow-md',
     ghost: 'hover:bg-slate-100 text-slate-700 hover:text-slate-950 focus:ring-slate-400 dark:hover:bg-slate-800 dark:text-slate-300 dark:hover:text-slate-100',
   };
 
   const sizes = {
+    xs: 'text-[10px] px-2 py-1 gap-1',
     sm: 'text-xs px-3 py-1.5 gap-1.5',
     md: 'text-sm px-4 py-2 gap-2',
     lg: 'text-base px-5 py-2.5 gap-2.5',

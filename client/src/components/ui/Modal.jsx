@@ -45,7 +45,7 @@ const Modal = ({
       {/* Modal Content */}
       <div className={`
         relative w-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-100 dark:border-slate-800
-        flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200
+        flex flex-col overflow-hidden animate-fade-in
         ${sizes[size]}
         max-h-[90vh]
       `}>

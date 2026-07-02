@@ -1,509 +1,832 @@
 const Barcode = require('../models/Barcode');
-const BarcodeChat = require('../models/BarcodeChat');
-const User = require('../models/User');
 const Transaction = require('../models/Transaction');
+const Transfer = require('../models/Transfer');
+const Return = require('../models/Return');
+const AuditLog = require('../models/AuditLog');
 const Notification = require('../models/Notification');
-const ActivityLog = require('../models/ActivityLog');
-const { createAuditLog } = require('../middleware/audit.middleware');
 const { emitToUser } = require('../config/socket');
 
-// GET /api/barcodes
-const getBarcodes = async (req, res) => {
+const createNotification = async (userId, type, title, message, transactionId, barcodeId) => {
+  const notif = await Notification.create({ user: userId, type, title, message, transactionId, barcodeId });
+  emitToUser(userId.toString(), 'notification', notif);
+};
+
+/**
+ * Get barcode detail
+ */
+exports.getBarcodeDetail = async (req, res) => {
   try {
-    const { status, search, transactionId, owner } = req.query;
+    const { barcode } = req.params;
+    const bc = await Barcode.findOne({ barcode })
+      .populate('owner', 'fullName employeeId department designation')
+      .populate('ownerDepartment', 'name')
+      .populate('history.user', 'fullName employeeId')
+      .populate('ownershipHistory.user', 'fullName employeeId')
+      .populate('ownershipHistory.department', 'name')
+      .populate({
+        path: 'transaction',
+        populate: [
+          { path: 'requester', select: 'fullName employeeId department designation' },
+          { path: 'teamLead', select: 'fullName employeeId' },
+          { path: 'handler', select: 'fullName employeeId' }
+        ]
+      });
+
+    if (!bc) {
+      return res.status(404).json({ message: 'Barcode not found.' });
+    }
+
+    // Get related transfers and returns
+    const transfers = await Transfer.find({ barcode })
+      .populate('fromUser', 'fullName employeeId')
+      .populate('toUser', 'fullName employeeId')
+      .sort({ createdAt: -1 });
+
+    const returns = await Return.find({ barcode })
+      .populate('fromUser', 'fullName employeeId')
+      .populate('returnHandler', 'fullName employeeId')
+      .sort({ createdAt: -1 });
+
+    res.json({ barcode: bc, transfers, returns });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Get all barcodes for a transaction
+ */
+exports.getBarcodesByTransaction = async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    const barcodes = await Barcode.find({ transactionId })
+      .populate('owner', 'fullName employeeId department')
+      .populate('ownerDepartment', 'name');
+
+    res.json({ barcodes });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Transfer barcode to another user
+ */
+exports.transferBarcode = async (req, res) => {
+  try {
+    const { barcode, toUserId, remarks, requiresApproval, gps, photos } = req.body;
+
+    const bc = await Barcode.findOne({ barcode }).populate('owner');
+    if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
+    if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+    if (bc.owner._id.toString() !== req.user._id.toString() && req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'You are not the owner of this barcode.' });
+    }
+
+    const User = require('../models/User');
+    const toUser = await User.findById(toUserId).populate('department');
+    if (!toUser) return res.status(404).json({ message: 'Target user not found.' });
+
+    // Determine if cross-department
+    const fromDept = (req.user.department._id || req.user.department).toString();
+    const toDept = (toUser.department._id || toUser.department).toString();
+    const isCrossDept = fromDept !== toDept;
+
+    const transfer = await Transfer.create({
+      transactionId: bc.transactionId,
+      barcode,
+      fromUser: req.user._id,
+      toUser: toUserId,
+      fromDepartment: req.user.department._id || req.user.department,
+      toDepartment: toUser.department._id || toUser.department,
+      type: isCrossDept ? 'cross_department' : 'internal',
+      requiresApproval: isCrossDept || requiresApproval,
+      status: 'pending', // Always pending first
+      remarks,
+      gps,
+      photos: photos || [],
+    });
+
+    bc.history.push({
+      action: 'Transfer Initiated',
+      user: req.user._id,
+      remarks: isCrossDept
+        ? `Transfer initiated to ${toUser.fullName} (pending Management approval)`
+        : `Transfer initiated to ${toUser.fullName} (pending recipient acceptance)`,
+    });
+    await bc.save();
+
+    await createNotification(
+      toUserId,
+      'transfer_initiated',
+      'Transfer Request',
+      `${req.user.fullName} wants to transfer ${barcode} to you`,
+      bc.transactionId,
+      barcode
+    );
+
+    await AuditLog.create({
+      action: 'TRANSFER',
+      entity: 'Barcode',
+      entityId: barcode,
+      user: req.user._id,
+      userName: req.user.fullName,
+      description: `Transfer ${barcode} from ${req.user.fullName} to ${toUser.fullName}`,
+    });
+
+    res.json({ message: 'Transfer initiated.', transfer });
+  } catch (error) {
+    console.error('Transfer error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+exports.handleTransfer = async (req, res) => {
+  try {
+    const { transferId, action, reason, gps } = req.body;
+
+    const transfer = await Transfer.findById(transferId);
+    if (!transfer) return res.status(404).json({ message: 'Transfer not found.' });
+
+    // Check if the actor is Management
+    const isManagement = req.user.role === 'department_admin' && req.user.departmentAdminType === 'management';
+
+    if (isManagement && transfer.type === 'cross_department' && transfer.status === 'pending') {
+      if (action === 'accept') {
+        transfer.status = 'approved';
+        transfer.approvedBy = req.user._id;
+        transfer.approvedAt = new Date();
+        await transfer.save();
+
+        await createNotification(
+          transfer.toUser,
+          'transfer_approved_mgt',
+          'Transfer Approved by Management',
+          `Management approved transfer of ${transfer.barcode}. You can now accept it.`,
+          transfer.transactionId,
+          transfer.barcode
+        );
+
+        return res.json({ message: 'Transfer approved by management.', transfer });
+      } else if (action === 'reject') {
+        transfer.status = 'rejected';
+        transfer.rejectedBy = req.user._id;
+        transfer.rejectionReason = reason;
+        await transfer.save();
+
+        const bc = await Barcode.findOne({ barcode: transfer.barcode });
+        bc.history.push({
+          action: 'Transfer Rejected by Management',
+          user: req.user._id,
+          remarks: reason,
+        });
+        await bc.save();
+
+        await createNotification(
+          transfer.fromUser,
+          'transfer_rejected_mgt',
+          'Transfer Rejected by Management',
+          `Management rejected transfer of ${transfer.barcode}: ${reason}`,
+          transfer.transactionId,
+          transfer.barcode
+        );
+
+        return res.json({ message: 'Transfer rejected by management.', transfer });
+      }
+    }
+
+    // Otherwise, this is the recipient accepting/rejecting
+    if (transfer.toUser.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'You are not authorized to respond to this transfer.' });
+    }
+
+    if (action === 'accept') {
+      transfer.status = 'completed';
+      if (req.body.photos) {
+        transfer.photos = req.body.photos;
+      }
+      const bc = await Barcode.findOne({ barcode: transfer.barcode });
+      bc.owner = transfer.toUser;
+      bc.ownerDepartment = transfer.toDepartment;
+      bc.transferCount += 1;
+      bc.ownershipHistory.push({
+        user: transfer.toUser,
+        department: transfer.toDepartment,
+        action: 'transferred',
+        remarks: 'Transfer accepted',
+      });
+      bc.history.push({
+        action: 'Transfer Accepted',
+        user: req.user._id,
+        remarks: 'Transfer accepted',
+        gps,
+        photos: req.body.photos || []
+      });
+      await bc.save();
+
+      // Update nested barcode owner inside the Transaction document
+      const Transaction = require('../models/Transaction');
+      await Transaction.updateOne(
+        { transactionId: transfer.transactionId, 'materials.barcodes.barcode': transfer.barcode },
+        { $set: { 'materials.$[].barcodes.$[bc].owner': transfer.toUser } },
+        { arrayFilters: [{ 'bc.barcode': transfer.barcode }] }
+      );
+
+      await createNotification(
+        transfer.fromUser,
+        'transfer_accepted',
+        'Transfer Accepted',
+        `Transfer of ${transfer.barcode} was accepted`,
+        transfer.transactionId,
+        transfer.barcode
+      );
+    } else if (action === 'reject') {
+      transfer.status = 'rejected';
+      transfer.rejectedBy = req.user._id;
+      transfer.rejectionReason = reason;
+
+      const bc = await Barcode.findOne({ barcode: transfer.barcode });
+      bc.history.push({
+        action: 'Transfer Rejected',
+        user: req.user._id,
+        remarks: reason,
+      });
+      await bc.save();
+
+      await createNotification(
+        transfer.fromUser,
+        'transfer_rejected',
+        'Transfer Rejected',
+        `Transfer of ${transfer.barcode} was rejected: ${reason}`,
+        transfer.transactionId,
+        transfer.barcode
+      );
+    }
+
+    await transfer.save();
+    res.json({ message: `Transfer ${action}ed.`, transfer });
+  } catch (error) {
+    console.error('Handle transfer error:', error);
+    res.status(550).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Return barcode to store
+ */
+exports.returnBarcode = async (req, res) => {
+  try {
+    const { barcode, reason, condition, remarks, gps, photos } = req.body;
+
+    const bc = await Barcode.findOne({ barcode });
+    if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
+    if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+
+    const returnDoc = await Return.create({
+      transactionId: bc.transactionId,
+      barcode,
+      fromUser: req.user._id,
+      status: 'pending',
+      reason,
+      condition: condition || 'good',
+      remarks,
+      gps,
+      photos: photos || [],
+    });
+
+    bc.history.push({
+      action: 'Return Requested',
+      user: req.user._id,
+      remarks: reason || 'Return to store requested',
+      gps,
+    });
+    await bc.save();
+
+    await AuditLog.create({
+      action: 'RETURN_REQUEST',
+      entity: 'Barcode',
+      entityId: barcode,
+      user: req.user._id,
+      userName: req.user.fullName,
+      description: `Return requested for ${barcode}`,
+    });
+
+    res.json({ message: 'Return request submitted.', return: returnDoc });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Store accepts return
+ */
+exports.acceptReturn = async (req, res) => {
+  try {
+    const { returnId } = req.params;
+    const returnDoc = await Return.findById(returnId);
+    if (!returnDoc) return res.status(404).json({ message: 'Return not found.' });
+
+    returnDoc.status = 'completed';
+    returnDoc.store = req.user._id;
+    returnDoc.receivedAt = new Date();
+    await returnDoc.save();
+
+    // Update barcode
+    const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
+    bc.status = 'Returned';
+    bc.owner = req.user._id; // Store user
+    bc.history.push({
+      action: 'Returned to Store',
+      user: req.user._id,
+      remarks: 'Store received and confirmed return',
+    });
+    bc.ownershipHistory.push({
+      user: req.user._id,
+      action: 'returned',
+      remarks: 'Returned to store',
+    });
+    await bc.save();
+
+    // Update transaction counts
+    const transaction = await Transaction.findOne({ transactionId: bc.transactionId });
+    if (transaction) {
+      transaction.returnedItems = (transaction.returnedItems || 0) + 1;
+      transaction.activeItems = Math.max(0, (transaction.activeItems || 0) - 1);
+
+      // Check if all items returned
+      if (transaction.returnedItems >= transaction.totalItems) {
+        transaction.status = 'closed';
+        transaction.closedAt = new Date();
+        transaction.closedBy = req.user._id;
+        transaction.chatLocked = true;
+        transaction.timeline.push({
+          action: 'Transaction Closed',
+          description: 'All items returned to store',
+          user: req.user._id,
+        });
+      } else {
+        transaction.status = 'partially_returned';
+      }
+
+      await transaction.save();
+    }
+
+    await createNotification(
+      returnDoc.fromUser,
+      'return_accepted',
+      'Return Accepted',
+      `Return of ${returnDoc.barcode} has been accepted by store`,
+      returnDoc.transactionId,
+      returnDoc.barcode
+    );
+
+    res.json({ message: 'Return accepted.', return: returnDoc });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Create split request
+ */
+exports.createSplitRequest = async (req, res) => {
+  try {
+    const { barcode, reason } = req.body;
+
+    if (!barcode || !reason) {
+      return res.status(400).json({ message: 'Barcode and reason are required.' });
+    }
+
+    const bc = await Barcode.findOne({ barcode });
+    if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
+    if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+
+    // Check ownership
+    if (bc.owner.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'You do not own this barcode.' });
+    }
+
+    const SplitRequest = require('../models/SplitRequest');
+    const splitReq = await SplitRequest.create({
+      transactionId: bc.transactionId,
+      barcode,
+      materialName: bc.materialName,
+      requester: req.user._id,
+      reason,
+      status: 'pending',
+    });
+
+    bc.history.push({
+      action: 'Split Requested',
+      user: req.user._id,
+      remarks: reason,
+    });
+    await bc.save();
+
+    res.json({ message: 'Split request submitted to store.', data: splitReq });
+  } catch (error) {
+    console.error('Create split request error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Get pending split requests (for store)
+ */
+exports.getPendingSplitRequests = async (req, res) => {
+  try {
+    // Only Store users or super admins can view pending split requests
+    const isStore = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store');
+    if (!isStore) {
+      return res.status(403).json({ message: 'Only Store users can view pending split requests.' });
+    }
+
+    const SplitRequest = require('../models/SplitRequest');
+    const requests = await SplitRequest.find({ status: 'pending' })
+      .populate('requester', 'fullName employeeId');
+
+    res.json({ data: requests, requests });
+  } catch (error) {
+    console.error('Get split requests error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Approve split request (for store)
+ */
+exports.approveSplitRequest = async (req, res) => {
+  try {
+    const { requestId, newBarcode, materialName, quantity, action, reason } = req.body;
+
+    const isStore = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store');
+    if (!isStore) {
+      return res.status(403).json({ message: 'Only Store users can approve split requests.' });
+    }
+
+    const SplitRequest = require('../models/SplitRequest');
+    const splitReq = await SplitRequest.findById(requestId);
+    if (!splitReq) return res.status(404).json({ message: 'Split request not found.' });
+    if (splitReq.status !== 'pending') return res.status(400).json({ message: 'Request is already processed.' });
+
+    if (action === 'reject') {
+      splitReq.status = 'rejected';
+      await splitReq.save();
+
+      // Update parent barcode history
+      const parentBc = await Barcode.findOne({ barcode: splitReq.barcode });
+      if (parentBc) {
+        parentBc.history.push({
+          action: 'Split Rejected',
+          user: req.user._id,
+          remarks: reason || 'Rejected by store',
+        });
+        await parentBc.save();
+      }
+
+      await createNotification(
+        splitReq.requester,
+        'split_rejected',
+        'Split Request Rejected',
+        `Store rejected your split request for barcode ${splitReq.barcode}: ${reason || ''}`,
+        splitReq.transactionId,
+        splitReq.barcode
+      );
+
+      return res.json({ message: 'Split request rejected by store.', data: splitReq });
+    }
+
+    // Check if newBarcode already exists
+    const existingBc = await Barcode.findOne({ barcode: newBarcode });
+    if (existingBc) {
+      return res.status(400).json({ message: `Barcode ${newBarcode} already exists.` });
+    }
+
+    // Get parent barcode details
+    const parentBc = await Barcode.findOne({ barcode: splitReq.barcode });
+    if (!parentBc) return res.status(404).json({ message: 'Parent barcode not found.' });
+
+    // Get requester details
+    const User = require('../models/User');
+    const requesterUser = await User.findById(splitReq.requester);
+    if (!requesterUser) return res.status(404).json({ message: 'Requester not found.' });
+
+    // Mark request as approved
+    splitReq.status = 'approved';
+    splitReq.approvedBy = req.user._id;
+    splitReq.approvedAt = new Date();
+    splitReq.newBarcode = newBarcode;
+    splitReq.newQuantity = quantity || 1;
+    await splitReq.save();
+
+    // Create the NEW Barcode document
+    const newBcDoc = await Barcode.create({
+      barcode: newBarcode,
+      transactionId: parentBc.transactionId,
+      transaction: parentBc.transaction,
+      materialName: materialName || parentBc.materialName,
+      status: 'Active', // Instantly active, no acceptance step
+      owner: splitReq.requester,
+      ownerDepartment: requesterUser.department,
+      parentBarcode: parentBc.barcode,
+      isSplit: true,
+      ownershipHistory: [{
+        user: splitReq.requester,
+        department: requesterUser.department,
+        action: 'split_created',
+        remarks: `Split approved by store. New material active.`,
+      }],
+      history: [{
+        action: 'Split Child Created',
+        user: req.user._id,
+        remarks: `Created from split approval of parent ${parentBc.barcode}`,
+      }],
+    });
+
+    // Mark parent barcode as split or add to history
+    parentBc.history.push({
+      action: 'Split Approved',
+      user: req.user._id,
+      remarks: `Split approved. New child barcode ${newBarcode} created.`,
+    });
+    await parentBc.save();
+
+    // Update parent Transaction document to include this new barcode!
+    const Transaction = require('../models/Transaction');
+    const transaction = await Transaction.findOne({ transactionId: parentBc.transactionId });
+    if (transaction) {
+      // Find the matching material entry by name
+      const material = transaction.materials.find(
+        m => m.name.toLowerCase() === parentBc.materialName.toLowerCase()
+      );
+      if (material) {
+        // Push the new barcode into the barcodes list of this material
+        material.barcodes.push({
+          barcode: newBarcode,
+          status: 'Active',
+          owner: splitReq.requester,
+        });
+        material.quantity = (material.quantity || 0) + 1;
+      } else {
+        // If not found (shouldn't happen), create a new material entry
+        transaction.materials.push({
+          name: materialName || parentBc.materialName,
+          quantity: 1,
+          unit: 'pcs',
+          barcodes: [{
+            barcode: newBarcode,
+            status: 'Active',
+            owner: splitReq.requester,
+          }]
+        });
+      }
+      transaction.totalItems = (transaction.totalItems || 0) + 1;
+      transaction.activeItems = (transaction.activeItems || 0) + 1;
+      
+      transaction.timeline.push({
+        action: 'Split Approved',
+        description: `Store approved split. New barcode ${newBarcode} registered and active.`,
+        user: req.user._id,
+      });
+      await transaction.save();
+    }
+
+    // Notify requester to accept the split material
+    await createNotification(
+      splitReq.requester,
+      'split_approved',
+      'Split Request Approved',
+      `Store approved your split request. The new material ${newBarcode} is now active.`,
+      splitReq.transactionId,
+      newBarcode
+    );
+
+    res.json({ message: 'Split approved and new material created.', data: newBcDoc });
+  } catch (error) {
+    console.error('Approve split request error:', error);
+    res.status(550).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Accept split material (by employee)
+ */
+exports.acceptSplitMaterial = async (req, res) => {
+  try {
+    const { barcode, gps, photos } = req.body;
+
+    const bc = await Barcode.findOne({ barcode });
+    if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
+    if (bc.status !== 'pending_acceptance') {
+      return res.status(400).json({ message: 'Barcode is not pending acceptance.' });
+    }
+
+    // Verify ownership
+    if (bc.owner.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'You are not authorized to accept this barcode.' });
+    }
+
+    // Update Barcode document status to Active
+    bc.status = 'Active';
+    bc.history.push({
+      action: 'Split Material Accepted',
+      user: req.user._id,
+      remarks: 'Split material accepted by requester',
+      gps,
+      photos: photos || [],
+    });
+    await bc.save();
+
+    // Update status in the parent Transaction document's nested barcodes array!
+    const Transaction = require('../models/Transaction');
+    await Transaction.updateOne(
+      { transactionId: bc.transactionId, 'materials.barcodes.barcode': barcode },
+      { $set: { 'materials.$[].barcodes.$[bc].status': 'Active' } },
+      { arrayFilters: [{ 'bc.barcode': barcode }] }
+    );
+
+    res.json({ message: 'Barcode accepted successfully.', barcode: bc });
+  } catch (error) {
+    console.error('Accept split material error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * List all barcodes (with filtering)
+ */
+exports.listBarcodes = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, status } = req.query;
+    const filter = {};
+
+    if (status) filter.status = status;
+
+    if (req.user.role === 'employee') {
+      filter.owner = req.user._id;
+    }
+
+    const [barcodes, total] = await Promise.all([
+      Barcode.find(filter)
+        .populate('owner', 'fullName employeeId')
+        .populate('ownerDepartment', 'name')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(parseInt(limit)),
+      Barcode.countDocuments(filter),
+    ]);
+
+    res.json({ data: barcodes, total, page: parseInt(page) });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Search barcodes
+ */
+exports.searchBarcodes = async (req, res) => {
+  try {
+    const { q, status } = req.query;
+    const filter = {};
+    if (q) {
+      filter.$or = [
+        { barcode: { $regex: q, $options: 'i' } },
+        { materialName: { $regex: q, $options: 'i' } },
+      ];
+    }
+    if (status) filter.status = status;
+
+    // Role-based filtering (restrict others' materials)
+    if (req.user.role === 'employee') {
+      filter.owner = req.user._id;
+    } else if (req.user.role === 'team_lead') {
+      filter.ownerDepartment = req.user.department._id || req.user.department;
+    } else if (req.user.role === 'department_admin') {
+      if (req.user.departmentAdminType !== 'store' && req.user.departmentAdminType !== 'management' && req.user.departmentAdminType !== 'accounts') {
+        filter.ownerDepartment = req.user.department._id || req.user.department;
+      }
+    }
+
+    const barcodes = await Barcode.find(filter)
+      .populate('owner', 'fullName employeeId')
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    res.json({ barcodes });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Get pending transfers for current user/department
+ */
+exports.getPendingTransfers = async (req, res) => {
+  try {
     const query = {};
 
-    if (status) query.status = status;
-    if (transactionId) query.transactionId = transactionId;
-    if (owner) query.owner = owner;
-
-    if (search) {
-      const searchRegex = { $regex: search, $options: 'i' };
+    if (req.user.role === 'employee') {
+      // Employee sees internal pending transfers OR approved cross-department transfers
+      query.toUser = req.user._id;
       query.$or = [
-        { barcode: searchRegex },
-        { materialName: searchRegex },
-        { transactionId: searchRegex }
+        { status: 'pending', type: 'internal' },
+        { status: 'approved', type: 'cross_department' }
+      ];
+    } else if (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management') {
+      // Management sees cross-department transfers pending management approval
+      query.type = 'cross_department';
+      query.status = 'pending';
+    } else {
+      // Return empty if not employee or management
+      return res.json({ data: [], transfers: [] });
+    }
+
+    const transfers = await Transfer.find(query)
+      .populate('fromUser', 'fullName employeeId')
+      .populate('toUser', 'fullName employeeId')
+      .populate('fromDepartment', 'name')
+      .populate('toDepartment', 'name');
+
+    res.json({ data: transfers, transfers });
+  } catch (error) {
+    console.error('Pending transfers error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Get pending returns (for store)
+ */
+exports.getPendingReturns = async (req, res) => {
+  try {
+    const isStore = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store');
+    if (!isStore) {
+      return res.status(403).json({ message: 'Only Store users can view pending return requests.' });
+    }
+
+    const Return = require('../models/Return');
+    const returns = await Return.find({ status: 'pending' })
+      .populate('fromUser', 'fullName employeeId');
+
+    res.json({ data: returns, returns });
+  } catch (error) {
+    console.error('Get pending returns error:', error);
+    res.status(550).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Get all transfers
+ */
+exports.getAllTransfers = async (req, res) => {
+  try {
+    const filter = {};
+    if (req.user.role === 'employee') {
+      filter.$or = [
+        { fromUser: req.user._id },
+        { toUser: req.user._id }
+      ];
+    } else if (req.user.role === 'team_lead') {
+      filter.$or = [
+        { fromDepartment: req.user.department._id || req.user.department },
+        { toDepartment: req.user.department._id || req.user.department }
       ];
     }
 
-    // Role-based visibility filtering
+    const transfers = await Transfer.find(filter)
+      .populate('fromUser', 'fullName employeeId')
+      .populate('toUser', 'fullName employeeId')
+      .populate('fromDepartment', 'name')
+      .populate('toDepartment', 'name')
+      .sort({ createdAt: -1 });
+
+    res.json({ data: transfers });
+  } catch (error) {
+    console.error('Get all transfers error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Get all returns
+ */
+exports.getAllReturns = async (req, res) => {
+  try {
+    const filter = {};
     if (req.user.role === 'employee') {
-      // Employees see what they currently own
-      query.owner = req.user._id;
-    } else if (req.user.role === 'team_lead') {
-      // Team Leads see what they own + their department's barcodes
-      const teamUserIds = await User.find({ department: req.user.department }).select('_id');
-      query.owner = { $in: teamUserIds.map(u => u._id) };
-    } else if (req.user.role === 'department_admin') {
-      // Dept admins see all barcodes in their department
-      const deptUserIds = await User.find({ department: req.user.department }).select('_id');
-      query.owner = { $in: deptUserIds.map(u => u._id) };
+      filter.fromUser = req.user._id;
     }
 
-    const barcodes = await Barcode.find(query)
-      .populate('owner', 'fullName employeeId department designation')
-      .populate({
-        path: 'owner',
-        populate: { path: 'department', select: 'name' }
-      })
-      .sort({ updatedAt: -1 });
+    const returns = await Return.find(filter)
+      .populate('fromUser', 'fullName employeeId')
+      .populate('returnHandler', 'fullName employeeId')
+      .populate('store', 'fullName employeeId')
+      .sort({ createdAt: -1 });
 
-    res.json({ data: barcodes });
+    res.json({ data: returns });
   } catch (error) {
-    console.error('Get barcodes error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
+    console.error('Get all returns error:', error);
+    res.status(500).json({ message: 'Server error.' });
   }
-};
-
-// GET /api/barcodes/:barcode
-const getBarcodeByCode = async (req, res) => {
-  try {
-    const barcode = await Barcode.findOne({ barcode: req.params.barcode })
-      .populate('owner', 'fullName employeeId department designation')
-      .populate({
-        path: 'owner',
-        populate: { path: 'department', select: 'name' }
-      })
-      .populate('history.user', 'fullName employeeId role');
-
-    if (!barcode) {
-      return res.status(404).json({ message: 'Barcode not found.' });
-    }
-
-    res.json({ data: barcode });
-  } catch (error) {
-    console.error('Get barcode error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-// POST /api/barcodes/:barcode/transfer
-const transferBarcode = async (req, res) => {
-  try {
-    const { targetUserId, remarks, gps, photo } = req.body;
-    const barcode = await Barcode.findOne({ barcode: req.params.barcode });
-
-    if (!barcode) {
-      return res.status(404).json({ message: 'Barcode not found.' });
-    }
-
-    if (barcode.status !== 'Active') {
-      return res.status(400).json({ message: 'Only active barcodes can be transferred.' });
-    }
-
-    if (barcode.owner.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'You do not own this barcode.' });
-    }
-
-    const targetUser = await User.findById(targetUserId).populate('department');
-    if (!targetUser) {
-      return res.status(404).json({ message: 'Target user not found.' });
-    }
-
-    const currentUser = await User.findById(req.user._id).populate('department');
-
-    // Routing rule: internal department transfer = auto-accepted
-    // Cross-department = requires management approval first
-    const isCrossDept = currentUser.department._id.toString() !== targetUser.department._id.toString();
-
-    if (!isCrossDept) {
-      // Internal transfer: execute immediately
-      const oldOwner = barcode.owner;
-      barcode.owner = targetUserId;
-      barcode.history.push({
-        action: 'Transferred',
-        user: req.user._id,
-        remarks: remarks || `Transferred internally to ${targetUser.fullName}`,
-        gps,
-        photo
-      });
-
-      if (gps) barcode.gps = gps;
-      if (photo) barcode.photos.push({ url: photo, lat: gps?.lat, lng: gps?.lng, address: gps?.address });
-
-      await barcode.save();
-
-      // Notify target user
-      const notif = await Notification.create({
-        recipient: targetUserId,
-        type: 'assigned',
-        title: 'Material Transferred',
-        message: `${req.user.fullName} transferred barcode ${barcode.barcode} (${barcode.materialName}) to you.`,
-        relatedTransaction: null,
-      });
-      emitToUser(targetUserId, 'notification:new', notif);
-
-      return res.json({
-        message: 'Internal transfer completed successfully.',
-        data: barcode,
-        autoApproved: true
-      });
-    } else {
-      // Cross-department transfer: request approval
-      barcode.history.push({
-        action: 'Transfer Requested',
-        user: req.user._id,
-        remarks: `Cross-department transfer requested to ${targetUser.fullName} (${targetUser.department.name}). Awaiting management approval.`,
-        gps,
-        photo
-      });
-
-      // Update barcode with pending transfer flags
-      // We can save these temporary details in the history or on a schema extension
-      // To make it robust, we'll write it to history. In the controller we can approve.
-      // Let's store temporary approval details on the barcode document
-      // (Mongoose accepts ad-hoc fields if schema is mixed, or we can use the history as truth)
-      await barcode.save();
-
-      // Notify all Management Admins in the company
-      const managers = await User.find({ role: 'department_admin', departmentAdminType: 'management' });
-      for (const manager of managers) {
-        const notif = await Notification.create({
-          recipient: manager._id,
-          type: 'assigned',
-          title: 'Cross-Dept Transfer Pending Approval',
-          message: `${req.user.fullName} requested cross-department transfer of ${barcode.barcode} to ${targetUser.fullName}.`,
-          relatedTransaction: null,
-        });
-        emitToUser(manager._id, 'notification:new', notif);
-      }
-
-      return res.json({
-        message: 'Cross-department transfer request submitted. Awaiting management approval.',
-        data: barcode,
-        autoApproved: false
-      });
-    }
-  } catch (error) {
-    console.error('Transfer barcode error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-// POST /api/barcodes/:barcode/approve-transfer
-const approveTransfer = async (req, res) => {
-  try {
-    const { targetUserId, remarks } = req.body;
-    const barcode = await Barcode.findOne({ barcode: req.params.barcode });
-
-    if (!barcode) {
-      return res.status(404).json({ message: 'Barcode not found.' });
-    }
-
-    // Only Management Admins or Super Admins can approve cross-dept transfers
-    const isManager = req.user.role === 'super_admin' || 
-      (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management');
-
-    if (!isManager) {
-      return res.status(403).json({ message: 'Access denied. Management approval required.' });
-    }
-
-    const targetUser = await User.findById(targetUserId);
-    if (!targetUser) {
-      return res.status(404).json({ message: 'Target user not found.' });
-    }
-
-    const oldOwner = barcode.owner;
-    barcode.owner = targetUserId;
-    barcode.history.push({
-      action: 'Mgt Approved',
-      user: req.user._id,
-      remarks: remarks || `Management approved transfer to ${targetUser.fullName}`
-    });
-
-    await barcode.save();
-
-    // Notify old owner and new owner
-    const notifNew = await Notification.create({
-      recipient: targetUserId,
-      type: 'assigned',
-      title: 'Transfer Approved',
-      message: `Management approved transfer of ${barcode.barcode} to you. You are now the owner.`,
-    });
-    emitToUser(targetUserId, 'notification:new', notifNew);
-
-    const notifOld = await Notification.create({
-      recipient: oldOwner,
-      type: 'completed',
-      title: 'Transfer Approved',
-      message: `Your transfer request for ${barcode.barcode} to ${targetUser.fullName} has been approved.`,
-    });
-    emitToUser(oldOwner, 'notification:new', notifOld);
-
-    res.json({ message: 'Transfer approved and ownership moved successfully.', data: barcode });
-  } catch (error) {
-    console.error('Approve transfer error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-// POST /api/barcodes/:barcode/reject-transfer
-const rejectTransfer = async (req, res) => {
-  try {
-    const { remarks } = req.body;
-    const barcode = await Barcode.findOne({ barcode: req.params.barcode });
-
-    if (!barcode) {
-      return res.status(404).json({ message: 'Barcode not found.' });
-    }
-
-    const isManager = req.user.role === 'super_admin' || 
-      (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management');
-
-    if (!isManager) {
-      return res.status(403).json({ message: 'Access denied. Management approval required.' });
-    }
-
-    barcode.history.push({
-      action: 'Transfer Rejected',
-      user: req.user._id,
-      remarks: remarks || 'Management rejected the cross-department transfer request.'
-    });
-
-    await barcode.save();
-
-    // Notify current owner
-    const notif = await Notification.create({
-      recipient: barcode.owner,
-      type: 'rejected',
-      title: 'Transfer Request Rejected',
-      message: `Management rejected your transfer request for barcode ${barcode.barcode}.`,
-    });
-    emitToUser(barcode.owner, 'notification:new', notif);
-
-    res.json({ message: 'Transfer request rejected. Barcode remains with current owner.', data: barcode });
-  } catch (error) {
-    console.error('Reject transfer error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-// POST /api/barcodes/:barcode/return
-const returnBarcode = async (req, res) => {
-  try {
-    const { remarks, gps, photo } = req.body;
-    const barcode = await Barcode.findOne({ barcode: req.params.barcode });
-
-    if (!barcode) {
-      return res.status(404).json({ message: 'Barcode not found.' });
-    }
-
-    if (barcode.owner.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'You do not own this barcode.' });
-    }
-
-    barcode.history.push({
-      action: 'Return Requested',
-      user: req.user._id,
-      remarks: remarks || 'Return to store requested.',
-      gps,
-      photo
-    });
-
-    await barcode.save();
-
-    // Notify Store Admin
-    const storeAdmins = await User.find({ role: 'department_admin', departmentAdminType: 'store' });
-    for (const admin of storeAdmins) {
-      const notif = await Notification.create({
-        recipient: admin._id,
-        type: 'assigned',
-        title: 'Return Request Received',
-        message: `${req.user.fullName} requested return of ${barcode.barcode} (${barcode.materialName}) to store.`,
-      });
-      emitToUser(admin._id, 'notification:new', notif);
-    }
-
-    res.json({ message: 'Return request submitted to Store.', data: barcode });
-  } catch (error) {
-    console.error('Return barcode error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-// POST /api/barcodes/:barcode/confirm-return
-const confirmReturnBarcode = async (req, res) => {
-  try {
-    const { handlerId, remarks, gps, photo } = req.body;
-    const barcode = await Barcode.findOne({ barcode: req.params.barcode });
-
-    if (!barcode) {
-      return res.status(404).json({ message: 'Barcode not found.' });
-    }
-
-    // Only Store Admin or Handler can confirm return
-    const isStoreOrHandler = req.user.role === 'super_admin' || 
-      (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store') ||
-      (req.user.role === 'employee' && handlerId === req.user._id.toString());
-
-    if (!isStoreOrHandler) {
-      return res.status(403).json({ message: 'Access denied. Store Admin or Return Handler action required.' });
-    }
-
-    const previousOwner = barcode.owner;
-
-    // Find Store Admin user or just assign store owner
-    const storeAdmin = await User.findOne({ role: 'department_admin', departmentAdminType: 'store' });
-    
-    barcode.owner = storeAdmin ? storeAdmin._id : req.user._id;
-    barcode.status = 'Returned';
-    barcode.history.push({
-      action: 'Returned',
-      user: req.user._id,
-      remarks: remarks || `Return completed and verified at Store.`,
-      gps,
-      photo
-    });
-
-    if (gps) barcode.gps = gps;
-    if (photo) barcode.photos.push({ url: photo, lat: gps?.lat, lng: gps?.lng, address: gps?.address });
-
-    await barcode.save();
-
-    // Check if all barcodes in this transaction are returned/closed
-    const transaction = await Transaction.findOne({ transactionId: barcode.transactionId });
-    if (transaction) {
-      // Find all barcodes matching this transaction
-      const transactionBarcodes = await Barcode.find({ transactionId: barcode.transactionId });
-      const allReturned = transactionBarcodes.every(bc => ['Returned', 'Closed'].includes(bc.status));
-      if (allReturned) {
-        transaction.status = 'closed';
-        await transaction.save();
-
-        // Create notification for original sender
-        const finalNotif = await Notification.create({
-          recipient: transaction.sender,
-          type: 'completed',
-          title: 'Transaction Closed',
-          message: `All materials in ${transaction.transactionId} have been returned. Transaction is now closed.`,
-        });
-        emitToUser(transaction.sender, 'notification:new', finalNotif);
-      }
-    }
-
-    // Notify previous owner
-    const notif = await Notification.create({
-      recipient: previousOwner,
-      type: 'completed',
-      title: 'Material Return Confirmed',
-      message: `Store has received and confirmed return of barcode ${barcode.barcode}.`,
-    });
-    emitToUser(previousOwner, 'notification:new', notif);
-
-    res.json({ message: 'Return confirmed. Ownership returned to Store.', data: barcode });
-  } catch (error) {
-    console.error('Confirm return error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-// POST /api/barcodes/:barcode/split
-const splitBarcode = async (req, res) => {
-  try {
-    const { newBarcode, remarks, targetUserId } = req.body;
-    const barcode = await Barcode.findOne({ barcode: req.params.barcode });
-
-    if (!barcode) {
-      return res.status(404).json({ message: 'Barcode not found.' });
-    }
-
-    if (barcode.owner.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'You do not own this barcode.' });
-    }
-
-    // Check if new barcode already exists
-    const exists = await Barcode.findOne({ barcode: newBarcode });
-    if (exists) {
-      return res.status(400).json({ message: 'New barcode already exists in the system.' });
-    }
-
-    // Close original barcode
-    barcode.status = 'Closed';
-    barcode.history.push({
-      action: 'Split',
-      user: req.user._id,
-      remarks: remarks || `Split material lot into new barcode: ${newBarcode}`
-    });
-    await barcode.save();
-
-    // Create new barcode
-    const targetUser = targetUserId || req.user._id;
-    const childBarcode = new Barcode({
-      barcode: newBarcode,
-      transactionId: barcode.transactionId,
-      materialName: barcode.materialName,
-      status: 'Active',
-      owner: targetUser,
-      gps: barcode.gps,
-      history: [
-        {
-          action: 'Created',
-          user: req.user._id,
-          remarks: `Created via split from parent barcode ${barcode.barcode}`
-        }
-      ]
-    });
-    await childBarcode.save();
-
-    res.json({ message: 'Barcode split completed successfully.', parent: barcode, child: childBarcode });
-  } catch (error) {
-    console.error('Split barcode error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-// GET /api/barcodes/:barcode/chat
-const getBarcodeChat = async (req, res) => {
-  try {
-    const messages = await BarcodeChat.find({ barcode: req.params.barcode })
-      .populate('sender', 'fullName employeeId role profilePhoto')
-      .sort({ createdAt: 1 });
-
-    res.json({ data: messages });
-  } catch (error) {
-    console.error('Get barcode chat error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-// POST /api/barcodes/:barcode/chat
-const createBarcodeChat = async (req, res) => {
-  try {
-    const { message, transactionId } = req.body;
-    
-    // Check if transaction is closed
-    const txn = await Transaction.findOne({ transactionId });
-    if (txn && txn.status === 'closed') {
-      return res.status(400).json({ message: 'Chat is disabled because this transaction is closed.' });
-    }
-
-    const chat = new BarcodeChat({
-      barcode: req.params.barcode,
-      transactionId,
-      sender: req.user._id,
-      message
-    });
-    await chat.save();
-
-    const populatedChat = await BarcodeChat.findById(chat._id)
-      .populate('sender', 'fullName employeeId role profilePhoto');
-
-    res.status(201).json({ data: populatedChat });
-  } catch (error) {
-    console.error('Create barcode chat error:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
-  }
-};
-
-module.exports = {
-  getBarcodes,
-  getBarcodeByCode,
-  transferBarcode,
-  approveTransfer,
-  rejectTransfer,
-  returnBarcode,
-  confirmReturnBarcode,
-  splitBarcode,
-  getBarcodeChat,
-  createBarcodeChat
 };

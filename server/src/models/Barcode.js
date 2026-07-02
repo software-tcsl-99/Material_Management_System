@@ -1,7 +1,16 @@
 const mongoose = require('mongoose');
 
+const ownershipEntrySchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
+  assignedAt: { type: Date, default: Date.now },
+  releasedAt: { type: Date },
+  action: { type: String }, // 'received', 'transferred', 'returned'
+  remarks: { type: String, default: '' },
+});
+
 const historySchema = new mongoose.Schema({
-  action: { type: String, required: true }, // e.g., 'Created', 'TL Approved', 'Mgt Approved', 'Dispatched', 'Received', 'Transferred', 'Return Requested', 'Returned'
+  action: { type: String, required: true },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   timestamp: { type: Date, default: Date.now },
   remarks: { type: String, default: '' },
@@ -10,7 +19,7 @@ const historySchema = new mongoose.Schema({
     lng: Number,
     address: String,
   },
-  photo: { type: String, default: '' }
+  photo: { type: String, default: '' },
 });
 
 const barcodeSchema = new mongoose.Schema(
@@ -27,6 +36,11 @@ const barcodeSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    transaction: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Transaction',
+      index: true,
+    },
     materialName: {
       type: String,
       required: true,
@@ -34,7 +48,7 @@ const barcodeSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['Active', 'Returned', 'Closed'],
+      enum: ['Active', 'Returned', 'Closed', 'Split', 'pending_acceptance'],
       default: 'Active',
     },
     owner: {
@@ -43,11 +57,22 @@ const barcodeSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    ownerDepartment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Department',
+    },
+    // Ownership chain (recursive)
+    ownershipHistory: [ownershipEntrySchema],
+
+    // GPS location
     gps: {
       lat: Number,
       lng: Number,
+      accuracy: Number,
       address: String,
     },
+
+    // Photos
     photos: [
       {
         url: String,
@@ -55,17 +80,30 @@ const barcodeSchema = new mongoose.Schema(
         lat: Number,
         lng: Number,
         address: String,
-      }
+      },
     ],
+
+    // Documents
     documents: [
       {
         name: String,
         url: String,
         type: String,
+        size: Number,
         uploadedAt: { type: Date, default: Date.now },
-      }
+      },
     ],
+
+    // Complete history
     history: [historySchema],
+
+    // Split tracking
+    parentBarcode: { type: String, default: null },
+    childBarcodes: [{ type: String }],
+    isSplit: { type: Boolean, default: false },
+
+    // Transfer count
+    transferCount: { type: Number, default: 0 },
   },
   {
     timestamps: true,

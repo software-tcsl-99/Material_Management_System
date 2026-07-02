@@ -1,125 +1,145 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Sun, Moon, Laptop, Search, Menu, User, LogOut } from 'lucide-react';
-import useThemeStore from '../../store/themeStore';
+import React, { useState, useEffect } from 'react';
+import { Bell, Search, LogOut, User as UserIcon, Settings, Menu } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
-import NotificationBell from '../notifications/NotificationBell';
-import useActiveRole from '../../hooks/useActiveRole';
+import useUIStore from '../../store/uiStore';
+import api from '../../lib/api';
 
-const Header = ({ onMenuClick }) => {
-  const navigate = useNavigate();
-  const { theme, setTheme } = useThemeStore();
-  const { user, clearAuth } = useAuthStore();
-  const activeRole = useActiveRole();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+export default function Header() {
+  const { user, logout } = useAuthStore();
+  const { toggleSidebar, toggleMobileMenu } = useUIStore();
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
 
-  const handleSearchSubmit = (e) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000); // Poll notifications
+    return () => clearInterval(interval);
+  }, []);
+
+  const fetchNotifications = () => {
+    api.get('/notifications?unreadOnly=true')
+      .then(({ data }) => setNotifications(data.notifications || []))
+      .catch(err => console.error(err));
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await api.put('/notifications/read-all');
+      setNotifications([]);
+    } catch (e) {
+      console.error(e);
     }
   };
 
   return (
-    <header className="h-16 border-b border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 flex items-center justify-between gap-4 sticky top-0 z-30 shrink-0">
-      {/* Mobile Menu Trigger & Search */}
-      <div className="flex items-center gap-4 flex-1">
-        <button
-          onClick={onMenuClick}
-          className="md:hidden p-2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
-        >
+    <header className="h-16 border-b border-slate-200 bg-white px-6 flex justify-between items-center z-30 sticky top-0">
+      {/* Left branding / sidebar controls */}
+      <div className="flex items-center gap-4">
+        <button onClick={toggleSidebar} className="hidden md:block p-1.5 hover:bg-slate-100 rounded-lg text-slate-500">
+          <Menu className="w-5 h-5" />
+        </button>
+        <button onClick={toggleMobileMenu} className="md:hidden p-1.5 hover:bg-slate-100 rounded-lg text-slate-500">
           <Menu className="w-5 h-5" />
         </button>
 
-        {/* Global Search Bar */}
-        <form onSubmit={handleSearchSubmit} className="hidden sm:flex relative max-w-md w-full">
-          <Search className="absolute left-3 top-2.5 h-4.5 w-4.5 text-slate-400" />
+        {/* Search */}
+        <div className="hidden lg:flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 w-80">
+          <Search className="w-4 h-4 text-slate-400" />
           <input
-            type="search"
-            placeholder="Search transactions, materials, barcodes..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-indigo-500 dark:text-white"
+            type="text"
+            placeholder="Search transactions, barcodes..."
+            className="bg-transparent border-none text-xs text-slate-700 outline-none w-full placeholder:text-slate-400"
           />
-        </form>
+        </div>
       </div>
 
-      {/* Action items */}
-      <div className="flex items-center gap-4.5 shrink-0">
+      {/* Right controls */}
+      <div className="flex items-center gap-4">
+        {/* Notifications Icon */}
+        <div className="relative">
+          <button
+            onClick={() => setShowNotifDropdown(!showNotifDropdown)}
+            className="p-2 text-slate-500 hover:text-slate-800 rounded-xl hover:bg-slate-50 transition relative"
+          >
+            <Bell className="w-5 h-5" />
+            {notifications.length > 0 && (
+              <span className="absolute top-1 right-1 w-4 h-4 bg-danger text-white text-[9px] font-bold rounded-full flex items-center justify-center animate-pulse">
+                {notifications.length}
+              </span>
+            )}
+          </button>
 
-        {/* Theme Selector */}
-        <div className="flex items-center border border-slate-200 dark:border-slate-800 rounded-lg p-0.5">
-          <button
-            onClick={() => setTheme('light')}
-            className={`p-1.5 rounded-md cursor-pointer transition-colors ${theme === 'light' ? 'bg-indigo-50 text-indigo-600 dark:bg-slate-800 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
-            title="Light Mode"
-          >
-            <Sun className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setTheme('dark')}
-            className={`p-1.5 rounded-md cursor-pointer transition-colors ${theme === 'dark' ? 'bg-indigo-50 text-indigo-600 dark:bg-slate-800 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
-            title="Dark Mode"
-          >
-            <Moon className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setTheme('system')}
-            className={`p-1.5 rounded-md cursor-pointer transition-colors ${theme === 'system' ? 'bg-indigo-50 text-indigo-600 dark:bg-slate-800 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
-            title="System Preference"
-          >
-            <Laptop className="w-4 h-4" />
-          </button>
+          {/* Notifications Dropdown */}
+          {showNotifDropdown && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowNotifDropdown(false)} />
+              <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 overflow-hidden animate-fade-in">
+                <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                  <span className="text-xs font-bold text-slate-700">Notifications</span>
+                  {notifications.length > 0 && (
+                    <button onClick={handleMarkAllRead} className="text-[10px] font-semibold text-primary hover:underline">
+                      Mark all as read
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                  {notifications.length === 0 ? (
+                    <div className="p-6 text-center text-slate-400 text-xs">
+                      No unread notifications
+                    </div>
+                  ) : (
+                    notifications.map((n) => (
+                      <div key={n._id} className="p-3 hover:bg-slate-50 text-xs transition">
+                        <p className="font-semibold text-slate-800 mb-0.5">{n.title}</p>
+                        <p className="text-slate-500">{n.message}</p>
+                        <p className="text-[9px] text-slate-400 mt-1 font-medium">
+                          {new Date(n.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
-
-        {/* Real-time Notifications Bell */}
-        <NotificationBell />
 
         {/* Profile Dropdown */}
         <div className="relative">
           <button
-            onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
-            className="flex items-center gap-2 cursor-pointer focus:outline-none"
+            onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+            className="flex items-center gap-3 pl-3 py-1.5 hover:bg-slate-50 rounded-xl transition"
           >
-            <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-300 font-semibold text-xs overflow-hidden select-none">
-              {user?.profilePhoto ? (
-                <img src={user.profilePhoto} alt={user.fullName} className="w-full h-full object-cover" />
-              ) : (
-                user?.fullName?.charAt(0) || 'U'
-              )}
+            {/* Avatar character */}
+            <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold text-sm shadow-md shadow-primary/20">
+              {user?.fullName?.charAt(0)}
+            </div>
+            <div className="hidden md:block text-left">
+              <p className="text-xs font-bold text-slate-800">{user?.fullName}</p>
+              <p className="text-[10px] font-semibold text-slate-500 capitalize">{user?.role?.replace('_', ' ')}</p>
             </div>
           </button>
 
-          {profileDropdownOpen && (
+          {showProfileDropdown && (
             <>
-              {/* Backdrop to close click-away */}
-              <div className="fixed inset-0 z-10" onClick={() => setProfileDropdownOpen(false)} />
-              
-              <div className="absolute right-0 mt-2.5 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 z-20 animate-in fade-in slide-in-from-top-2 duration-150">
-                <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800">
-                  <p className="text-xs text-slate-500 font-medium">Signed in as</p>
-                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-200 truncate">{user?.fullName}</p>
+              <div className="fixed inset-0 z-40" onClick={() => setShowProfileDropdown(false)} />
+              <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 overflow-hidden py-1 animate-fade-in">
+                <div className="px-4 py-2 border-b border-slate-100">
+                  <p className="text-xs font-bold text-slate-700">{user?.fullName}</p>
+                  <p className="text-[10px] text-slate-400 font-medium overflow-hidden text-ellipsis">{user?.email}</p>
                 </div>
-                <button
-                  onClick={() => {
-                    setProfileDropdownOpen(false);
-                    navigate('/profile');
-                  }}
-                  className="flex items-center gap-2.5 px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 w-full text-left cursor-pointer"
+                <a
+                  href="/profile"
+                  className="px-4 py-2.5 hover:bg-slate-50 text-slate-700 text-xs font-medium flex items-center gap-2 transition"
                 >
-                  <User className="w-4 h-4 text-slate-400" />
-                  <span>My Profile</span>
-                </button>
+                  <UserIcon className="w-4 h-4 text-slate-400" /> My Profile
+                </a>
                 <button
-                  onClick={() => {
-                    setProfileDropdownOpen(false);
-                    clearAuth();
-                  }}
-                  className="flex items-center gap-2.5 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 w-full text-left cursor-pointer border-t border-slate-100 dark:border-slate-800"
+                  onClick={logout}
+                  className="w-full px-4 py-2.5 hover:bg-danger-light text-danger text-xs font-medium flex items-center gap-2 transition text-left"
                 >
-                  <LogOut className="w-4 h-4 text-red-400" />
-                  <span>Logout</span>
+                  <LogOut className="w-4 h-4" /> Logout
                 </button>
               </div>
             </>
@@ -128,6 +148,4 @@ const Header = ({ onMenuClick }) => {
       </div>
     </header>
   );
-};
-
-export default Header;
+}

@@ -11,7 +11,7 @@ const Tabs = ({ tabs = [], activeTab, onChange }) => {
             onClick={() => onChange(tab.value)}
             className={`py-3 px-1 border-b-2 text-sm font-semibold transition-all -mb-px cursor-pointer whitespace-nowrap
               ${isActive 
-                ? 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400' 
+                ? 'border-primary text-primary dark:border-primary-100 dark:text-primary-100' 
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
               }
             `}

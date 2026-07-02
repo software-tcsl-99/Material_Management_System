@@ -1,11 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth.middleware');
-const { getStats, getChartData, getRecentActivities, getPendingApprovals } = require('../controllers/dashboard.controller');
+const dashboardController = require('../controllers/dashboard.controller');
+const auth = require('../middleware/auth');
 
-router.get('/stats', authenticate, getStats);
-router.get('/charts', authenticate, getChartData);
-router.get('/recent', authenticate, getRecentActivities);
-router.get('/pending', authenticate, getPendingApprovals);
+router.use(auth);
+router.get('/stats', dashboardController.getStats);
+router.get('/charts', dashboardController.getChartData);
+router.get('/recent', dashboardController.getRecentActivities);
+router.get('/', dashboardController.getDashboard);
 
 module.exports = router;

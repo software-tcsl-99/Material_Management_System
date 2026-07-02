@@ -37,11 +37,11 @@ const Input = React.forwardRef(({
           className={`
             block w-full rounded-lg border text-sm transition-all focus:outline-none focus:ring-2
             ${Icon ? 'pl-10' : 'pl-3.5'} pr-10 py-2.5
-            bg-white text-slate-900 border-slate-300 focus:ring-indigo-500 focus:border-indigo-500
-            dark:bg-slate-900 dark:text-white dark:border-slate-700 dark:focus:ring-indigo-500
+            bg-white text-slate-900 border-slate-300 focus:ring-primary focus:border-primary
+            dark:bg-slate-900 dark:text-white dark:border-slate-700 dark:focus:ring-primary
             ${error
               ? 'border-red-500 focus:ring-red-500 focus:border-red-500 dark:border-red-500'
-              : 'border-slate-300 focus:ring-indigo-500 dark:border-slate-700'
+              : 'border-slate-300 focus:ring-primary dark:border-slate-700'
             }
             disabled:bg-slate-50 disabled:text-slate-400 dark:disabled:bg-slate-950 dark:disabled:text-slate-600
           `}

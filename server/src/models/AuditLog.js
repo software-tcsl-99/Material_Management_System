@@ -2,45 +2,30 @@ const mongoose = require('mongoose');
 
 const auditLogSchema = new mongoose.Schema(
   {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
+    action: { type: String, required: true },
+    entity: { type: String, required: true }, // 'Transaction', 'Barcode', 'User', 'Transfer', 'Return'
+    entityId: { type: String, required: true },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    userName: { type: String },
+    description: { type: String, default: '' },
+    before: { type: mongoose.Schema.Types.Mixed },
+    after: { type: mongoose.Schema.Types.Mixed },
+    ip: { type: String, default: '' },
+    gps: {
+      lat: Number,
+      lng: Number,
+      address: String,
     },
-    action: {
-      type: String,
-      enum: ['create', 'edit', 'delete', 'approve', 'reject', 'resubmit', 'receive', 'login', 'logout', 'password_change'],
-      required: true,
-    },
-    entity: {
-      type: String,
-      required: true,
-    },
-    entityId: {
-      type: String,
-      default: '',
-    },
-    oldData: {
-      type: mongoose.Schema.Types.Mixed,
-      default: null,
-    },
-    newData: {
-      type: mongoose.Schema.Types.Mixed,
-      default: null,
-    },
-    ipAddress: {
-      type: String,
-      default: '',
-    },
-    userAgent: {
-      type: String,
-      default: '',
-    },
+    device: { type: String, default: '' },
+    browser: { type: String, default: '' },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-auditLogSchema.index({ user: 1, createdAt: -1 });
 auditLogSchema.index({ entity: 1, entityId: 1 });
+auditLogSchema.index({ user: 1 });
+auditLogSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model('AuditLog', auditLogSchema);

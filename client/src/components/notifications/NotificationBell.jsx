@@ -55,7 +55,7 @@ const NotificationBell = () => {
           {/* Close click-away handler */}
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
 
-          <div className="absolute right-0 mt-2.5 w-80 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-20 flex flex-col overflow-hidden max-h-[480px] animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="absolute right-0 mt-2.5 w-80 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-20 flex flex-col overflow-hidden max-h-[480px] animate-fade-in">
             {/* Header */}
             <div className="px-4.5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-950/20">
               <span className="font-semibold text-sm text-slate-900 dark:text-white">
@@ -64,7 +64,7 @@ const NotificationBell = () => {
               {unreadCount > 0 && (
                 <button
                   onClick={markAllAsRead}
-                  className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  className="text-xs font-bold text-primary dark:text-primary-100 hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   <Check className="w-3.5 h-3.5" />
                   <span>Mark all read</span>

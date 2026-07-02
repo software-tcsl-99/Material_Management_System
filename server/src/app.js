@@ -3,31 +3,32 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 
 // Route imports
 const authRoutes = require('./routes/auth.routes');
-const employeeRoutes = require('./routes/employee.routes');
 const transactionRoutes = require('./routes/transaction.routes');
-const receivingRoutes = require('./routes/receiving.routes');
-const masterRoutes = require('./routes/master.routes');
+const barcodeRoutes = require('./routes/barcode.routes');
+const chatRoutes = require('./routes/chat.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
 const notificationRoutes = require('./routes/notification.routes');
-const reportRoutes = require('./routes/report.routes');
 const auditRoutes = require('./routes/audit.routes');
-const searchRoutes = require('./routes/search.routes');
+const employeeRoutes = require('./routes/employee.routes');
+const masterRoutes = require('./routes/master.routes');
+const reportRoutes = require('./routes/report.routes');
 const uploadRoutes = require('./routes/upload.routes');
-const barcodeRoutes = require('./routes/barcode.routes');
+const receivingRoutes = require('./routes/receiving.routes');
+const searchRoutes = require('./routes/search.routes');
 
 const app = express();
 
 // Security middleware
 app.use(
   helmet({
-    crossOriginResourcePolicy: {
-      policy: 'cross-origin',
-    },
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
+
 app.use(
   cors({
     origin: process.env.CLIENT_URL || 'http://localhost:5173',
@@ -37,7 +38,7 @@ app.use(
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
+  windowMs: 1 * 60 * 1000,
   max: 10000,
   message: { message: 'Too many requests, please try again later.' },
 });
@@ -53,30 +54,8 @@ const authLimiter = rateLimit({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Serve static uploads for local mock testing
-const path = require('path');
-// Serve uploads via Cloudinary only. Local static uploads are disabled to enforce
-// cloud storage usage for production and cross-origin reliability.
-if (process.env.CLOUDINARY_BASE_URL) {
-  // Example CLOUDINARY_BASE_URL: https://res.cloudinary.com/<cloudName>/image/upload
-  // Use a regex route to capture the remainder of the path in a way compatible
-  // with the installed path-to-regexp version.
-  app.get(/^\/uploads\/(.*)$/, (req, res) => {
-    const key = req.params[0] || '';
-    const normalizedKey = key.replace(/^\/+/, '');
-    const base = String(process.env.CLOUDINARY_BASE_URL).replace(/\/+$/g, '');
-    const url = `${base}/${normalizedKey}`;
-    return res.redirect(302, url);
-  });
-} else {
-  // When Cloudinary is not configured, respond with a clear error to guide setup.
-  app.get(/^\/uploads\/(.*)$/, (req, res) => {
-    res.status(503).json({
-      message:
-        'Cloud storage not configured. Set CLOUDINARY_BASE_URL to a valid Cloudinary base URL to serve uploads.',
-    });
-  });
-}
+// Serve local uploads
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Logging
 if (process.env.NODE_ENV !== 'production') {
@@ -85,21 +64,22 @@ if (process.env.NODE_ENV !== 'production') {
 
 // API Routes
 app.use('/api/auth', authLimiter, authRoutes);
-app.use('/api/employees', employeeRoutes);
 app.use('/api/transactions', transactionRoutes);
-app.use('/api/receiving', receivingRoutes);
-app.use('/api/masters', masterRoutes);
+app.use('/api/barcodes', barcodeRoutes);
+app.use('/api/chat', chatRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/reports', reportRoutes);
 app.use('/api/audit-logs', auditRoutes);
-app.use('/api/search', searchRoutes);
+app.use('/api/employees', employeeRoutes);
+app.use('/api/masters', masterRoutes);
+app.use('/api/reports', reportRoutes);
 app.use('/api/upload', uploadRoutes);
-app.use('/api/barcodes', barcodeRoutes);
+app.use('/api/receiving', receivingRoutes);
+app.use('/api/search', searchRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
 });
 
 // 404 handler
@@ -111,7 +91,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
 
-  if (err.name === 'MulterError' || err.message?.includes('Only image files')) {
+  if (err.name === 'MulterError' || err.message?.includes('Only image')) {
     return res.status(400).json({ message: `Upload error: ${err.message}` });
   }
 

@@ -63,7 +63,7 @@ const userSchema = new mongoose.Schema(
     },
     departmentAdminType: {
       type: String,
-      enum: ['store', 'accounts', 'management', null],
+      enum: ['store', 'accounts', 'management', 'production', 'quality', 'maintenance', 'purchase', 'hr', 'it', null],
       default: null,
     },
     status: {

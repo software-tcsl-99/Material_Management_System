@@ -1,26 +1,26 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth.middleware');
-const {
-  getTransactions, getTransaction, createTransaction, updateTransaction,
-  deleteTransaction, acceptTransaction, rejectTransaction, resubmitTransaction,
-  exportSingleTransaction, exportSingleTransactionPDF,
-  storeActionTransaction, handlerActionTransaction, receiveTransaction, invoiceMatchTransaction
-} = require('../controllers/transaction.controller');
+const txnController = require('../controllers/transaction.controller');
+const auth = require('../middleware/auth');
+const { requirePermission } = require('../middleware/rbac');
 
-router.get('/', authenticate, getTransactions);
-router.get('/:id', authenticate, getTransaction);
-router.post('/', authenticate, createTransaction);
-router.put('/:id', authenticate, updateTransaction);
-router.delete('/:id', authenticate, deleteTransaction);
-router.patch('/:id/accept', authenticate, acceptTransaction);
-router.patch('/:id/reject', authenticate, rejectTransaction);
-router.post('/:id/resubmit', authenticate, resubmitTransaction);
-router.patch('/:id/store-action', authenticate, storeActionTransaction);
-router.patch('/:id/handler-action', authenticate, handlerActionTransaction);
-router.patch('/:id/receive', authenticate, receiveTransaction);
-router.post('/:id/invoice-match', authenticate, invoiceMatchTransaction);
-router.get('/:id/export', authenticate, exportSingleTransaction);
-router.get('/:id/export/pdf', authenticate, exportSingleTransactionPDF);
+router.use(auth);
+
+router.post('/', requirePermission('transaction:create'), txnController.createTransaction);
+router.get('/', requirePermission('transaction:view_own', 'transaction:view_all', 'transaction:view_department', 'transaction:view_team'), txnController.getTransactions);
+router.get('/pending-approvals', requirePermission('approval:view'), txnController.getPendingApprovals);
+router.get('/:id', requirePermission('transaction:view_own', 'transaction:view_all'), txnController.getTransaction);
+router.put('/:id', requirePermission('transaction:create', 'transaction:view_own'), txnController.updateTransaction);
+router.put('/:id/approve', requirePermission('approval:approve'), txnController.approveTransaction);
+router.put('/:id/reject', requirePermission('approval:reject'), txnController.rejectTransaction);
+router.put('/:id/store-accept', requirePermission('store:accept'), txnController.storeAccept);
+router.put('/:id/assign-handler', requirePermission('store:assign_handler'), txnController.assignHandler);
+router.patch('/:id/store-action', requirePermission('store:accept', 'store:assign_handler'), txnController.storeAction);
+router.patch('/:id/handler-action', requirePermission('store:assign_handler', 'transaction:create', 'transaction:view_own'), txnController.handlerAction);
+router.patch('/:id/receive', requirePermission('transaction:create', 'transaction:view_own'), txnController.receiveTransaction);
+router.patch('/:id/reject-receipt', requirePermission('transaction:create', 'transaction:view_own'), txnController.rejectReceipt);
+router.put('/:id/assign-management', requirePermission('transaction:create', 'transaction:view_own'), txnController.assignManagementApprover);
+router.put('/:id/cancel', requirePermission('transaction:cancel'), txnController.cancelTransaction);
+router.post('/:transactionId/store-dispatch', txnController.storeDispatchTransaction);
 
 module.exports = router;

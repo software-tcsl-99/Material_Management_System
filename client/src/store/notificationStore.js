@@ -12,7 +12,7 @@ const useNotificationStore = create((set, get) => ({
       const response = await api.get('/notifications');
       const countRes = await api.get('/notifications/unread-count');
       set({
-        notifications: response.data.data || [],
+        notifications: response.data.notifications || [],
         unreadCount: countRes.data.count || 0,
         loading: false
       });

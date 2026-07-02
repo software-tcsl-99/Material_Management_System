@@ -29,11 +29,11 @@ const FloatingChat = ({ transactionId, barcodes = [] }) => {
   }, [barcodes, activeBarcode]);
 
   const fetchChatMessages = async () => {
-    if (!activeBarcode) return;
+    if (!transactionId) return;
     setLoading(true);
     try {
-      const res = await api.get(`/barcodes/${activeBarcode}/chat`);
-      setMessages(res.data.data || []);
+      const res = await api.get(`/chat/${transactionId}/messages`);
+      setMessages(res.data.messages || []);
     } catch (err) {
       console.error('Error fetching chat:', err);
     } finally {
@@ -56,13 +56,12 @@ const FloatingChat = ({ transactionId, barcodes = [] }) => {
 
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!text.trim() || !activeBarcode) return;
+    if (!text.trim() || !transactionId) return;
     try {
-      const res = await api.post(`/barcodes/${activeBarcode}/chat`, {
-        message: text,
-        transactionId
+      const res = await api.post(`/chat/${transactionId}/messages`, {
+        message: text
       });
-      setMessages([...messages, res.data.data]);
+      setMessages([...messages, res.data.chatMessage]);
       setText('');
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to send message');
@@ -89,7 +88,7 @@ const FloatingChat = ({ transactionId, barcodes = [] }) => {
           <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
 
           {/* Chat Panel - slide in from right (Desktop) / bottom (Mobile) */}
-          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 h-full md:h-screen shadow-2xl flex flex-col z-50 animate-in slide-in-from-right duration-250 border-l border-slate-200 dark:border-slate-800">
+          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 h-full md:h-screen shadow-2xl flex flex-col z-50 animate-fade-in border-l border-slate-200 dark:border-slate-800">
             {/* Header */}
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4 bg-slate-50 dark:bg-slate-950/20">
               <div>
@@ -108,7 +107,7 @@ const FloatingChat = ({ transactionId, barcodes = [] }) => {
                 <select
                   value={activeBarcode}
                   onChange={(e) => setActiveBarcode(e.target.value)}
-                  className="w-full text-xs font-bold bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-1.5 focus:outline-none focus:border-indigo-500 text-indigo-600 dark:text-indigo-400"
+                  className="w-full text-xs font-bold bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-1.5 focus:outline-none focus:border-primary text-primary dark:text-primary-100"
                 >
                   {barcodes.map(bc => (
                     <option key={bc} value={bc}>{bc}</option>
@@ -153,7 +152,7 @@ const FloatingChat = ({ transactionId, barcodes = [] }) => {
                 onChange={(e) => setText(e.target.value)}
                 placeholder="Type a secure audit comment..."
                 required
-                className="flex-1 text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg p-2.5 focus:outline-none focus:border-indigo-500"
+                className="flex-1 text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg p-2.5 focus:outline-none focus:border-primary"
               />
               <button
                 type="submit"

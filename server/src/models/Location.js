@@ -2,29 +2,13 @@ const mongoose = require('mongoose');
 
 const locationSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-    },
-    address: {
-      type: String,
-      default: '',
-    },
+    name: { type: String, required: true, unique: true, trim: true },
+    address: { type: String, default: '' },
     coordinates: {
-      lat: { type: Number, default: 0 },
-      lng: { type: Number, default: 0 },
+      lat: Number,
+      lng: Number,
     },
-    status: {
-      type: String,
-      enum: ['active', 'inactive'],
-      default: 'active',
-    },
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-    },
+    status: { type: String, enum: ['active', 'inactive'], default: 'active' },
   },
   { timestamps: true }
 );

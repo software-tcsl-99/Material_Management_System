@@ -17,6 +17,18 @@ import TransactionCharts from './TransactionCharts';
 import TransferFormModal from '../transactions/TransferFormModal';
 import ReturnFormModal from '../transactions/ReturnFormModal';
 import SplitLotModal from '../transactions/SplitLotModal';
+import {
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid
+} from 'recharts';
 
 const DashboardPage = () => {
   const navigate = useNavigate();
@@ -50,8 +62,40 @@ const DashboardPage = () => {
         api.get('/barcodes')
       ]);
 
-      const txnsList = txnRes.data.data || [];
-      const bcList = bcRes.data.data || [];
+      let txnsList = txnRes.data.data || [];
+      let bcList = bcRes.data.data || [];
+
+      const isCentralRole = user?.role === 'super_admin' || 
+        (user?.role === 'department_admin' && ['store', 'management', 'accounts'].includes(user?.departmentAdminType));
+
+      if (!isCentralRole) {
+        txnsList = txnsList.filter(t => {
+          const reqId = (t.requester?._id || t.requester)?.toString();
+          const hdlId = (t.handler?._id || t.handler)?.toString();
+          const tlId = (t.teamLead?._id || t.teamLead)?.toString();
+          const mgtId = (t.managementApprover?._id || t.managementApprover)?.toString();
+          const storeId = (t.store?._id || t.store)?.toString();
+          const deptId = (t.department?._id || t.department)?.toString();
+          
+          const curUserId = user?._id?.toString();
+          const curUserDeptId = (user?.department?._id || user?.department)?.toString();
+          
+          if ((user?.role === 'team_lead' || user?.role === 'department_admin') && deptId === curUserDeptId) {
+            return true;
+          }
+          
+          return reqId === curUserId || hdlId === curUserId || tlId === curUserId || mgtId === curUserId || storeId === curUserId;
+        });
+
+        bcList = bcList.filter(b => {
+          const curUserId = user?._id?.toString();
+          const ownerId = (b.owner?._id || b.owner)?.toString();
+          const inHistory = b.history?.some(h => (h.user?._id || h.user)?.toString() === curUserId);
+          const inOwnership = b.ownershipHistory?.some(oh => (oh.user?._id || oh.user)?.toString() === curUserId);
+          
+          return ownerId === curUserId || inHistory || inOwnership;
+        });
+      }
 
       setTransactions(txnsList);
       setBarcodes(bcList);
@@ -158,259 +202,236 @@ const DashboardPage = () => {
     return null;
   };
 
-  // 1. Store Admin Dashboard
-  if (activeRole.role === 'department_admin' && activeRole.adminType === 'store') {
-    const storePending = transactions.filter(t => ['tl_approved', 'mgt_approved', 'ready_for_dispatch'].includes(t.status));
-    const storeActiveBarcodes = barcodes.filter(b => b.status === 'Active');
-    const storeReturnedBarcodes = barcodes.filter(b => b.status === 'Returned');
+  // Unified Premium Dashboard rendering for all users
+  const totalItemsCount = (stats?.activeItems || 0) + (stats?.pending || 0) + (stats?.returned || 0) + (stats?.closed || 0);
+  const pieData = [
+    { name: 'Active', value: stats?.activeItems || 0, color: '#10b981' },
+    { name: 'Pending', value: stats?.pending || 0, color: '#f59e0b' },
+    { name: 'Returned', value: stats?.returned || 0, color: '#34d399' },
+    { name: 'Closed', value: stats?.closed || 0, color: '#94a3b8' }
+  ];
 
-    return (
-      <div className="flex flex-col gap-6 animate-in fade-in duration-200">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <Store className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white m-0">
-                Store Operations Command
-              </h1>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">Material picking list, handler assignment, and return verifications</p>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => fetchDashboardData(true)} disabled={refreshing} icon={RefreshCw}>
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </Button>
-        </div>
-
-        <StatsCards stats={stats} />
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card title="Awaiting Material Sourcing / Handler Assignment">
-            {storePending.length === 0 ? (
-              <p className="text-sm text-slate-500 py-6 text-center">No transactions require store dispatch.</p>
-            ) : (
-              <div className="flex flex-col gap-3 max-h-[350px] overflow-y-auto pr-1">
-                {storePending.map(t => (
-                  <div key={t._id} className="p-4 border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 rounded-xl flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <span className="text-xs font-semibold text-slate-500">{t.transactionId}</span>
-                      <p className="text-sm font-bold truncate text-slate-800 dark:text-slate-200">{t.description || 'Logistics Request'}</p>
-                      <p className="text-[10px] text-slate-400 mt-1 uppercase font-bold tracking-wider">Priority: {t.priority}</p>
-                    </div>
-                    <Button size="sm" onClick={() => navigate(`/transactions/${t._id}`)}>
-                      Open Action Drawer
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          <Card title="Awaiting Return Handover Checks">
-            {barcodes.filter(b => b.status === 'Return Requested').length === 0 ? (
-              <p className="text-sm text-slate-500 py-6 text-center">No return handovers currently requested.</p>
-            ) : (
-              <div className="flex flex-col gap-3 max-h-[350px] overflow-y-auto pr-1">
-                {barcodes.filter(b => b.status === 'Return Requested').map(b => (
-                  <div key={b.barcode} className="p-4 border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 rounded-xl flex items-center justify-between gap-4">
-                    <div>
-                      <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">{b.barcode}</span>
-                      <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mt-0.5">{b.materialName}</h4>
-                      <p className="text-xs text-slate-400 mt-0.5">Owner: {b.owner?.fullName}</p>
-                    </div>
-                    <Button size="sm" variant="success" onClick={async () => {
-                      if (confirm(`Confirm receipt and verify return of barcode ${b.barcode}?`)) {
-                        try {
-                          await api.post(`/barcodes/${b.barcode}/confirm-return`, {
-                            remarks: 'Returned and physically verified at Store stock shelves.',
-                            gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Store Depot' }
-                          });
-                          alert('Return confirmed.');
-                          fetchDashboardData(true);
-                        } catch (err) {
-                          alert(err.response?.data?.message || 'Error confirming return');
-                        }
-                      }
-                    }}>
-                      Verify Return
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
-  // 2. Accounts Admin Dashboard
-  if (activeRole.role === 'department_admin' && activeRole.adminType === 'accounts') {
-    const rdcTransactions = transactions.filter(t => t.documentType === 'RDC');
-    const matchedRDCs = rdcTransactions.filter(t => t.invoiceMatchStatus === 'matched');
-    const discrepantRDCs = rdcTransactions.filter(t => t.invoiceMatchStatus === 'discrepant');
-    const pendingRDCs = rdcTransactions.filter(t => t.status === 'received' && t.invoiceMatchStatus === 'pending');
-
-    return (
-      <div className="flex flex-col gap-6 animate-in fade-in duration-200">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <Wallet className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white m-0">
-                Financial Matching Command
-              </h1>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">3-way matching, invoice checking, and RDC discrepancy holds</p>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => fetchDashboardData(true)} disabled={refreshing} icon={RefreshCw}>
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </Button>
-        </div>
-
-        <StatsCards stats={stats} />
-
-        {/* Action queue */}
-        <Card title="Awaiting Invoice 3-Way Match Verification">
-          {pendingRDCs.length === 0 ? (
-            <p className="text-sm text-slate-500 py-6 text-center">No received returnable documents awaiting invoice matches.</p>
-          ) : (
-            <div className="flex flex-col gap-4">
-              {pendingRDCs.map(t => (
-                <div key={t._id} className="p-4 border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <span className="text-xs font-semibold text-slate-500">{t.transactionId}</span>
-                    <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">{t.description || 'Replenishment Order'}</h4>
-                    <p className="text-xs text-slate-400 mt-0.5">Value to match: <span className="font-bold text-slate-700 dark:text-slate-300">₹{t.grandTotal.toLocaleString()}</span></p>
-                  </div>
-                  <Button size="sm" onClick={() => navigate(`/transactions/${t._id}`)}>
-                    Match Invoice Now
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-    );
-  }
-
-  // 3. Management / Team Lead Dashboard
-  const isTL = activeRole.role === 'team_lead';
-  const isMgt = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'management');
-  
-  if (isTL || isMgt) {
-    return (
-      <div className="flex flex-col gap-6 animate-in fade-in duration-200">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              {isTL ? <UserCheck className="w-6 h-6 text-blue-600 dark:text-blue-400" /> : <Shield className="w-6 h-6 text-blue-600 dark:text-blue-400" />}
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white m-0">
-                {isTL ? 'Team Approvals Commander' : 'Executive Governance Console'}
-              </h1>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">{isTL ? 'Verify member requests and authorize transfers' : 'Department analytics, escalations queue, and audits'}</p>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => fetchDashboardData(true)} disabled={refreshing} icon={RefreshCw}>
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </Button>
-        </div>
-
-        <StatsCards stats={stats} />
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card title={isTL ? "Team Approvals Queue" : "Executive Approvals Center"}>
-            {pendingApprovals.length === 0 ? (
-              <div className="text-center py-8">
-                <CheckCircle className="w-10 h-10 text-emerald-500 mx-auto mb-2.5" />
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Approval queue clear.</p>
-                <p className="text-xs text-slate-500 mt-0.5">You are up to date on all requests.</p>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {pendingApprovals.map(t => (
-                  <div key={t._id} className="p-4 border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 rounded-xl flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-500">{t.transactionId}</span>
-                        {t.priority === 'high' || t.priority === 'critical' ? <Badge variant="danger">{t.priority}</Badge> : null}
-                      </div>
-                      <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mt-1 truncate">{t.description || 'Material Transfer'}</h4>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Value: ₹{t.grandTotal?.toLocaleString()}</p>
-                    </div>
-                    <Button size="sm" onClick={() => navigate('/pending')}>
-                      Action Center
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          <Card title="Department Logistics Activity">
-            <TransactionCharts dailyData={charts.daily} docTypeData={charts.docType} activities={activities} isAdmin={true} />
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
-  // 4. Employee / Default Dashboard
-  const myActiveBarcodes = barcodes.filter(b => b.owner?._id === user?._id || b.owner === user?._id);
+  const getProgressPercentage = (status) => {
+    switch (status?.toLowerCase()) {
+      case 'submitted': return 20;
+      case 'tl_approved': return 40;
+      case 'mgt_approved': return 55;
+      case 'store_accepted':
+      case 'handler_assigned': return 70;
+      case 'dispatched': return 85;
+      case 'received':
+      case 'active':
+      case 'partially_returned': return 90;
+      case 'closed':
+      case 'completed': return 100;
+      case 'rejected': return 100;
+      default: return 0;
+    }
+  };
 
   return (
-    <div className="flex flex-col gap-6 animate-in fade-in duration-200">
+    <div className="flex flex-col gap-6 animate-in fade-in duration-200 pb-10">
+      {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white m-0">
-            Welcome, {user?.fullName}
+          <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white m-0">
+            Dashboard
           </h1>
-          <p className="text-xs text-slate-500 mt-1">Manage your active materials, transfers, and loops</p>
+          <p className="text-xs text-slate-500 mt-0.5">Real-time logistics analytics and loop management overview</p>
         </div>
         <Button variant="outline" size="sm" onClick={() => fetchDashboardData(true)} disabled={refreshing} icon={RefreshCw}>
           {refreshing ? 'Refreshing...' : 'Refresh'}
         </Button>
       </div>
 
-      <StatsCards stats={stats} />
+      {/* KPI Cards Row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+          <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Active Items</span>
+          <span className="text-3xl font-extrabold text-slate-900 dark:text-white mt-1.5">{stats?.activeItems ?? 0}</span>
+          <span className="text-[10px] text-slate-400 font-semibold mt-1">In circulation</span>
+        </div>
+        
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+          <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Pending</span>
+          <span className="text-3xl font-extrabold text-slate-900 dark:text-white mt-1.5">{stats?.pending ?? 0}</span>
+          <span className="text-[10px] text-slate-400 font-semibold mt-1">Awaiting action</span>
+        </div>
 
-      {/* Barcode-level Inventory Loop */}
-      <Card title="My Barcode Inventory (Recursive Loops)">
-        {myActiveBarcodes.length === 0 ? (
-          <div className="text-center py-10 bg-slate-50/50 dark:bg-slate-900/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-            <AlertCircle className="w-10 h-10 text-slate-400 mx-auto mb-2" />
-            <p className="text-sm text-slate-500 font-semibold">You do not currently own any active materials.</p>
-            <p className="text-xs text-slate-400 mt-0.5">Create a Request or scan incoming items to start.</p>
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+          <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Returned</span>
+          <span className="text-3xl font-extrabold text-slate-900 dark:text-white mt-1.5">{stats?.returned ?? 0}</span>
+          <span className="text-[10px] text-slate-400 font-semibold mt-1">Returned to store</span>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+          <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Closed</span>
+          <span className="text-3xl font-extrabold text-slate-900 dark:text-white mt-1.5">{stats?.closed ?? 0}</span>
+          <span className="text-[10px] text-slate-400 font-semibold mt-1">Completed</span>
+        </div>
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left: Items by Status Donut Chart */}
+        <Card title="Items by Status" className="flex flex-col justify-between">
+          <div className="h-64 w-full flex items-center relative">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={4}
+                  dataKey="value"
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    borderRadius: '8px',
+                    fontSize: '11px',
+                    color: '#ffffff'
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            
+            {/* Total count in the center */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-[-5px]">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Total</span>
+              <span className="text-2xl font-black text-slate-800 dark:text-white leading-none mt-0.5">{totalItemsCount}</span>
+            </div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {myActiveBarcodes.map(b => (
-              <div key={b.barcode} className="p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl hover:shadow-md transition-shadow relative flex flex-col justify-between">
-                <div>
-                  <div className="flex justify-between items-start">
-                    <span className="text-[10px] font-extrabold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded uppercase tracking-wider font-mono">{b.barcode}</span>
-                    <Badge variant={b.status === 'Active' ? 'success' : 'secondary'}>{b.status}</Badge>
-                  </div>
-                  <h4 className="text-base font-bold mt-2.5 text-slate-800 dark:text-slate-100">{b.materialName}</h4>
-                  <p className="text-xs text-slate-400 mt-2 flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" /> {b.gps?.address || 'No Location registered'}</p>
+          
+          <div className="flex flex-col gap-2 mt-4 px-3">
+            {pieData.map((item, idx) => (
+              <div key={idx} className="flex items-center justify-between text-xs font-semibold">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                  <span className="text-slate-650 dark:text-slate-400 capitalize">{item.name}</span>
                 </div>
-                
-                {/* Operations */}
-                <div className="flex gap-2 mt-5 pt-4 border-t border-slate-100 dark:border-slate-800/80">
-                  <Button variant="outline" size="xs" icon={Send} className="flex-1 text-[11px]" onClick={() => setActiveBarcodeAction({ barcode: b, type: 'transfer' })}>
-                    Transfer
-                  </Button>
-                  <Button variant="outline" size="xs" icon={Reply} className="flex-1 text-[11px]" onClick={() => setActiveBarcodeAction({ barcode: b, type: 'return' })}>
-                    Return
-                  </Button>
-                  <Button variant="outline" size="xs" icon={Split} className="flex-1 text-[11px]" onClick={() => setActiveBarcodeAction({ barcode: b, type: 'split' })}>
-                    Split Lot
-                  </Button>
-                </div>
+                <span className="text-slate-800 dark:text-slate-200">
+                  {item.value} ({totalItemsCount > 0 ? Math.round((item.value / totalItemsCount) * 100) : 0}%)
+                </span>
               </div>
             ))}
           </div>
-        )}
+        </Card>
+
+        {/* Right: Requests Over Time Line/Area Chart */}
+        <div className="lg:col-span-2">
+          <Card title="Requests Over Time (This Month)">
+            <div className="h-[310px] w-full mt-2">
+              {charts.daily.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-xs text-slate-400">No trend data available</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={charts.daily} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25}/>
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.08)" />
+                    <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} stroke="transparent" />
+                    <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} stroke="transparent" />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'rgba(15, 23, 42, 0.95)', 
+                        border: '1px solid rgba(255, 255, 255, 0.1)', 
+                        borderRadius: '8px',
+                        fontSize: '11px',
+                        color: '#ffffff'
+                      }} 
+                    />
+                    <Area type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCount)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* Recent Transactions Table Card */}
+      <Card title="Recent Transactions">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 dark:border-slate-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <th className="py-3 px-4">Transaction ID</th>
+                <th className="py-3 px-4">Requester</th>
+                <th className="py-3 px-4">Date</th>
+                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4">Progress</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-semibold text-slate-700 dark:text-slate-200">
+              {transactions.slice(0, 5).map((t) => {
+                const progressPct = getProgressPercentage(t.status);
+                const dateStr = new Date(t.createdAt).toLocaleDateString('en-IN', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: true
+                });
+                return (
+                  <tr key={t._id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                    <td className="py-3.5 px-4">
+                      <span 
+                        onClick={() => navigate(`/transactions/${t._id}`)}
+                        className="font-extrabold text-blue-650 hover:underline cursor-pointer tracking-wider"
+                      >
+                        {t.transactionId}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4">{t.requester?.fullName || 'System User'}</td>
+                    <td className="py-3.5 px-4 text-slate-500">{dateStr}</td>
+                    <td className="py-3.5 px-4">
+                      {t.status === 'closed' || t.status === 'completed' ? (
+                        <Badge variant="success">Completed</Badge>
+                      ) : t.status === 'rejected' ? (
+                        <Badge variant="danger">Closed</Badge>
+                      ) : ['submitted', 'tl_approved', 'mgt_approved'].includes(t.status) ? (
+                        <Badge variant="warning">Pending</Badge>
+                      ) : (
+                        <Badge variant="info">In Progress</Badge>
+                      )}
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-24 bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden shrink-0">
+                          <div 
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              t.status === 'rejected' ? 'bg-slate-400' : 'bg-emerald-500'
+                            }`} 
+                            style={{ width: `${progressPct}%` }} 
+                          />
+                        </div>
+                        <span className="text-[10px] font-black text-slate-500 tracking-wider">{progressPct}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {transactions.length === 0 && (
+                <tr>
+                  <td colSpan="5" className="py-10 text-center text-slate-400 italic">No transactions found.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       {renderModals()}

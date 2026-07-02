@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth.middleware');
-const { authorize } = require('../middleware/rbac.middleware');
-const { getAuditLogs } = require('../controllers/audit.controller');
+const auditController = require('../controllers/audit.controller');
+const auth = require('../middleware/auth');
+const { requirePermission } = require('../middleware/rbac');
 
-router.get('/', authenticate, authorize('super_admin', 'admin'), getAuditLogs);
+router.use(auth);
+router.get('/', requirePermission('audit:view', 'audit:view_all'), auditController.getAuditLogs);
 
 module.exports = router;
