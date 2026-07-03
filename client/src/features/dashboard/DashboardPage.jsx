@@ -114,8 +114,32 @@ const DashboardPage = () => {
         closed: closedCount
       });
 
+      // Derive daily barcodes trend count for the last 30 days
+      const dailyBarcodesMap = {};
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      // Initialize mapping for the last 30 days
+      for (let i = 0; i < 30; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().split('T')[0];
+        dailyBarcodesMap[dateStr] = 0;
+      }
+
+      bcList.forEach((b) => {
+        if (!b.createdAt) return;
+        const dateStr = b.createdAt.split('T')[0];
+        if (dailyBarcodesMap[dateStr] !== undefined) {
+          dailyBarcodesMap[dateStr] += 1;
+        }
+      });
+
+      const dailyData = Object.keys(dailyBarcodesMap)
+        .sort()
+        .map((date) => ({ date, count: dailyBarcodesMap[date] }));
+
       const chartData = chartsRes.data.data?.charts || {};
-      const dailyData = (chartData.dailyTransactions || []).map((d) => ({ date: d._id, count: d.count }));
       const docType = (chartData.docTypeDistribution || []).map((d) => ({ name: d._id, value: d.count }));
       setCharts({ daily: dailyData, docType });
 
@@ -325,10 +349,26 @@ const DashboardPage = () => {
           </div>
         </Card>
 
-        {/* Right: Requests Over Time Line/Area Chart */}
+        {/* Right: Barcodes Registered Line/Area Chart */}
         <div className="lg:col-span-2">
-          <Card title="Requests Over Time (This Month)">
-            <div className="h-[310px] w-full mt-2">
+          <Card title="Barcodes Registered (This Month)">
+            {charts.daily.length > 0 && (
+              <div className="flex items-center justify-between mt-1 mb-4 flex-wrap gap-2 border-b border-slate-100 dark:border-slate-800/80 pb-3">
+                <div className="flex gap-4 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  <div>
+                    Total Barcodes: <span className="text-slate-800 dark:text-slate-200 font-bold">{charts.daily.reduce((sum, d) => sum + d.count, 0)}</span>
+                  </div>
+                  <div>
+                    Peak Registration: <span className="text-slate-800 dark:text-slate-200 font-bold">{Math.max(...charts.daily.map(d => d.count))} / day</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-400">Chart style:</span>
+                  <span className="bg-blue-500/10 text-blue-600 dark:text-blue-400 px-2.5 py-0.5 rounded-lg font-bold">Trend Area</span>
+                </div>
+              </div>
+            )}
+            <div className="h-[265px] w-full mt-2">
               {charts.daily.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-xs text-slate-400">No trend data available</div>
               ) : (
@@ -341,7 +381,19 @@ const DashboardPage = () => {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.08)" />
-                    <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} stroke="transparent" />
+                    <XAxis 
+                      dataKey="date" 
+                      tick={{ fill: '#94a3b8', fontSize: 10 }} 
+                      stroke="transparent" 
+                      tickFormatter={(str) => {
+                        try {
+                          const date = new Date(str);
+                          return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+                        } catch {
+                          return str;
+                        }
+                      }}
+                    />
                     <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} stroke="transparent" />
                     <Tooltip 
                       contentStyle={{ 
@@ -350,9 +402,18 @@ const DashboardPage = () => {
                         borderRadius: '8px',
                         fontSize: '11px',
                         color: '#ffffff'
-                      }} 
+                      }}
+                      labelFormatter={(label) => {
+                        try {
+                          const date = new Date(label);
+                          return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                        } catch {
+                          return label;
+                        }
+                      }}
+                      formatter={(value) => [value, 'Barcodes Registered']}
                     />
-                    <Area type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCount)" />
+                    <Area name="Barcodes" type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCount)" />
                   </AreaChart>
                 </ResponsiveContainer>
               )}

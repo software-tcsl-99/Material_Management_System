@@ -47,7 +47,7 @@ exports.getStats = async (req, res) => {
   try {
     const userId = req.user._id;
     const userRole = req.user.role;
-    const userDept = req.user.department._id || req.user.department;
+    const userDept = req.user.department?._id || req.user.department;
 
     const txnFilter = await getTxnFilterForUser(req.user);
 
@@ -93,7 +93,7 @@ exports.getChartData = async (req, res) => {
   try {
     const userId = req.user._id;
     const userRole = req.user.role;
-    const userDept = req.user.department._id || req.user.department;
+    const userDept = req.user.department?._id || req.user.department;
 
     const txnFilter = await getTxnFilterForUser(req.user);
 
@@ -158,7 +158,7 @@ exports.getDashboard = async (req, res) => {
   try {
     const userId = req.user._id;
     const userRole = req.user.role;
-    const userDept = req.user.department._id || req.user.department;
+    const userDept = req.user.department?._id || req.user.department;
 
     const txnFilter = await getTxnFilterForUser(req.user);
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -19,11 +19,67 @@ import {
 } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import useUIStore from '../../store/uiStore';
+import api from '../../lib/axios';
 
 export default function Sidebar() {
   const { user } = useAuthStore();
   const { sidebarOpen } = useUIStore();
   const [txnDropdown, setTxnDropdown] = useState(true);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    const fetchSidebarData = async () => {
+      try {
+        const isStore = user.role === 'super_admin' || (user.role === 'department_admin' && user.departmentAdminType === 'store');
+        
+        const [txnRes, transferRes, splitRes, returnRes, notifRes] = await Promise.all([
+          api.get('/transactions'),
+          api.get('/barcodes/pending/transfers'),
+          isStore ? api.get('/barcodes/split-requests/pending') : Promise.resolve({ data: { data: [] } }),
+          isStore ? api.get('/barcodes/returns/pending') : Promise.resolve({ data: { data: [] } }),
+          api.get('/notifications?unreadOnly=true')
+        ]);
+        
+        const txns = txnRes.data.data || [];
+        const transfers = transferRes.data.transfers || [];
+        const splits = splitRes.data.data || [];
+        const returns = returnRes.data.data || [];
+        const unreadCount = notifRes.data.notifications?.length || 0;
+
+        setUnreadNotifCount(unreadCount);
+
+        let filteredTxnsCount = 0;
+        
+        if (user.role === 'employee') {
+          filteredTxnsCount = txns.filter(t => 
+            ((t.handler?._id === user._id || t.handler === user._id) && t.status === 'store_accepted') ||
+            ((t.requester?._id === user._id || t.requester === user._id) && t.status === 'dispatched')
+          ).length;
+        } else if (user.role === 'team_lead') {
+          filteredTxnsCount = txns.filter(t => t.status === 'submitted').length;
+        } else if (user.role === 'department_admin') {
+          if (user.departmentAdminType === 'management') {
+            filteredTxnsCount = txns.filter(t => t.status === 'tl_approved').length;
+          } else if (user.departmentAdminType === 'store') {
+            filteredTxnsCount = txns.filter(t => ['mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status)).length;
+          }
+        } else if (user.role === 'super_admin') {
+          filteredTxnsCount = txns.filter(t => ['submitted', 'tl_approved', 'mgt_approved'].includes(t.status)).length;
+        }
+
+        const total = filteredTxnsCount + transfers.length + splits.length + returns.length;
+        setPendingCount(total);
+      } catch (err) {
+        console.error('Error fetching sidebar count data:', err);
+      }
+    };
+
+    fetchSidebarData();
+    const interval = setInterval(fetchSidebarData, 15000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   if (!sidebarOpen) return null;
 
@@ -62,14 +118,22 @@ export default function Sidebar() {
         <NavLink
           to="/pending"
           className={({ isActive }) =>
-            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+            `flex items-center justify-between px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
               isActive
                 ? 'bg-primary text-white shadow-md shadow-primary/20'
                 : 'hover:bg-slate-800 hover:text-white'
             }`
           }
         >
-          <Inbox className="w-4 h-4" /> Pending Requests
+          <div className="flex items-center gap-3">
+            <Inbox className="w-4 h-4" /> 
+            <span>Pending Requests</span>
+          </div>
+          {pendingCount > 0 && (
+            <span className="bg-rose-500 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full shrink-0 animate-pulse">
+              {pendingCount}
+            </span>
+          )}
         </NavLink>
 
         {/* Transactions Dropdown group */}
@@ -176,18 +240,16 @@ export default function Sidebar() {
         )}
 
         {/* Reports */}
-        {(user?.role === 'super_admin' || user?.role === 'department_admin' || user?.role === 'team_lead') && (
-          <NavLink
-            to="/reports"
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
-                isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
-              }`
-            }
-          >
-            <TrendingUp className="w-4 h-4" /> Reports
-          </NavLink>
-        )}
+        <NavLink
+          to="/reports"
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+              isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
+            }`
+          }
+        >
+          <TrendingUp className="w-4 h-4" /> Reports
+        </NavLink>
 
 
 
@@ -195,26 +257,46 @@ export default function Sidebar() {
         <NavLink
           to="/notifications"
           className={({ isActive }) =>
-            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+            `flex items-center justify-between px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
               isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
             }`
           }
         >
-          <Bell className="w-4 h-4" /> Notifications
+          <div className="flex items-center gap-3">
+            <Bell className="w-4 h-4" />
+            <span>Notifications</span>
+          </div>
+          {unreadNotifCount > 0 && (
+            <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-black animate-pulse">
+              {unreadNotifCount}
+            </span>
+          )}
         </NavLink>
 
         {/* User Roles Admin */}
         {user?.role === 'super_admin' && (
-          <NavLink
-            to="/users"
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
-                isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
-              }`
-            }
-          >
-            <ShieldCheck className="w-4 h-4" /> Users & Roles
-          </NavLink>
+          <>
+            <NavLink
+              to="/users"
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
+                }`
+              }
+            >
+              <ShieldCheck className="w-4 h-4" /> Users & Roles
+            </NavLink>
+            <NavLink
+              to="/masters"
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
+                }`
+              }
+            >
+              <Settings className="w-4 h-4" /> Masters Config
+            </NavLink>
+          </>
         )}
       </nav>
 

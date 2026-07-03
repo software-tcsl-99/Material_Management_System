@@ -103,6 +103,15 @@ export default function BarcodeDetail() {
 
   const isOwner = userData && (bc.owner?._id || bc.owner)?.toString() === userData._id?.toString();
 
+  const filteredHistory = bc?.history?.filter(log => {
+    const matches = log.action.match(/[A-Z]{2}\d{6}/g);
+    if (matches) {
+      const hasOtherBarcode = matches.some(bCode => bCode !== bc.barcode);
+      if (hasOtherBarcode) return false;
+    }
+    return true;
+  }) || [];
+
   const handleAcceptSplit = async () => {
     setAccepting(true);
     try {
@@ -119,6 +128,11 @@ export default function BarcodeDetail() {
       setAccepting(false);
     }
   };
+
+  const material = bc.transaction?.materials?.find(m => 
+    m.barcodes?.some(b => b.barcode === bc.barcode || b === bc.barcode)
+  );
+  const price = material?.price || 0;
 
   const mockPhotos = [
     'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=300&q=80',
@@ -153,9 +167,8 @@ export default function BarcodeDetail() {
 
         {/* Actions Panel */}
         <div className="flex items-center gap-2 flex-wrap">
-          {bc.status?.toUpperCase() === 'ACTIVE' && bc.transaction && (
+          {bc.status?.toUpperCase() === 'ACTIVE' && (
             (userData?.role === 'super_admin' || (userData?.role === 'department_admin' && userData?.departmentAdminType === 'store')) ||
-              ['active', 'received', 'partially_returned'].includes(bc.transaction.status?.toLowerCase()) &&
               (bc.owner?._id || bc.owner)?.toString() === userData?._id?.toString()
           ) && (
             <>
@@ -245,12 +258,19 @@ export default function BarcodeDetail() {
             </span>
           </div>
           <div>
-            <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider block mb-1">Quantity</span>
-            <span className="font-extrabold text-slate-800 dark:text-slate-200 text-xs">1</span>
+            <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider block mb-1">Unit Valuation</span>
+            <span className="font-extrabold text-blue-650 dark:text-blue-400 text-xs">
+              {price > 0 ? `₹${price.toLocaleString('en-IN')}` : '₹0'}
+            </span>
           </div>
           <div>
-            <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider block mb-1">Total Transfers</span>
-            <span className="font-extrabold text-slate-800 dark:text-slate-200 text-xs">{bc.transferCount || 0}</span>
+            <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider block mb-1">Transaction Combined Valuation</span>
+            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">
+              {bc.transaction?.materials
+                ? `₹${bc.transaction.materials.reduce((sum, m) => sum + ((m.price || 0) * m.quantity), 0).toLocaleString('en-IN')}`
+                : 'N/A'
+              }
+            </span>
           </div>
           <div className="flex flex-col items-start gap-1">
             <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider block">Status</span>
@@ -357,7 +377,7 @@ export default function BarcodeDetail() {
                 <div className="absolute left-[92px] top-4 bottom-4 w-0.5 bg-emerald-600" />
 
                 <div className="flex flex-col gap-8">
-                  {bc.history?.map((log, idx) => {
+                  {filteredHistory.map((log, idx) => {
                     const logDate = new Date(log.timestamp);
                     const isTransfer = log.action.toLowerCase().includes('transfer');
 
@@ -399,7 +419,7 @@ export default function BarcodeDetail() {
         {activeTab === 'timeline' && (
           <Card title="Activity Timeline Logs">
             <div className="flex flex-col gap-4">
-              {bc.history?.map((hist, idx) => (
+              {filteredHistory.map((hist, idx) => (
                 <div key={idx} className="p-3.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl flex items-start gap-3">
                   <div className="p-2 bg-blue-50 dark:bg-blue-950/40 text-blue-650 rounded-lg shrink-0">
                     <Check className="w-4 h-4" />

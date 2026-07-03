@@ -4,6 +4,8 @@ const Transfer = require('../models/Transfer');
 const Return = require('../models/Return');
 const AuditLog = require('../models/AuditLog');
 const Notification = require('../models/Notification');
+const User = require('../models/User');
+const Department = require('../models/Department');
 const { emitToUser } = require('../config/socket');
 
 const createNotification = async (userId, type, title, message, transactionId, barcodeId) => {
@@ -61,7 +63,8 @@ exports.getBarcodesByTransaction = async (req, res) => {
     const { transactionId } = req.params;
     const barcodes = await Barcode.find({ transactionId })
       .populate('owner', 'fullName employeeId department')
-      .populate('ownerDepartment', 'name');
+      .populate('ownerDepartment', 'name')
+      .populate('history.user', 'fullName employeeId');
 
     res.json({ barcodes });
   } catch (error) {
@@ -148,8 +151,8 @@ exports.handleTransfer = async (req, res) => {
     const transfer = await Transfer.findById(transferId);
     if (!transfer) return res.status(404).json({ message: 'Transfer not found.' });
 
-    // Check if the actor is Management
-    const isManagement = req.user.role === 'department_admin' && req.user.departmentAdminType === 'management';
+    // Check if the actor is Management or Super Admin
+    const isManagement = (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management') || req.user.role === 'super_admin';
 
     if (isManagement && transfer.type === 'cross_department' && transfer.status === 'pending') {
       if (action === 'accept') {
@@ -276,17 +279,20 @@ exports.handleTransfer = async (req, res) => {
  */
 exports.returnBarcode = async (req, res) => {
   try {
-    const { barcode, reason, condition, remarks, gps, photos } = req.body;
+    const { barcode, reason, condition, remarks, gps, photos, returnHandler } = req.body;
 
     const bc = await Barcode.findOne({ barcode });
     if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
     if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
 
+    const status = returnHandler ? 'handler_assigned' : 'pending';
+
     const returnDoc = await Return.create({
       transactionId: bc.transactionId,
       barcode,
       fromUser: req.user._id,
-      status: 'pending',
+      returnHandler: returnHandler || null,
+      status,
       reason,
       condition: condition || 'good',
       remarks,
@@ -295,7 +301,7 @@ exports.returnBarcode = async (req, res) => {
     });
 
     bc.history.push({
-      action: 'Return Requested',
+      action: returnHandler ? 'Return Requested (Via Handler)' : 'Return Requested (Direct)',
       user: req.user._id,
       remarks: reason || 'Return to store requested',
       gps,
@@ -308,11 +314,24 @@ exports.returnBarcode = async (req, res) => {
       entityId: barcode,
       user: req.user._id,
       userName: req.user.fullName,
-      description: `Return requested for ${barcode}`,
+      description: `Return requested for ${barcode} (Method: ${returnHandler ? 'Handler' : 'Direct'})`,
     });
+
+    // Notify handler if assigned
+    if (returnHandler) {
+      await createNotification(
+        returnHandler,
+        'handler_assigned',
+        'Return Delivery Assigned',
+        `You have been assigned to collect and return barcode ${barcode} to store`,
+        bc.transactionId,
+        barcode
+      );
+    }
 
     res.json({ message: 'Return request submitted.', return: returnDoc });
   } catch (error) {
+    console.error('Return barcode error:', error);
     res.status(500).json({ message: 'Server error.' });
   }
 };
@@ -382,6 +401,71 @@ exports.acceptReturn = async (req, res) => {
 
     res.json({ message: 'Return accepted.', return: returnDoc });
   } catch (error) {
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Handler actions for return requests (Collect / Deliver)
+ */
+exports.handleReturnHandlerAction = async (req, res) => {
+  try {
+    const { returnId } = req.params;
+    const { actionType, remarks } = req.body;
+
+    const returnDoc = await Return.findById(returnId);
+    if (!returnDoc) return res.status(404).json({ message: 'Return request not found.' });
+
+    // Validate authorization (must be the assigned handler or super admin)
+    const isAssignedHandler = returnDoc.returnHandler && returnDoc.returnHandler.toString() === req.user._id.toString();
+    if (req.user.role !== 'super_admin' && !isAssignedHandler) {
+      return res.status(403).json({ message: 'You are not authorized to perform handler actions for this return.' });
+    }
+
+    if (actionType === 'collect') {
+      returnDoc.status = 'collected';
+      returnDoc.collectedAt = new Date();
+      
+      const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
+      if (bc) {
+        bc.history.push({
+          action: 'Return Collected by Handler',
+          user: req.user._id,
+          remarks: remarks || 'Handler collected returning items',
+        });
+        await bc.save();
+      }
+    } else if (actionType === 'deliver') {
+      returnDoc.status = 'store_received';
+      returnDoc.receivedAt = new Date();
+      
+      const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
+      if (bc) {
+        bc.history.push({
+          action: 'Return Handed Over to Store',
+          user: req.user._id,
+          remarks: remarks || 'Handler delivered returning items to store',
+        });
+        await bc.save();
+      }
+    } else {
+      return res.status(400).json({ message: 'Invalid handler action type.' });
+    }
+
+    await returnDoc.save();
+
+    await AuditLog.create({
+      action: 'RETURN_HANDLER_ACTION',
+      entity: 'Return',
+      entityId: returnDoc.barcode,
+      user: req.user._id,
+      userName: req.user.fullName,
+      description: `Handler performed ${actionType} on return of ${returnDoc.barcode}`,
+    });
+
+    res.json({ message: `Return ${actionType}ed successfully.`, return: returnDoc });
+  } catch (error) {
+    console.error('Handle return handler action error:', error);
     res.status(500).json({ message: 'Server error.' });
   }
 };
@@ -724,22 +808,29 @@ exports.searchBarcodes = async (req, res) => {
  */
 exports.getPendingTransfers = async (req, res) => {
   try {
-    const query = {};
+    let query;
 
-    if (req.user.role === 'employee') {
-      // Employee sees internal pending transfers OR approved cross-department transfers
-      query.toUser = req.user._id;
-      query.$or = [
-        { status: 'pending', type: 'internal' },
-        { status: 'approved', type: 'cross_department' }
-      ];
-    } else if (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management') {
-      // Management sees cross-department transfers pending management approval
-      query.type = 'cross_department';
-      query.status = 'pending';
+    const isManagement = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management');
+
+    if (isManagement) {
+      // Management/Super Admin sees cross-department transfers pending management approval
+      // OR transfers specifically sent to them
+      query = {
+        $or: [
+          { type: 'cross_department', status: 'pending' },
+          { toUser: req.user._id, status: 'pending', type: 'internal' },
+          { toUser: req.user._id, status: 'approved', type: 'cross_department' }
+        ]
+      };
     } else {
-      // Return empty if not employee or management
-      return res.json({ data: [], transfers: [] });
+      // All other users (employee, team_lead, stores, etc.) see transfers sent to them
+      query = {
+        toUser: req.user._id,
+        $or: [
+          { status: 'pending', type: 'internal' },
+          { status: 'approved', type: 'cross_department' }
+        ]
+      };
     }
 
     const transfers = await Transfer.find(query)
@@ -761,18 +852,33 @@ exports.getPendingTransfers = async (req, res) => {
 exports.getPendingReturns = async (req, res) => {
   try {
     const isStore = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store');
-    if (!isStore) {
-      return res.status(403).json({ message: 'Only Store users can view pending return requests.' });
+    
+    let filter = {};
+    if (isStore) {
+      // Store sees all returns that are not completed yet
+      filter = { status: { $ne: 'completed' } };
+    } else if (req.user.role === 'employee') {
+      // Handler sees returns assigned to them OR returns created by them
+      filter = {
+        $or: [
+          { returnHandler: req.user._id, status: { $in: ['handler_assigned', 'collected', 'store_received'] } },
+          { fromUser: req.user._id, status: { $ne: 'completed' } }
+        ]
+      };
+    } else {
+      // Others see nothing or their department returns, let's keep it simple
+      filter = { status: { $ne: 'completed' } };
     }
 
     const Return = require('../models/Return');
-    const returns = await Return.find({ status: 'pending' })
-      .populate('fromUser', 'fullName employeeId');
+    const returns = await Return.find(filter)
+      .populate('fromUser', 'fullName employeeId')
+      .populate('returnHandler', 'fullName employeeId');
 
     res.json({ data: returns, returns });
   } catch (error) {
     console.error('Get pending returns error:', error);
-    res.status(550).json({ message: 'Server error.' });
+    res.status(500).json({ message: 'Server error.' });
   }
 };
 

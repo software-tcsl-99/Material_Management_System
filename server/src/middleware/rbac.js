@@ -65,8 +65,8 @@ const PERMISSIONS = {
   'document:view': ['super_admin', 'department_admin', 'team_lead', 'employee'],
 
   // Reports
-  'report:view': ['super_admin', 'department_admin', 'team_lead'],
-  'report:export': ['super_admin', 'department_admin'],
+  'report:view': ['super_admin', 'department_admin', 'team_lead', 'employee'],
+  'report:export': ['super_admin', 'department_admin', 'team_lead', 'employee'],
   'report:view_all': ['super_admin'],
 
   // Audit

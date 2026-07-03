@@ -26,6 +26,7 @@ const materialSchema = new mongoose.Schema({
   description: { type: String, default: '' },
   quantity: { type: Number, required: true, min: 1 },
   unit: { type: String, default: 'pcs', trim: true },
+  price: { type: Number, default: 0 },
   barcodes: [barcodeEntrySchema],
   photos: [photoSchema],
 });
@@ -80,6 +81,14 @@ const transactionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
+    receiver: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    otherReceiverName: {
+      type: String,
+      default: '',
+    },
     status: {
       type: String,
       enum: [
@@ -111,6 +120,7 @@ const transactionSchema = new mongoose.Schema(
       default: 'medium',
     },
     dueDate: { type: Date },
+    expectedReturnDate: { type: Date },
     escalated: { type: Boolean, default: false },
     crossDepartment: { type: Boolean, default: false },
     targetDepartment: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
@@ -154,6 +164,7 @@ const transactionSchema = new mongoose.Schema(
     // Closure
     closedAt: { type: Date },
     closedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    grandTotal: { type: Number, default: 0 },
   },
   {
     timestamps: true,
@@ -162,6 +173,9 @@ const transactionSchema = new mongoose.Schema(
 
 // Auto generate transaction ID: TXN-YYYYMMDD-NNNNNN
 transactionSchema.pre('save', async function (next) {
+  if (this.materials && this.materials.length > 0) {
+    this.grandTotal = this.materials.reduce((sum, m) => sum + ((m.price || 0) * (m.quantity || 0)), 0);
+  }
   if (!this.transactionId) {
     const now = new Date();
     const year = now.getFullYear();

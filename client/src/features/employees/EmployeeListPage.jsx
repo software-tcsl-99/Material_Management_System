@@ -152,7 +152,15 @@ const EmployeeListPage = () => {
     },
     {
       header: 'Role',
-      cell: (row) => <Badge variant={['super_admin', 'admin'].includes(row.role) ? 'default' : 'neutral'}>{['super_admin', 'admin'].includes(row.role) ? 'Admin' : 'Employee'}</Badge>,
+      cell: (row) => {
+        if (row.role === 'super_admin') return <Badge variant="default">Super Admin</Badge>;
+        if (row.role === 'department_admin') {
+          if (row.departmentAdminType === 'management') return <Badge variant="default">Management</Badge>;
+          return <Badge variant="default">Admin</Badge>;
+        }
+        if (row.role === 'team_lead') return <Badge variant="info">Team Lead</Badge>;
+        return <Badge variant="neutral">Employee</Badge>;
+      },
     },
     {
       header: 'Status',

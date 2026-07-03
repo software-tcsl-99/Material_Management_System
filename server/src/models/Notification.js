@@ -23,6 +23,8 @@ const notificationSchema = new mongoose.Schema(
         'transfer_initiated',
         'transfer_accepted',
         'transfer_rejected',
+        'transfer_approved_mgt',
+        'transfer_rejected_mgt',
         'return_initiated',
         'return_accepted',
         'split_initiated',

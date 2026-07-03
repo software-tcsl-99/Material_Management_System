@@ -201,7 +201,9 @@ const CreateEmployeePage = () => {
                 label="System Authorization Role"
                 options={[
                   { label: 'Employee (Standard Portal Access)', value: 'employee' },
-                  { label: 'Admin (System Control)', value: 'admin' }
+                  { label: 'Team Lead (Department Lead)', value: 'team_lead' },
+                  { label: 'Admin (System Control)', value: 'department_admin' },
+                  { label: 'Management (Executive Board)', value: 'management' }
                 ]}
                 value={role}
                 onChange={(e) => setRole(e.target.value)}

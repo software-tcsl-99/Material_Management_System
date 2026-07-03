@@ -15,12 +15,46 @@ export default function ReturnMaterial() {
   const [capturedPhoto, setCapturedPhoto] = useState(null);
   const [photoMeta, setPhotoMeta] = useState(null);
 
+  const [employees, setEmployees] = useState([]);
+  const [returnMethod, setReturnMethod] = useState('direct'); // 'direct' or 'handler'
+  const [handlerId, setHandlerId] = useState('');
+  const [handlerSearchQuery, setHandlerSearchQuery] = useState('');
+  const [handlerDropdownOpen, setHandlerDropdownOpen] = useState(false);
+
+  React.useEffect(() => {
+    api.get('/employees?limit=1000&allDepartments=true')
+      .then(res => {
+        const empList = res.data.employees || res.data.data || [];
+        setEmployees(empList);
+      })
+      .catch(err => console.error('Error loading employees:', err));
+  }, []);
+
+  React.useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (!event.target.closest('.handler-dropdown-container')) {
+        setHandlerDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  const filteredHandlers = employees.filter(emp => {
+    if (emp.role === 'super_admin') return false;
+    const term = handlerSearchQuery.toLowerCase();
+    return (
+      emp.fullName.toLowerCase().includes(term) ||
+      emp.employeeId.toLowerCase().includes(term)
+    );
+  });
+
   const returnMutation = useMutation({
     mutationFn: async (payload) => {
       return api.post('/barcodes/return', payload);
     },
     onSuccess: () => {
-      alert('Return request sent to store successfully!');
+      alert('Return request sent successfully!');
       navigate(`/barcodes/${barcode}`);
     }
   });
@@ -36,12 +70,17 @@ export default function ReturnMaterial() {
       alert('Please select a reason.');
       return;
     }
+    if (returnMethod === 'handler' && !handlerId) {
+      alert('Please select a sourcing handler.');
+      return;
+    }
 
     const payload = {
       barcode,
       reason,
       condition,
       remarks,
+      returnHandler: returnMethod === 'handler' ? handlerId : undefined,
       gps: photoMeta ? { lat: photoMeta.lat, lng: photoMeta.lng, address: photoMeta.address } : undefined,
       photos: capturedPhoto ? [{ url: capturedPhoto, capturedAt: new Date() }] : undefined
     };
@@ -69,7 +108,7 @@ export default function ReturnMaterial() {
           <select
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 outline-none"
+            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 outline-none font-semibold"
             required
           >
             <option value="">Select Reason</option>
@@ -85,7 +124,7 @@ export default function ReturnMaterial() {
           <select
             value={condition}
             onChange={(e) => setCondition(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 outline-none"
+            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 outline-none font-semibold"
           >
             <option value="good">Good / Functional</option>
             <option value="damaged">Damaged</option>
@@ -101,9 +140,116 @@ export default function ReturnMaterial() {
             onChange={(e) => setRemarks(e.target.value)}
             placeholder="Add extra remarks..."
             rows={3}
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 outline-none resize-none"
+            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 outline-none resize-none font-semibold"
           />
         </div>
+
+        {/* Logistics Delivery Option */}
+        <div className="space-y-3">
+          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+            Logistics Delivery Option *
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className={`flex flex-col p-3 border rounded-2xl cursor-pointer transition text-xs font-semibold ${returnMethod === 'direct' ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 hover:bg-slate-50 text-slate-600'}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <input
+                  type="radio"
+                  name="returnMethod"
+                  value="direct"
+                  checked={returnMethod === 'direct'}
+                  onChange={() => {
+                    setReturnMethod('direct');
+                    setHandlerId('');
+                  }}
+                  className="accent-primary"
+                />
+                <span className="font-bold">Direct Return (Bypass Handler)</span>
+              </div>
+              <span className="text-[10px] text-slate-400 pl-5">
+                You will personally deliver the material back to the store.
+              </span>
+            </label>
+
+            <label className={`flex flex-col p-3 border rounded-2xl cursor-pointer transition text-xs font-semibold ${returnMethod === 'handler' ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 hover:bg-slate-50 text-slate-600'}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <input
+                  type="radio"
+                  name="returnMethod"
+                  value="handler"
+                  checked={returnMethod === 'handler'}
+                  onChange={() => setReturnMethod('handler')}
+                  className="accent-primary"
+                />
+                <span className="font-bold">Assign Sourcing Handler</span>
+              </div>
+              <span className="text-[10px] text-slate-400 pl-5">
+                Assign an employee to collect and deliver it to the store.
+              </span>
+            </label>
+          </div>
+        </div>
+
+        {returnMethod === 'handler' && (
+          <div className="pt-2 animate-in slide-in-from-top-2 duration-200">
+            <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
+              Select Sourcing Handler *
+            </label>
+            <div className="relative handler-dropdown-container">
+              <button
+                type="button"
+                onClick={() => setHandlerDropdownOpen(!handlerDropdownOpen)}
+                className="w-full flex justify-between items-center text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-primary transition text-left text-slate-855"
+              >
+                <span>
+                  {handlerId 
+                    ? (employees.find(e => e._id === handlerId) 
+                        ? `${employees.find(e => e._id === handlerId).fullName} (${employees.find(e => e._id === handlerId).employeeId})` 
+                        : 'Select Sourcing Handler')
+                    : 'Select Sourcing Handler'}
+                </span>
+                <span className="text-slate-400">▼</span>
+              </button>
+
+              {handlerDropdownOpen && (
+                <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-20 flex flex-col max-h-60 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="p-2 border-b border-slate-100 shrink-0">
+                    <input
+                      type="text"
+                      value={handlerSearchQuery}
+                      onChange={(e) => setHandlerSearchQuery(e.target.value)}
+                      placeholder="Search handler..."
+                      className="w-full text-xs bg-slate-550 border border-slate-200 rounded px-2.5 py-1.5 font-semibold focus:outline-none focus:border-primary"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+
+                  <div className="overflow-y-auto flex-1 py-1">
+                    {filteredHandlers.length > 0 ? (
+                      filteredHandlers.map(emp => (
+                        <button
+                          key={emp._id}
+                          type="button"
+                          onClick={() => {
+                            setHandlerId(emp._id);
+                            setHandlerDropdownOpen(false);
+                            setHandlerSearchQuery('');
+                          }}
+                          className={`w-full text-left px-3.5 py-2 text-xs font-bold hover:bg-slate-50 cursor-pointer block transition ${emp._id === handlerId ? 'bg-primary/5 text-primary font-black' : 'text-slate-705'}`}
+                        >
+                          {emp.fullName} ({emp.employeeId})
+                        </button>
+                      ))
+                    ) : (
+                      <div className="p-3.5 text-xs text-slate-400 font-bold text-center">
+                        No employees found
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Live Photo Attachment */}
         <div className="space-y-2">

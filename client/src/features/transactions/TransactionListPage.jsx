@@ -136,8 +136,16 @@ const TransactionListPage = () => {
     {
       header: 'Date',
       cell: (row) => (
-        <span className="text-[11px] text-slate-500 font-semibold">
+        <span className="text-[11px] text-slate-500 font-semibold font-mono">
           {new Date(row.createdAt).toLocaleDateString()}
+        </span>
+      ),
+    },
+    {
+      header: 'Expected Return Date',
+      cell: (row) => (
+        <span className="text-[11px] text-slate-500 font-semibold font-mono">
+          {row.dueDate ? new Date(row.dueDate).toLocaleDateString() : 'N/A'}
         </span>
       ),
     },

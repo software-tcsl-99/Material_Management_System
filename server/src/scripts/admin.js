@@ -14,10 +14,10 @@ const createAdmin = async () => {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log('Connected to MongoDB');
 
-    // Ensure Admin department exists
-    let adminDept = await Department.findOne({ name: 'Admin' });
+    // Ensure Management department exists
+    let adminDept = await Department.findOne({ name: 'Management' });
     if (!adminDept) {
-      adminDept = await Department.create({ name: 'Admin', code: 'ADM' });
+      adminDept = await Department.create({ name: 'Management', code: 'MGT' });
     }
 
     // Ensure Director designation exists
@@ -37,26 +37,22 @@ const createAdmin = async () => {
     }
 
     // Create Super Admin
-    let admin = await User.findOne({ employeeId: 'ADMIN001' });
-    if (!admin) {
-      admin = await User.create({
-        employeeId: 'ADMIN001',
-        fullName: 'Adesh Bhongale',
-        email: 'admin@mms.com',
-        phone: '9999999959',
-        password: 'Admin@1234',
-        role: 'super_admin',
-        departmentAdminType: null,
-        department: adminDept._id,
-        designation: directorDesg._id,
-        workLocation: headOffice._id,
-        status: 'active',
-        mustChangePassword: false,
-      });
-      console.log('✅ Super Admin created successfully!');
-    } else {
-      console.log('ℹ️  Super Admin already exists.');
-    }
+    await User.deleteOne({ employeeId: 'ADMIN001' });
+    let admin = await User.create({
+      employeeId: 'ADMIN001',
+      fullName: 'Trucode Company',
+      email: 'admin@mms.com',
+      phone: '9999999959',
+      password: 'Admin@1234',
+      role: 'super_admin',
+      departmentAdminType: null,
+      department: adminDept._id,
+      designation: directorDesg._id,
+      workLocation: headOffice._id,
+      status: 'active',
+      mustChangePassword: false,
+    });
+    console.log('✅ Super Admin created successfully!');
 
     console.log('\n══════════════════════════════════════════');
     console.log('🔐 SUPER ADMIN CREDENTIALS');

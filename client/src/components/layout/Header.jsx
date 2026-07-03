@@ -1,15 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Search, LogOut, User as UserIcon, Settings, Menu } from 'lucide-react';
+import { Bell, Search, LogOut, User as UserIcon, Settings, Menu, Sun, Moon } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../../store/authStore';
 import useUIStore from '../../store/uiStore';
+import useThemeStore from '../../store/themeStore';
 import api from '../../lib/api';
 
 export default function Header() {
   const { user, logout } = useAuthStore();
   const { toggleSidebar, toggleMobileMenu } = useUIStore();
+  const { theme, setTheme } = useThemeStore();
   const [notifications, setNotifications] = useState([]);
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const navigate = useNavigate();
+
+  const handleNotificationClick = async (n) => {
+    try {
+      await api.put(`/notifications/${n._id}/read`);
+      setNotifications(prev => prev.filter(item => item._id !== n._id));
+      setShowNotifDropdown(false);
+      if (n.barcodeId) {
+        navigate(`/barcodes/${n.barcodeId}`);
+      } else if (n.transactionId) {
+        navigate(`/transactions/${n.transactionId}`);
+      } else if (n.actionUrl) {
+        navigate(n.actionUrl);
+      }
+    } catch (err) {
+      console.error('Error marking notification as read & navigating:', err);
+    }
+  };
+
+  const toggleTheme = () => {
+    setTheme(theme === 'dark' ? 'light' : 'dark');
+  };
 
   useEffect(() => {
     fetchNotifications();
@@ -56,6 +81,15 @@ export default function Header() {
 
       {/* Right controls */}
       <div className="flex items-center gap-4">
+        {/* Theme Toggle Icon */}
+        <button
+          onClick={toggleTheme}
+          className="p-2 text-slate-500 hover:text-slate-800 rounded-xl hover:bg-slate-50 transition"
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+        >
+          {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+        </button>
+
         {/* Notifications Icon */}
         <div className="relative">
           <button
@@ -90,7 +124,11 @@ export default function Header() {
                     </div>
                   ) : (
                     notifications.map((n) => (
-                      <div key={n._id} className="p-3 hover:bg-slate-50 text-xs transition">
+                      <div
+                        key={n._id}
+                        onClick={() => handleNotificationClick(n)}
+                        className="p-3 hover:bg-slate-50 text-xs transition cursor-pointer"
+                      >
                         <p className="font-semibold text-slate-800 mb-0.5">{n.title}</p>
                         <p className="text-slate-500">{n.message}</p>
                         <p className="text-[9px] text-slate-400 mt-1 font-medium">

@@ -15,6 +15,7 @@ router.post('/transfer', requirePermission('transfer:create'), barcodeController
 router.post('/handle-transfer', requirePermission('transfer:create', 'transfer:approve'), barcodeController.handleTransfer);
 router.post('/return', requirePermission('return:create'), barcodeController.returnBarcode);
 router.put('/return/:returnId/accept', requirePermission('return:accept'), barcodeController.acceptReturn);
+router.put('/return/:returnId/handler-action', barcodeController.handleReturnHandlerAction);
 router.post('/split-request', barcodeController.createSplitRequest);
 router.get('/split-requests/pending', barcodeController.getPendingSplitRequests);
 router.get('/returns/pending', barcodeController.getPendingReturns);

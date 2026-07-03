@@ -47,6 +47,10 @@ exports.createTransaction = async (req, res) => {
       return res.status(400).json({ message: 'At least one material is required.' });
     }
 
+    if (!dueDate) {
+      return res.status(400).json({ message: 'Expected return date is required.' });
+    }
+
     if (!isSimplified) {
       // Validate each material has barcodes matching quantity
       for (const mat of materials) {
@@ -242,9 +246,15 @@ exports.getTransactions = async (req, res) => {
         { department: req.user.department._id || req.user.department },
       ];
     } else if (req.user.role === 'department_admin') {
-      if (req.user.departmentAdminType === 'store' || req.user.departmentAdminType === 'management' || req.user.departmentAdminType === 'accounts') {
-        // Store, Management, and Accounts admin see all submitted/approved transactions
-        // No filter — sees all
+      if (req.user.departmentAdminType === 'store') {
+        // Store only sees requests after management approved (exclude submitted & tl_approved)
+        filter.status = { $nin: ['submitted', 'tl_approved'] };
+      } else if (req.user.departmentAdminType === 'management') {
+        // Management only sees requests after TL approved (exclude submitted)
+        filter.status = { $ne: 'submitted' };
+      } else if (req.user.departmentAdminType === 'accounts') {
+        // Accounts see all
+        // No filter - sees all
       } else {
         filter.$or = [
           { requester: req.user._id },
@@ -631,7 +641,7 @@ exports.getPendingApprovals = async (req, res) => {
       filter.status = 'submitted';
       filter.department = req.user.department._id || req.user.department;
     } else if (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management') {
-      filter.status = { $in: ['submitted', 'tl_approved'] };
+      filter.status = 'tl_approved';
     } else if (req.user.role === 'super_admin') {
       filter.status = { $in: ['submitted', 'tl_approved', 'mgt_approved'] };
     } else {
@@ -746,7 +756,13 @@ exports.handlerAction = async (req, res) => {
     if (actionType === 'dispatch') {
       transaction.status = 'dispatched';
       addTimeline(transaction, 'Dispatched', `Items dispatched to requester. ${remarks || ''}`, req.user._id);
-      transaction.handler = null; // Remove handler when work is complete
+    } else if (actionType === 'collect') {
+      transaction.status = 'handler_assigned';
+      addTimeline(transaction, 'Handler Accepted', `Handler collected materials from store. ${remarks || ''}`, req.user._id);
+    } else if (actionType === 'decline' || actionType === 'reject') {
+      transaction.status = 'store_accepted';
+      transaction.handler = null;
+      addTimeline(transaction, 'Handler Declined', `Sourcing assignment declined by handler. Reason: ${remarks || ''}`, req.user._id);
     } else {
       return res.status(400).json({ message: 'Invalid handler action type.' });
     }
@@ -989,6 +1005,9 @@ exports.storeDispatchTransaction = async (req, res) => {
     transaction.priority = priority || 'medium';
     transaction.costCenter = costCenter || '';
     transaction.dcType = dcType || 'DC-Internal';
+    if (req.body.photos) {
+      transaction.photos = req.body.photos;
+    }
 
     // Update materials array inside transaction
     transaction.materials = materials.map((m) => ({
@@ -996,11 +1015,13 @@ exports.storeDispatchTransaction = async (req, res) => {
       description: m.description || '',
       quantity: m.quantity,
       unit: m.unit || 'pcs',
+      price: m.price || 0,
       barcodes: m.barcodes.map((bcStr) => ({
         barcode: bcStr,
         status: 'Active',
         owner: transaction.requester,
       })),
+      photos: m.photos || [],
     }));
 
     // Register each barcode inside the Barcode collection

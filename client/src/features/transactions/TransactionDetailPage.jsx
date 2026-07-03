@@ -1,17 +1,16 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   ArrowRightLeft,
+  Calendar,
   Camera,
-  Check,
-  ChevronDown,
   ChevronRight,
   Clock,
   Database,
   File,
   FileSpreadsheet,
   Inbox,
-  Layers,
   Lock,
   RotateCcw,
   Send,
@@ -102,7 +101,7 @@ const TransactionDetailPage = () => {
   const [convertSubmitting, setConvertSubmitting] = useState(false);
 
   const chatEndRef = useRef(null);
-  
+
   // Transaction-wide Chat states & handlers
   const [txnChatModal, setTxnChatModal] = useState(false);
   const [txnChatMessages, setTxnChatMessages] = useState([]);
@@ -189,7 +188,7 @@ const TransactionDetailPage = () => {
       setEmployees(empList.map(e => ({ value: e._id, label: `${e.fullName} (${e.employeeId})` })));
       const handlerList = empList;
       setHandlers(handlerList.map(h => ({ value: h._id, label: `${h.fullName} (${h.employeeId})` })));
-      
+
       const mgtList = empList.filter(e => e.role === 'department_admin' && e.departmentAdminType === 'management');
       setManagementUsers(mgtList.map(m => ({ value: m._id, label: `${m.fullName} (${m.employeeId})` })));
     }).catch(err => console.error(err));
@@ -309,16 +308,25 @@ const TransactionDetailPage = () => {
     }
   };
 
-  // Store dispatch action handler (assign handler)
+  // Store dispatch action handler (assign handler / accept ready)
   const handleStoreAction = async (e) => {
     e.preventDefault();
     try {
-      await api.put(`/transactions/${id}/assign-handler`, {
-        handlerId,
-        remarks: storeRemarks
-      });
-      alert('Sourcing handler assigned successfully.');
+      if (storeActionType === 'accept') {
+        await api.put(`/transactions/${id}/store-accept`, {
+          remarks: storeRemarks
+        });
+        alert('Transaction accepted by store successfully.');
+      } else {
+        await api.put(`/transactions/${id}/assign-handler`, {
+          handlerId,
+          remarks: storeRemarks
+        });
+        alert('Sourcing handler assigned successfully.');
+      }
       setStoreModal(false);
+      setStoreRemarks('');
+      setHandlerId('');
       fetchData();
     } catch (err) {
       alert(err.response?.data?.message || 'Store action failed.');
@@ -472,7 +480,7 @@ const TransactionDetailPage = () => {
   const isSender = txn.requester?._id === user?._id || txn.requester === user?._id;
   const isReceiver = txn.receiver?._id === user?._id || txn.receiver === user?._id;
   const isHandler = txn.handler?._id === user?._id || txn.handler === user?._id;
-  const showMatchTab = txn.documentType === 'RDC' && (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'accounts'));
+  const showMatchTab = !['closed', 'completed', 'cancelled', 'rejected'].includes(txn.status) && txn.documentType === 'RDC' && (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'accounts'));
   const canApprove = (activeRole.role === 'team_lead' && txn.status === 'submitted') ||
     (activeRole.role === 'department_admin' && activeRole.adminType === 'management' && ['submitted', 'tl_approved'].includes(txn.status));
   const isAdmin = activeRole.role === 'super_admin';
@@ -514,11 +522,11 @@ const TransactionDetailPage = () => {
     { label: 'Active / Distributed', done: ['received', 'completed', 'active'].includes(txn.status), sub: getTimelineDate('Received'), originalIndex: 6 },
     { label: 'Returns in Progress', done: barcodes.some(b => ['Return Requested', 'Returned'].includes(b.status)), sub: getTimelineDate('Return'), originalIndex: 7 },
     { label: 'All Items Returned', done: barcodes.length > 0 && barcodes.every(b => b.status === 'Returned'), sub: getTimelineDate('All Returned'), originalIndex: 8 },
-    { 
-      label: txn.status === 'rejected' ? 'Request Rejected' : 'Transaction Closed', 
-      done: ['closed', 'completed', 'rejected'].includes(txn.status), 
-      sub: txn.status === 'rejected' ? (getTimelineDate('Rejected') || getTimelineDate('Reject')) : getTimelineDate('Closed'), 
-      originalIndex: 9 
+    {
+      label: txn.status === 'rejected' ? 'Request Rejected' : 'Transaction Closed',
+      done: ['closed', 'completed', 'rejected'].includes(txn.status),
+      sub: txn.status === 'rejected' ? (getTimelineDate('Rejected') || getTimelineDate('Reject')) : getTimelineDate('Closed'),
+      originalIndex: 9
     }
   ];
 
@@ -535,77 +543,212 @@ const TransactionDetailPage = () => {
       : 'Main Store';
 
   // Construct unified transaction timeline events from approvals, transactions logs, and barcode histories
-  const unifiedTimeline = [];
-  
+  const unifiedTimelineRaw = [];
+  let hasPending = false;
+
+  // 1. Request Created (Always)
   if (txn.createdAt) {
-    unifiedTimeline.push({
+    unifiedTimelineRaw.push({
       timestamp: new Date(txn.createdAt),
       action: 'Request Created',
       by: txn.requester?.fullName || 'Requester',
-      badgeChar: 'R'
+      status: 'COMPLETED',
+      badgeChar: 'R',
+      stageIndex: 1
     });
   }
 
-  txn.approvalChain?.forEach(app => {
-    const ts = app.timestamp || app.createdAt;
-    if (ts) {
-      unifiedTimeline.push({
-        timestamp: new Date(ts),
-        action: app.role === 'team_lead' ? 'Team Lead Approved' : 'Management Approved',
-        by: app.approver?.fullName || app.user?.fullName || 'Approver',
-        remarks: app.remarks,
-        badgeChar: app.role === 'team_lead' ? 'T' : 'M'
+  // 2. Team Lead Approval
+  const tlApp = txn.approvalChain?.find(a => a.role === 'team_lead');
+  if (tlApp) {
+    unifiedTimelineRaw.push({
+      timestamp: new Date(tlApp.timestamp || tlApp.createdAt),
+      action: tlApp.action === 'approved' ? 'Team Lead Approved' : 'Team Lead Rejected',
+      by: tlApp.user?.fullName || txn.teamLead?.fullName || 'Team Lead',
+      remarks: tlApp.remarks,
+      status: tlApp.action?.toUpperCase() || 'APPROVED',
+      badgeChar: 'T',
+      stageIndex: 2
+    });
+  } else {
+    const tlDone = ['tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'closed'].includes(txn.status);
+    const isRejected = txn.status === 'rejected' && !txn.approvalChain?.some(a => a.role === 'management');
+    
+    if (tlDone || isRejected || !hasPending) {
+      if (!tlDone && !isRejected) hasPending = true;
+      unifiedTimelineRaw.push({
+        timestamp: tlDone ? new Date(txn.createdAt) : null,
+        action: isRejected ? 'Team Lead Rejected' : 'Team Lead Review',
+        by: txn.teamLead?.fullName || 'Team Lead',
+        status: tlDone ? 'APPROVED' : (isRejected ? 'REJECTED' : 'PENDING'),
+        badgeChar: 'T',
+        stageIndex: 2
       });
     }
-  });
+  }
 
-  txn.timeline?.forEach(t => {
-    if (['Request Created', 'Team Lead Approved', 'Management Approved'].includes(t.action)) {
-      return; // Skip duplicates
-    }
-    const ts = t.timestamp || t.createdAt;
-    if (ts) {
-      let badgeChar = 'S';
-      if (t.action.toLowerCase().includes('handler')) badgeChar = 'H';
-      else if (t.action.toLowerCase().includes('dispatch')) badgeChar = 'D';
-      else if (t.action.toLowerCase().includes('receive')) badgeChar = 'R';
-      else if (t.action.toLowerCase().includes('close')) badgeChar = 'C';
-      else if (t.action.toLowerCase().includes('accept')) badgeChar = 'A';
-      
-      unifiedTimeline.push({
-        timestamp: new Date(ts),
-        action: t.action,
-        by: t.user?.fullName || 'System',
-        remarks: t.remarks,
-        badgeChar
+  // 3. Management Approval
+  const mgtApp = txn.approvalChain?.find(a => a.role === 'management');
+  if (mgtApp) {
+    unifiedTimelineRaw.push({
+      timestamp: new Date(mgtApp.timestamp || mgtApp.createdAt),
+      action: mgtApp.action === 'approved' ? 'Management Approved' : 'Management Rejected',
+      by: mgtApp.user?.fullName || txn.managementApprover?.fullName || 'Management',
+      remarks: mgtApp.remarks,
+      status: mgtApp.action?.toUpperCase() || 'APPROVED',
+      badgeChar: 'M',
+      stageIndex: 3
+    });
+  } else {
+    const mgtDone = ['mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'closed'].includes(txn.status);
+    const isRejected = txn.status === 'rejected';
+    
+    if (mgtDone || isRejected || !hasPending) {
+      if (!mgtDone && !isRejected) hasPending = true;
+      unifiedTimelineRaw.push({
+        timestamp: mgtDone ? new Date(txn.createdAt) : null,
+        action: isRejected ? 'Management Rejected' : 'Management Review',
+        by: txn.managementApprover?.fullName || 'Management',
+        status: mgtDone ? 'APPROVED' : (isRejected ? 'REJECTED' : 'PENDING'),
+        badgeChar: 'M',
+        stageIndex: 3
       });
     }
-  });
+  }
 
+  // 4. Store Sourcing Check
+  const storeTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('store accepted') || t.action?.toLowerCase()?.includes('ready (store accept)'));
+  const storeDone = ['store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'closed'].includes(txn.status);
+  
+  if (storeDone || !hasPending) {
+    if (!storeDone) hasPending = true;
+    unifiedTimelineRaw.push({
+      timestamp: storeTimeline ? new Date(storeTimeline.timestamp || storeTimeline.createdAt) : (storeDone ? new Date(txn.createdAt) : null),
+      action: 'Store Sourcing Check',
+      by: txn.store?.fullName || 'Store Incharge',
+      status: storeDone ? 'ACCEPTED' : 'PENDING',
+      badgeChar: 'S',
+      stageIndex: 4
+    });
+  }
+
+  // 5. Sourcing & Dispatch (Two-Way Flow)
+  if (!txn.handler) {
+    const dispatchTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('dispatched'));
+    const dispatchDone = ['dispatched', 'received', 'completed', 'active', 'closed'].includes(txn.status);
+    
+    if (dispatchDone || !hasPending) {
+      if (!dispatchDone) hasPending = true;
+      unifiedTimelineRaw.push({
+        timestamp: dispatchTimeline ? new Date(dispatchTimeline.timestamp || dispatchTimeline.createdAt) : null,
+        action: 'Direct Dispatch to Requester',
+        by: txn.store?.fullName || 'Store Incharge',
+        status: dispatchDone ? 'DISPATCHED' : 'PENDING',
+        badgeChar: 'D',
+        stageIndex: 5
+      });
+    }
+  } else {
+    const handlerTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('handler assigned'));
+    const handlerDone = ['handler_assigned', 'dispatched', 'received', 'completed', 'active', 'closed'].includes(txn.status);
+    
+    if (handlerDone || !hasPending) {
+      if (!handlerDone) hasPending = true;
+      unifiedTimelineRaw.push({
+        timestamp: handlerTimeline ? new Date(handlerTimeline.timestamp || handlerTimeline.createdAt) : null,
+        action: `Handler Assigned: ${txn.handler?.fullName || 'Rahul Handler'}`,
+        by: txn.store?.fullName || 'Store Admin',
+        status: handlerDone ? 'ACCEPTED' : 'PENDING',
+        badgeChar: 'H',
+        stageIndex: 5
+      });
+    }
+
+    const dispatchTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('dispatched'));
+    const dispatchDone = ['dispatched', 'received', 'completed', 'active', 'closed'].includes(txn.status);
+    
+    if (dispatchDone || !hasPending) {
+      if (!dispatchDone) hasPending = true;
+      unifiedTimelineRaw.push({
+        timestamp: dispatchTimeline ? new Date(dispatchTimeline.timestamp || dispatchTimeline.createdAt) : null,
+        action: 'Handler Delivery / Transit',
+        by: txn.handler?.fullName || 'Handler',
+        status: dispatchDone ? 'DISPATCHED' : 'PENDING',
+        badgeChar: 'D',
+        stageIndex: 6
+      });
+    }
+  }
+
+  // 6. Requester Collection / Acceptance
+  const receiveTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('received'));
+  const receiveDone = ['received', 'completed', 'active', 'closed'].includes(txn.status);
+  
+  if (receiveDone || !hasPending) {
+    if (!receiveDone) hasPending = true;
+    unifiedTimelineRaw.push({
+      timestamp: receiveTimeline ? new Date(receiveTimeline.timestamp || receiveTimeline.createdAt) : null,
+      action: 'Requester Collection Check',
+      by: txn.requester?.fullName || 'Requester',
+      status: receiveDone ? 'ACCEPTED' : 'PENDING',
+      badgeChar: 'R',
+      stageIndex: 7
+    });
+  }
+
+  // 7. Post-delivery Barcode Operations (Transfers, Splits, Returns)
   barcodes.forEach(bc => {
     bc.history?.forEach(h => {
-      if (h.action === 'Created') return;
+      // Only include post-delivery specific barcode operations: Transfer, Return, Split
+      const isPostDelivery = h.action.toLowerCase().includes('transfer') ||
+                             h.action.toLowerCase().includes('split') ||
+                             h.action.toLowerCase().includes('return');
+      if (!isPostDelivery) return;
+
       const ts = h.timestamp || h.createdAt;
       if (ts) {
+        let actionLabel = h.action;
+        let statusLabel = 'COMPLETED';
         let badgeChar = 'B';
-        if (h.action.toLowerCase().includes('return')) badgeChar = 'R';
-        else if (h.action.toLowerCase().includes('accept')) badgeChar = 'A';
-        else if (h.action.toLowerCase().includes('close')) badgeChar = 'C';
-        else if (h.action.toLowerCase().includes('transfer')) badgeChar = 'T';
-        
-        unifiedTimeline.push({
+
+        if (h.action.toLowerCase().includes('transfer')) {
+          actionLabel = `Transfer for ${bc.barcode}`;
+          statusLabel = h.action.toLowerCase().includes('request') ? 'PENDING' : 'ACCEPTED';
+          badgeChar = 'T';
+        } else if (h.action.toLowerCase().includes('split')) {
+          actionLabel = `Split Lot for ${bc.barcode}`;
+          statusLabel = h.action.toLowerCase().includes('request') ? 'PENDING' : 'ACCEPTED';
+          badgeChar = 'S';
+        } else if (h.action.toLowerCase().includes('return')) {
+          actionLabel = `Return to Store for ${bc.barcode}`;
+          statusLabel = h.action.toLowerCase().includes('request') ? 'PENDING' : 'ACCEPTED';
+          badgeChar = 'R';
+        }
+
+        unifiedTimelineRaw.push({
           timestamp: new Date(ts),
-          action: `${h.action} for ${bc.barcode}`,
+          action: actionLabel,
           by: h.user?.fullName || 'Operator',
           remarks: h.remarks,
-          badgeChar
+          status: statusLabel,
+          badgeChar,
+          stageIndex: 8
         });
       }
     });
   });
 
-  // Sort chronologically ascending
-  unifiedTimeline.sort((a, b) => a.timestamp - b.timestamp);
+  // Sort: first by stageIndex ascending, and then by timestamp ascending within the same stageIndex
+  const unifiedTimeline = [...unifiedTimelineRaw];
+  unifiedTimeline.sort((a, b) => {
+    if (a.stageIndex !== b.stageIndex) {
+      return a.stageIndex - b.stageIndex;
+    }
+    if (a.timestamp && b.timestamp) {
+      return new Date(a.timestamp) - new Date(b.timestamp);
+    }
+    return 0;
+  });
 
   const formatTimelineTime = (dateVal) => {
     if (!dateVal) return '';
@@ -691,53 +834,27 @@ const TransactionDetailPage = () => {
               </div>
             )}
 
-            {/* Store dispatch action */}
-            {activeRole.role === 'department_admin' && activeRole.adminType === 'store' && (
-              <>
-                {['submitted', 'tl_approved', 'mgt_approved', 'ready_for_dispatch'].includes(txn.status) && (
-                  <Button size="sm" onClick={handleStoreAcceptReady}>
-                    Ready (Store Accept)
-                  </Button>
-                )}
-                {txn.status === 'store_accepted' && (
-                  <>
-                    <Button size="sm" variant="outline" onClick={handleDirectDispatch}>
-                      Direct Dispatch (Bypass Handler)
-                    </Button>
-                    <Button size="sm" onClick={() => setStoreModal(true)}>
-                      Sourcing / Assign Handler
-                    </Button>
-                  </>
-                )}
-              </>
-            )}
 
-            {/* Handler action */}
-            {txn.status === 'store_accepted' && isHandler && (
-              <Button size="sm" onClick={handleCollectFromStore}>
-                Accept (Collect from Store)
-              </Button>
-            )}
 
+            {/* Handler Actions (Transfer / Send to Requester) */}
             {txn.status === 'handler_assigned' && isHandler && (
               <>
-                <Button size="sm" variant="outline" onClick={() => setStoreModal(true)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setStoreActionType('assign_handler');
+                    setStoreModal(true);
+                  }}
+                >
                   Transfer Handler Role
                 </Button>
-                <Button size="sm" onClick={handleConfirmDispatch}>
+                <Button
+                  size="sm"
+                  variant="success"
+                  onClick={handleConfirmDispatch}
+                >
                   Send to Requester
-                </Button>
-              </>
-            )}
-
-            {/* Physical Receiving */}
-            {txn.status === 'dispatched' && isSender && (
-              <>
-                <Button size="sm" variant="danger" onClick={() => setRejectReceiptModal(true)}>
-                  Reject Material Receipt
-                </Button>
-                <Button size="sm" variant="success" onClick={() => setReceiveModal(true)}>
-                  Accept Material Receipt
                 </Button>
               </>
             )}
@@ -766,11 +883,11 @@ const TransactionDetailPage = () => {
             Reason: <span className="font-semibold text-slate-600 dark:text-slate-400">{txn.rejectionReason || 'No reason specified.'}</span>
           </p>
           {(() => {
-            const rejectEntry = txn.timeline?.find(t => t.action === 'Rejected' || t.action === 'Reject');
+            const rejectEntry = txn.approvalChain?.find(a => a.action === 'rejected');
             if (rejectEntry) {
               return (
                 <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mt-1">
-                  Rejected by: {rejectEntry.description?.split(' ')[2] || 'Approver'} on {new Date(rejectEntry.timestamp).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })} at {new Date(rejectEntry.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                  Rejected by: {rejectEntry.user?.fullName || 'Approver'} ({rejectEntry.role?.replace('_', ' ')?.toUpperCase()}) on {new Date(rejectEntry.timestamp).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })} at {new Date(rejectEntry.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
                 </p>
               );
             }
@@ -887,6 +1004,19 @@ const TransactionDetailPage = () => {
                 </p>
               </div>
             </div>
+
+            {/* Expected Return Date Row */}
+            <div className="flex items-start gap-3.5">
+              <div className="p-2.5 bg-blue-50 dark:bg-blue-950/30 text-blue-600 rounded-xl shrink-0">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block mb-0.5">Expected Return Date</span>
+                <p className="font-bold text-slate-850 dark:text-slate-200 text-xs truncate">
+                  {txn.dueDate ? new Date(txn.dueDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -894,7 +1024,6 @@ const TransactionDetailPage = () => {
         <div className="lg:col-span-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm flex flex-col">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
             <h3 className="font-black text-sm text-slate-800 dark:text-white">Progress Summary</h3>
-            <ChevronDown className="w-4 h-4 text-slate-400 transform rotate-180" />
           </div>
 
           <div className="relative flex flex-col gap-6 pl-6 border-l-2 border-slate-200 dark:border-slate-800 ml-3 py-2">
@@ -923,10 +1052,10 @@ const TransactionDetailPage = () => {
       {/* KPI Stats Cards Block (5 Cards side-by-side) */}
       {(() => {
         const totalItemsCount = txn.materials?.reduce((sum, m) => sum + (m.quantity || 0), 0) || 0;
-        const activeCount = txn.status === 'cancelled' || txn.status === 'rejected' 
-          ? 0 
+        const activeCount = txn.status === 'cancelled' || txn.status === 'rejected'
+          ? 0
           : (barcodes.length > 0 ? barcodes.filter(b => b.status === 'Active').length : (txn.activeItems || totalItemsCount));
-        
+
         return (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
             {[
@@ -981,39 +1110,50 @@ const TransactionDetailPage = () => {
           <Card title="Material & Barcode Details">
             <div className="flex flex-col gap-6">
               {txn.materials && txn.materials.map((mat, mIdx) => (
-                <div key={mIdx} className="border border-slate-100 dark:border-slate-800/80 rounded-2xl p-5 bg-slate-50/30 dark:bg-slate-900/10">
-                  <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+                <div key={mIdx} className="border border-slate-100 dark:border-slate-800/80 rounded-xl p-4 bg-slate-50/30 dark:bg-slate-900/10">
+                  <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2 mb-3">
                     <div>
                       <h4 className="text-sm font-black text-slate-800 dark:text-slate-150">{mat.name}</h4>
                       {mat.description && <p className="text-xs text-slate-400 mt-0.5">{mat.description}</p>}
                     </div>
-                    <Badge variant="info">{mat.quantity} {mat.unit || 'pcs'}</Badge>
+                    <div className="flex flex-col items-end text-right">
+                      <Badge variant="info" className="text-xs px-2 py-0.5">{mat.quantity} {mat.unit || 'pcs'}</Badge>
+                      {mat.price > 0 && (
+                        <div className="text-[10px] text-slate-500 font-bold mt-1">
+                          Unit Price: ₹{mat.price.toLocaleString('en-IN')} | Total: ₹{(mat.price * mat.quantity).toLocaleString('en-IN')}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  
+
                   {(!mat.barcodes || mat.barcodes.length === 0) ? (
                     <p className="text-xs text-slate-400 italic">No barcodes assigned to this material yet (Pending dispatch).</p>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                       {mat.barcodes.map((bc, bIdx) => {
                         const bcStr = bc.barcode || bc;
                         const bcDetail = barcodes.find(b => b.barcode === bcStr);
                         const status = bcDetail?.status || bc.status || 'Active';
                         const ownerName = bcDetail?.owner?.fullName || bc.owner?.fullName || txn.requester?.fullName || 'Requester';
-                        
+
                         return (
-                          <div key={bIdx} className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 p-3.5 rounded-xl flex items-center justify-between shadow-2xs">
-                            <div className="min-w-0 pr-2">
-                              <span 
-                                onClick={() => handleBarcodeClick(bcStr)}
-                                className="text-xs font-mono font-black text-blue-655 hover:underline cursor-pointer tracking-wider"
-                              >
+                          <div
+                            key={bIdx}
+                            onClick={() => handleBarcodeClick(bcStr)}
+                            className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 p-2.5 rounded-lg flex items-center justify-between hover:bg-slate-50/50 dark:hover:bg-slate-800/40 cursor-pointer transition-colors gap-2"
+                          >
+                            <div className="min-w-0 flex flex-col gap-0.5">
+                              <span className="text-xs font-mono font-black text-blue-650 dark:text-blue-400 tracking-wide">
                                 {bcStr}
                               </span>
-                              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5 truncate">Owner: {ownerName}</p>
+                              <span className="text-[10px] text-slate-500 font-bold truncate">Owner: {ownerName}</span>
                             </div>
-                            <Badge variant={status === 'Returned' ? 'secondary' : status === 'Active' ? 'success' : 'primary'}>
-                              {status.toUpperCase()}
-                            </Badge>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Badge variant={status === 'Returned' ? 'secondary' : status === 'Active' ? 'success' : 'primary'} className="text-[9px] px-2 py-0.5 leading-none shrink-0 font-bold">
+                                {status.toUpperCase()}
+                              </Badge>
+                              <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            </div>
                           </div>
                         );
                       })}
@@ -1021,6 +1161,14 @@ const TransactionDetailPage = () => {
                   )}
                 </div>
               ))}
+              {txn.materials && txn.materials.length > 0 && (
+                <div className="mt-4 p-4 bg-blue-50/50 dark:bg-blue-955/10 border border-blue-100 dark:border-blue-900 rounded-xl flex justify-between items-center text-xs font-black">
+                  <span className="text-slate-500 uppercase tracking-wider font-bold">Transaction Valuation / Combined Total:</span>
+                  <span className="text-sm text-blue-650 dark:text-blue-400 font-black">
+                    ₹{txn.materials.reduce((sum, mat) => sum + ((mat.price || 0) * mat.quantity), 0).toLocaleString('en-IN')}
+                  </span>
+                </div>
+              )}
               {(!txn.materials || txn.materials.length === 0) && (
                 <p className="text-sm text-slate-400 italic text-center py-6">No materials listed for this transaction.</p>
               )}
@@ -1034,24 +1182,46 @@ const TransactionDetailPage = () => {
             <div className="lg:col-span-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
               <h3 className="text-sm font-black text-slate-855 dark:text-white mb-6">Timeline (Full Transaction)</h3>
               <div className="relative flex flex-col gap-6 pl-8 border-l-2 border-emerald-600 ml-4 py-2">
-                {unifiedTimeline.map((item, idx) => (
-                  <div key={idx} className="relative">
-                    <span className="absolute -left-[45px] top-[2px] w-8 h-8 rounded-full bg-emerald-600 border-2 border-white dark:border-slate-900 text-white flex items-center justify-center text-xs font-black shadow-sm select-none">
-                      {item.badgeChar}
-                    </span>
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-bold block mb-0.5">
-                        {formatTimelineTime(item.timestamp)}
+                {unifiedTimeline.map((item, idx) => {
+                  const isPending = item.status === 'PENDING';
+                  const isRejected = item.status === 'REJECTED';
+                  const badgeColor = isPending
+                    ? 'bg-slate-200 border-slate-300 text-slate-500 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-500'
+                    : isRejected
+                      ? 'bg-rose-600 border-rose-600 text-white'
+                      : 'bg-emerald-600 border-emerald-600 text-white';
+                  
+                  return (
+                    <div key={idx} className={`relative ${isPending ? 'opacity-60' : ''}`}>
+                      <span className={`absolute -left-[45px] top-[2px] w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-black shadow-sm select-none ${badgeColor}`}>
+                        {item.badgeChar}
                       </span>
-                      <h4 className="text-xs font-black text-slate-800 dark:text-slate-100 font-sans">
-                        {item.action}
-                      </h4>
-                      <p className="text-[10px] text-slate-500 font-medium italic mt-0.5">
-                        By: {item.by} {item.remarks ? `— ${item.remarks}` : ''}
-                      </p>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-400 font-bold block">
+                            {item.timestamp ? formatTimelineTime(item.timestamp) : 'Pending Action'}
+                          </span>
+                          <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-sm
+                            ${isPending
+                              ? 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+                              : isRejected
+                                ? 'bg-rose-500/10 text-rose-500 dark:bg-rose-950/20'
+                                : 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-950/20'
+                            }
+                          `}>
+                            {item.status}
+                          </span>
+                        </div>
+                        <h4 className={`text-xs font-black font-sans mt-0.5 ${isPending ? 'text-slate-400 dark:text-slate-500' : 'text-slate-800 dark:text-slate-105'}`}>
+                          {item.action}
+                        </h4>
+                        <p className="text-[10px] text-slate-500 font-medium italic mt-0.5">
+                          By: {item.by} {item.remarks ? `— ${item.remarks}` : ''}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -1093,14 +1263,14 @@ const TransactionDetailPage = () => {
         {activeTab === 'transfers' && (
           <Card title="Internal Transfers Log">
             <div className="flex flex-col gap-3">
-              {barcodes.filter(b => b.history.some(h => h.action.includes('Transfer'))).length === 0 ? (
+              {barcodes.filter(b => b.history.some(h => h.action.toLowerCase().includes('transfer'))).length === 0 ? (
                 <p className="text-xs text-slate-500 py-6 text-center">No internal barcode transfers have occurred in this challan.</p>
               ) : (
                 barcodes.map(bc => (
                   <div key={bc.barcode} className="p-4 border border-slate-105 bg-white dark:bg-slate-950 rounded-xl">
                     <span className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400">{bc.barcode}</span>
                     <div className="mt-2 pl-3 border-l border-slate-200 dark:border-slate-800 flex flex-col gap-2.5">
-                      {bc.history.filter(h => h.action.includes('Transfer') || h.action.includes('Created')).map((h, i) => (
+                      {bc.history.filter(h => h.action.toLowerCase().includes('transfer') || h.action.toLowerCase().includes('created')).map((h, i) => (
                         <div key={i} className="text-[11px] text-slate-600 dark:text-slate-405">
                           <span className="font-bold text-slate-800 dark:text-slate-200">{h.action}</span> - {h.remarks}
                         </div>
@@ -1177,7 +1347,7 @@ const TransactionDetailPage = () => {
         )}
       </div>
 
-      {/* Invoice Matching Card for Accounts */}
+      {/* Invoice Matching Card for Accounts
       {showMatchTab && (
         <Card title="Invoice Match verification Form" className="mt-6">
           <form onSubmit={handleInvoiceMatchSubmit} className="flex flex-col gap-4 text-xs">
@@ -1223,7 +1393,7 @@ const TransactionDetailPage = () => {
             </div>
           </form>
         </Card>
-      )}
+      )} */}
 
       {/* Transaction Chat Modal */}
       {txnChatModal && (
@@ -1244,8 +1414,8 @@ const TransactionDetailPage = () => {
                   </p>
                 </div>
               </div>
-              <button 
-                onClick={() => setTxnChatModal(false)} 
+              <button
+                onClick={() => setTxnChatModal(false)}
                 className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-600 transition"
               >
                 <X className="w-5 h-5" />
@@ -1281,8 +1451,8 @@ const TransactionDetailPage = () => {
                         {msg.sender?.fullName} ({msg.sender?.role?.replace('_', ' ')?.toUpperCase()})
                       </span>
                       <div className={`px-4 py-2.5 rounded-2xl text-xs font-semibold leading-relaxed shadow-xs
-                        ${isMe 
-                          ? 'bg-blue-600 text-white rounded-tr-none' 
+                        ${isMe
+                          ? 'bg-blue-600 text-white rounded-tr-none'
                           : 'bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-105 rounded-tl-none border border-slate-100 dark:border-slate-800'}
                       `}>
                         {msg.message}
@@ -1308,8 +1478,8 @@ const TransactionDetailPage = () => {
                   required
                   className="flex-1 text-xs bg-slate-550 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl px-4 py-3 font-semibold focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
                 />
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-extrabold text-xs uppercase transition shrink-0 flex items-center justify-center"
                 >
                   Send

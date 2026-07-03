@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Search, CheckCircle, XCircle, Clock, Eye, AlertTriangle, 
-  ArrowRight, Shield, Layers, FileText, CheckSquare, Square,
+  ArrowLeft, ArrowRight, Shield, Layers, FileText, CheckSquare, Square,
   ArrowRightLeft, Send, UserCheck, Inbox
 } from 'lucide-react';
 import api from '../../lib/axios';
@@ -22,10 +22,10 @@ const PendingTransactionsPage = () => {
   const [txns, setTxns] = useState([]);
   const [pendingTransfers, setPendingTransfers] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null); // Can be a transaction OR a barcode transfer
+  const isHandler = !!selectedItem && (selectedItem.handler?._id === user?._id || selectedItem.handler === user?._id);
   
   // Search & Filters
   const [search, setSearch] = useState('');
-  const [filterPriority, setFilterPriority] = useState('');
   const [filterDept, setFilterDept] = useState('');
   const [filterDueToday, setFilterDueToday] = useState(false);
   const [filterEscalated, setFilterEscalated] = useState(false);
@@ -44,20 +44,167 @@ const PendingTransactionsPage = () => {
   const [approveNewBarcode, setApproveNewBarcode] = useState('');
   const [approveMaterialName, setApproveMaterialName] = useState('');
   const [pendingReturns, setPendingReturns] = useState([]);
+
+  // Custom Rejection Modal States
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [rejectModalTitle, setRejectModalTitle] = useState('');
+  const [rejectModalLabel, setRejectModalLabel] = useState('');
+  const [rejectReasonText, setRejectReasonText] = useState('');
+  const [rejectActionCallback, setRejectActionCallback] = useState(null);
   
-  // Dispatch Modal States
-  const [dispatchModalOpen, setDispatchModalOpen] = useState(false);
-  const [dispatchTxn, setDispatchTxn] = useState(null);
-  const [dispatchReceiverId, setDispatchReceiverId] = useState('');
-  const [dispatchDocType, setDispatchDocType] = useState('RDC');
-  const [dispatchDocNumber, setDispatchDocNumber] = useState('');
-  const [dispatchCostCenter, setDispatchCostCenter] = useState('');
-  const [dispatchPriority, setDispatchPriority] = useState('medium');
-  const [dispatchReturnDate, setDispatchReturnDate] = useState('');
-  const [dispatchBarcodes, setDispatchBarcodes] = useState([]);
-  const [dispatchHandlerId, setDispatchHandlerId] = useState('');
-  const [dispatchDcType, setDispatchDcType] = useState('DC-Internal');
-  const [employeesList, setEmployeesList] = useState([]);
+  // Store Sourcing Modal States
+  const [storeModal, setStoreModal] = useState(false);
+  const [storeActionType, setStoreActionType] = useState('accept');
+  const [storeRemarks, setStoreRemarks] = useState('');
+  const [handlerId, setHandlerId] = useState('');
+  const [handlers, setHandlers] = useState([]);
+
+  const getCardStatusLine = (t) => {
+    const isHandler = t.handler?._id === user?._id || t.handler === user?._id;
+    if (isHandler) {
+      if (t.status === 'store_accepted') return "Action Required: Collect from Store";
+      if (t.status === 'handler_assigned') return "Action Required: Dispatch/Handover";
+    }
+
+    if (activeRole.role === 'team_lead') {
+      if (t.status === 'submitted') return "Action Required: Review Request";
+      return "Tracking: Awaiting Sourcing";
+    }
+
+    if (activeRole.role === 'department_admin' && activeRole.adminType === 'management') {
+      if (t.status === 'tl_approved') return "Action Required: Review Request";
+      return "Tracking: Awaiting Store";
+    }
+
+    if (activeRole.role === 'department_admin' && activeRole.adminType === 'store') {
+      if (['mgt_approved', 'ready_for_dispatch'].includes(t.status)) return "Action Required: Store Sourcing Accept";
+      if (t.status === 'store_accepted') return "Action Required: Assign Sourcing Handler";
+      return "Tracking: Sourced/Dispatched";
+    }
+
+    if (activeRole.role === 'employee') {
+      return `Tracking: ${t.status.toUpperCase().replace('_', ' ')}`;
+    }
+
+    return t.status.toUpperCase().replace('_', ' ');
+  };
+
+  const getContextInfo = (txn) => {
+    const isHandler = txn.handler?._id === user?._id || txn.handler === user?._id;
+    if (isHandler) {
+      if (txn.status === 'store_accepted') {
+        return {
+          why: "You are the assigned Sourcing Handler for this request, and the store has accepted/marked the items ready.",
+          action: "Collect the items from the Store and click 'Accept (Collect from Store)' below to put them in transit."
+        };
+      }
+      if (txn.status === 'handler_assigned') {
+        return {
+          why: "You have collected the materials from the store and are delivering them.",
+          action: "Hand over the materials to the requester at their location, then click 'Send to Requester' below to complete transit."
+        };
+      }
+    }
+
+    if (activeRole.role === 'team_lead') {
+      if (txn.status === 'submitted') {
+        return {
+          why: "This request was created by an employee in your department and requires your initial approval.",
+          action: "Review the items and click 'Approve & Forward' or 'Reject Request' below."
+        };
+      }
+      return {
+        why: `This request is currently in the '${txn.status.replace('_', ' ').toUpperCase()}' stage.`,
+        action: "No pending action required from you at this stage."
+      };
+    }
+
+    if (activeRole.role === 'department_admin' && activeRole.adminType === 'management') {
+      if (txn.status === 'tl_approved') {
+        return {
+          why: "This request has been approved by the department Team Lead and requires your management approval before sourcing.",
+          action: "Review and click 'Approve & Forward' or 'Reject Request' below."
+        };
+      }
+      return {
+        why: `This request is currently in the '${txn.status.replace('_', ' ').toUpperCase()}' stage.`,
+        action: "No pending action required from you at this stage."
+      };
+    }
+
+    if (activeRole.role === 'department_admin' && activeRole.adminType === 'store') {
+      if (['mgt_approved', 'ready_for_dispatch', 'submitted', 'tl_approved'].includes(txn.status)) {
+        return {
+          why: "This request has received all approvals and is now routed to the store to prepare the inventory.",
+          action: "Check inventory availability and click 'Ready (Store Accept)' below when the barcodes are prepared."
+        };
+      }
+      if (txn.status === 'store_accepted') {
+        return {
+          why: "You have marked these items ready. A sourcing handler needs to be assigned to pick them up.",
+          action: "Select a Handler and click 'Sourcing / Assign Handler', or click 'Direct Dispatch' if the requester is collecting in person."
+        };
+      }
+      return {
+        why: `This request is currently in the '${txn.status.replace('_', ' ').toUpperCase()}' stage.`,
+        action: "No pending action required from you at this stage."
+      };
+    }
+
+    if (activeRole.role === 'employee') {
+      if (['submitted', 'tl_approved', 'mgt_approved', 'ready_for_dispatch', 'store_accepted', 'handler_assigned'].includes(txn.status)) {
+        return {
+          why: "This is your material request. It is currently moving through the approval & sourcing pipeline.",
+          action: `Awaiting current stage: ${txn.status.replace('_', ' ').toUpperCase()}. No action needed from you.`
+        };
+      }
+    }
+
+    return {
+      why: `Transaction status is '${txn.status.replace('_', ' ').toUpperCase()}'.`,
+      action: "No immediate action required."
+    };
+  };
+
+  const getTransferContextInfo = (req) => {
+    const isRecipient = req.toUser?._id === user?._id || req.toUser === user?._id;
+    if (isRecipient && req.status === 'pending') {
+      return {
+        why: `${req.fromUser?.fullName || 'Another user'} wants to transfer ownership of barcode ${req.barcode} to you.`,
+        action: "Please verify the photo/GPS details and click 'Confirm Receipt (Accept Return)' or 'Reject Request' below."
+      };
+    }
+    return {
+      why: `Barcode transfer is currently '${req.status.toUpperCase()}'.`,
+      action: "Awaiting recipient confirmation."
+    };
+  };
+
+  const getSplitContextInfo = (req) => {
+    if (activeRole.role === 'department_admin' && activeRole.adminType === 'store') {
+      return {
+        why: `Requester ${req.requester?.fullName || 'Requester'} submitted a split request for barcode ${req.barcode} to register child units.`,
+        action: "Specify the child barcode IDs and click 'Approve & Create Material' to finalize the split, or reject."
+      };
+    }
+    return {
+      why: "A split request is pending store approval.",
+      action: "Awaiting store validation."
+    };
+  };
+
+  const getReturnContextInfo = (req) => {
+    if (activeRole.role === 'department_admin' && activeRole.adminType === 'store') {
+      return {
+        why: `Employee ${req.fromUser?.fullName || 'Employee'} has returned barcode ${req.barcode} to the store.`,
+        action: "Please verify the physical item's presence/remarks and click 'Confirm Receipt (Accept Return)' below."
+      };
+    }
+    return {
+      why: "Return request is pending store validation.",
+      action: "Awaiting store admin confirmation."
+    };
+  };
 
   const fetchApprovals = async () => {
     setLoading(true);
@@ -68,7 +215,7 @@ const PendingTransactionsPage = () => {
         api.get('/transactions'),
         api.get('/barcodes/pending/transfers'),
         isStore ? api.get('/barcodes/split-requests/pending') : Promise.resolve({ data: { data: [] } }),
-        isStore ? api.get('/barcodes/returns/pending') : Promise.resolve({ data: { data: [] } })
+        api.get('/barcodes/returns/pending')
       ]);
       
       const allTxns = txnRes.data.data || [];
@@ -92,25 +239,15 @@ const PendingTransactionsPage = () => {
         defaultList = allTxns.filter(t => t.status === 'submitted');
       } else if (activeRole.role === 'department_admin') {
         if (activeRole.adminType === 'management') {
-          defaultList = allTxns.filter(t => t.status === 'tl_approved' || (t.status === 'submitted' && t.crossDepartment));
+          defaultList = allTxns.filter(t => t.status === 'tl_approved');
         } else if (activeRole.adminType === 'store') {
-          defaultList = allTxns.filter(t => ['submitted', 'tl_approved', 'mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status));
+          defaultList = allTxns.filter(t => ['mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status));
         }
       } else if (activeRole.role === 'super_admin') {
-        defaultList = allTxns.filter(t => ['submitted', 'tl_approved', 'mgt_approved'].includes(t.status));
+        defaultList = allTxns.filter(t => !['completed', 'received', 'closed', 'rejected'].includes(t.status));
       }
 
-      if (defaultList.length > 0) {
-        setSelectedItem(defaultList[0]);
-      } else if (allTransfers.length > 0) {
-        setSelectedItem(allTransfers[0]);
-      } else if (allSplits.length > 0) {
-        setSelectedItem(allSplits[0]);
-      } else if (allReturns.length > 0) {
-        setSelectedItem(allReturns[0]);
-      } else {
-        setSelectedItem(null);
-      }
+      setSelectedItem(null);
     } catch (err) {
       console.error('Error fetching approvals:', err);
     } finally {
@@ -120,33 +257,54 @@ const PendingTransactionsPage = () => {
 
   useEffect(() => {
     fetchApprovals();
+    api.get('/employees?limit=1000&allDepartments=true')
+      .then(res => {
+        const empList = res.data.employees || res.data.data || [];
+        setHandlers(empList.map(h => ({ value: h._id, label: `${h.fullName} (${h.employeeId})` })));
+      })
+      .catch(err => console.error('Error loading employees:', err));
   }, [activeRole.role, activeRole.adminType]);
 
   // Apply filters to transactions
   const filteredTxns = txns.filter(t => {
+    // For employee, only show their own requests
+    if (activeRole.role === 'employee') {
+      const isMyTxn = (t.requester?._id === user?._id || t.requester === user?._id) || 
+                      (t.handler?._id === user?._id || t.handler === user?._id);
+      if (!isMyTxn) return false;
+    }
+
     // 1. Status mapping based on tab
     if (statusTab === 'pending') {
       if (activeRole.role === 'employee') {
-        const isRequesterPending = t.requester?._id === user?._id && ['submitted', 'tl_approved'].includes(t.status);
-        const isHandlerPending = t.handler?._id === user?._id && ['store_accepted', 'handler_assigned'].includes(t.status);
-        if (!isRequesterPending && !isHandlerPending) return false;
+        const isHandlerPending = (t.handler?._id === user?._id || t.handler === user?._id) && t.status === 'store_accepted';
+        const isRequesterPending = (t.requester?._id === user?._id || t.requester === user?._id) && t.status === 'dispatched';
+        if (!isHandlerPending && !isRequesterPending) return false;
       } else if (activeRole.role === 'team_lead') {
-        // Team Lead sees department's submitted requests
         if (t.status !== 'submitted') return false;
       } else if (activeRole.role === 'department_admin') {
         if (activeRole.adminType === 'management') {
-          // Management sees tl_approved or cross-department submitted requests
-          if (!['tl_approved', 'submitted'].includes(t.status)) return false;
-          if (t.status === 'submitted' && !t.crossDepartment) return false;
+          // Management sees tl_approved requests
+          if (t.status !== 'tl_approved') return false;
         } else if (activeRole.adminType === 'store') {
-          // Store sees management approved requests ready for acceptance or handler assignment
-          if (!['submitted', 'tl_approved', 'mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status)) return false;
+          // Store sees requests after management approved
+          if (!['mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status)) return false;
         } else {
           return false;
         }
+      } else if (activeRole.role === 'super_admin') {
+        if (['completed', 'received', 'closed', 'rejected'].includes(t.status)) return false;
       }
     } else if (statusTab === 'approved') {
-      if (!['ready_for_dispatch', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'closed'].includes(t.status)) return false;
+      let allowedStatuses = ['ready_for_dispatch', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'closed'];
+      if (activeRole.role === 'team_lead') {
+        allowedStatuses.push('tl_approved', 'mgt_approved');
+      } else if (activeRole.role === 'department_admin' && activeRole.adminType === 'management') {
+        allowedStatuses.push('mgt_approved');
+      } else if (activeRole.role === 'super_admin') {
+        allowedStatuses.push('tl_approved', 'mgt_approved');
+      }
+      if (!allowedStatuses.includes(t.status)) return false;
     } else if (statusTab === 'rejected') {
       if (t.status !== 'rejected') return false;
     }
@@ -159,9 +317,6 @@ const PendingTransactionsPage = () => {
       const matchSender = t.sender?.fullName?.toLowerCase().includes(q);
       if (!matchId && !matchDesc && !matchSender) return false;
     }
-
-    // 3. Priority filter
-    if (filterPriority && t.priority !== filterPriority) return false;
 
     // 4. Department filter
     if (filterDept && t.sender?.department?.name !== filterDept) return false;
@@ -212,6 +367,40 @@ const PendingTransactionsPage = () => {
   };
 
   const handleApproveReject = async (action, txnId = null) => {
+    let reason = actionRemarks;
+    if (action === 'reject' && !reason.trim()) {
+      setRejectModalTitle('Reject Sourcing Request');
+      setRejectModalLabel('Please specify a rejection reason for this request:');
+      setRejectActionCallback(() => async (reasonText) => {
+        setActionError('');
+        setSubmitting(true);
+        const idsToProcess = txnId ? [txnId] : (selectedItem ? [selectedItem._id] : []);
+        if (idsToProcess.length === 0) {
+          setActionError('Select at least one transaction to process.');
+          setSubmitting(false);
+          return;
+        }
+        try {
+          const promises = idsToProcess.map(id => {
+            return api.put(`/transactions/${id}/reject`, { 
+              reason: reasonText
+            });
+          });
+          await Promise.all(promises);
+          alert(`Rejected ${idsToProcess.length} request(s) successfully.`);
+          setSelectedIds(new Set());
+          setActionRemarks('');
+          setSelectedItem(null);
+          fetchApprovals();
+        } catch (err) {
+          setActionError(err.response?.data?.message || 'Rejection action failed.');
+        } finally {
+          setSubmitting(false);
+        }
+      });
+      setRejectModalOpen(true);
+      return;
+    }
     setActionError('');
     setSubmitting(true);
     const idsToProcess = txnId ? [txnId] : Array.from(selectedIds);
@@ -225,11 +414,11 @@ const PendingTransactionsPage = () => {
       const promises = idsToProcess.map(id => {
         if (action === 'approve') {
           return api.put(`/transactions/${id}/approve`, { 
-            remarks: actionRemarks || 'Approved'
+            remarks: reason || 'Approved'
           });
         } else {
           return api.put(`/transactions/${id}/reject`, { 
-            reason: actionRemarks || 'Rejected'
+            reason: reason || 'Rejected'
           });
         }
       });
@@ -238,7 +427,11 @@ const PendingTransactionsPage = () => {
       alert(`${action === 'approve' ? 'Approved' : 'Rejected'} ${idsToProcess.length} requests successfully.`);
       setSelectedIds(new Set());
       setActionRemarks('');
+      setSelectedItem(null);
       fetchApprovals();
+      if (action === 'approve' && idsToProcess.length > 0) {
+        navigate(`/transactions/${idsToProcess[0]}`);
+      }
     } catch (err) {
       setActionError(err.response?.data?.message || 'Approval action failed.');
     } finally {
@@ -247,13 +440,41 @@ const PendingTransactionsPage = () => {
   };
 
   const handleTransferAction = async (transferId, action) => {
+    let reason = actionRemarks;
+    if (action === 'reject' && !reason.trim()) {
+      setRejectModalTitle('Reject Barcode Transfer');
+      setRejectModalLabel('Please specify a rejection reason for this transfer:');
+      setRejectActionCallback(() => async (reasonText) => {
+        setActionError('');
+        setSubmitting(true);
+        try {
+          const payload = {
+            transferId,
+            action,
+            reason: reasonText,
+            gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
+          };
+          await api.post('/barcodes/handle-transfer', payload);
+          alert(`Transfer request rejected successfully.`);
+          setActionRemarks('');
+          setSelectedItem(null);
+          fetchApprovals();
+        } catch (err) {
+          setActionError(err.response?.data?.message || 'Failed to update barcode transfer.');
+        } finally {
+          setSubmitting(false);
+        }
+      });
+      setRejectModalOpen(true);
+      return;
+    }
     setActionError('');
     setSubmitting(true);
     try {
       const payload = {
         transferId,
         action,
-        reason: actionRemarks || `Transfer request ${action}ed`,
+        reason: action === 'reject' ? reason.trim() : (actionRemarks || `Transfer request ${action}ed`),
         gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
       };
       if (action === 'accept') {
@@ -262,6 +483,7 @@ const PendingTransactionsPage = () => {
       await api.post('/barcodes/handle-transfer', payload);
       alert(`Transfer request ${action}ed successfully.`);
       setActionRemarks('');
+      setSelectedItem(null);
       fetchApprovals();
     } catch (err) {
       setActionError(err.response?.data?.message || 'Failed to update barcode transfer.');
@@ -299,13 +521,39 @@ const PendingTransactionsPage = () => {
   };
 
   const handleRejectSplitRequest = async () => {
+    let reason = actionRemarks;
+    if (!reason.trim()) {
+      setRejectModalTitle('Reject Split Request');
+      setRejectModalLabel('Please enter a rejection reason for this split request:');
+      setRejectActionCallback(() => async (reasonText) => {
+        setActionError('');
+        setSubmitting(true);
+        try {
+          await api.post('/barcodes/approve-split', {
+            requestId: selectedItem._id,
+            action: 'reject',
+            reason: reasonText
+          });
+          alert('Split request rejected.');
+          setActionRemarks('');
+          setSelectedItem(null);
+          fetchApprovals();
+        } catch (err) {
+          setActionError(err.response?.data?.message || 'Failed to reject split request.');
+        } finally {
+          setSubmitting(false);
+        }
+      });
+      setRejectModalOpen(true);
+      return;
+    }
     setActionError('');
     setSubmitting(true);
     try {
       await api.post('/barcodes/approve-split', {
         requestId: selectedItem._id,
         action: 'reject',
-        reason: actionRemarks || 'Rejected'
+        reason: reason.trim()
       });
       alert('Split request rejected.');
       setActionRemarks('');
@@ -333,95 +581,194 @@ const PendingTransactionsPage = () => {
     }
   };
 
-  const handleOpenDispatchModal = async (txn) => {
-    setDispatchTxn(txn);
-    setDispatchReceiverId(txn.requester?._id || '');
-    setDispatchDocType(txn.documentType || 'RDC');
-    setDispatchDocNumber('');
-    setDispatchCostCenter(txn.costCenter || '');
-    setDispatchPriority(txn.priority || 'medium');
-    setDispatchReturnDate(txn.dueDate ? new Date(txn.dueDate).toISOString().split('T')[0] : '');
-    
-    // Initialize barcodes dictionary matching quantity for each material
-    const barcodeMap = {};
-    txn.materials?.forEach((mat, idx) => {
-      barcodeMap[idx] = Array(mat.quantity || 1).fill('');
-    });
-    setDispatchBarcodes(barcodeMap);
-    setDispatchHandlerId('');
-    setDispatchDcType('DC-Internal');
-
-    try {
-      const response = await api.get('/employees?limit=1000&allDepartments=true');
-      setEmployeesList(response.data.employees || response.data.data || []);
-    } catch (err) {
-      console.error('Error fetching employees:', err);
-    }
-    setDispatchModalOpen(true);
-  };
-
-  const handleStoreDispatch = async (dispatchMethod) => {
-    if (!dispatchDocNumber.trim()) {
-      alert('Please specify the Document / Gate Pass Reference Number.');
-      return;
-    }
-    if (dispatchMethod === 'handler' && !dispatchHandlerId) {
-      alert('Please select a Handler to assign.');
-      return;
-    }
-
-    // Validate barcodes are filled for all materials
-    const reqMaterials = [];
-    for (let matIdx = 0; matIdx < dispatchTxn.materials.length; matIdx++) {
-      const mat = dispatchTxn.materials[matIdx];
-      const barcodesForMat = dispatchBarcodes[matIdx] || [];
-      
-      for (let bcIdx = 0; bcIdx < barcodesForMat.length; bcIdx++) {
-        if (!barcodesForMat[bcIdx] || !barcodesForMat[bcIdx].trim()) {
-          alert(`Please fill barcode #${bcIdx + 1} for material "${mat.name}".`);
-          return;
-        }
-      }
-      
-      reqMaterials.push({
-        name: mat.name,
-        description: mat.description || '',
-        quantity: mat.quantity,
-        unit: mat.unit || 'pcs',
-        barcodes: barcodesForMat
-      });
-    }
-
+  const handleReturnHandlerAction = async (actionType) => {
+    setActionError('');
     setSubmitting(true);
     try {
-      await api.post(`/transactions/${dispatchTxn.transactionId}/store-dispatch`, {
-        receiver: dispatchReceiverId,
-        documentType: dispatchDocType,
-        documentNumber: dispatchDocNumber,
-        expectedReturnDate: dispatchReturnDate,
-        priority: dispatchPriority,
-        costCenter: dispatchCostCenter,
-        dcType: dispatchDcType,
-        materials: reqMaterials,
-        dispatchMethod,
-        handlerId: dispatchMethod === 'handler' ? dispatchHandlerId : undefined
+      await api.put(`/barcodes/return/${selectedItem._id}/handler-action`, {
+        actionType,
+        remarks: actionRemarks || `Return marked as ${actionType}ed`
       });
-      
-      alert('Transaction request successfully registered and dispatched!');
-      setDispatchModalOpen(false);
+      alert(`Return request marked as ${actionType}ed successfully!`);
+      setActionRemarks('');
       setSelectedItem(null);
       fetchApprovals();
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to dispatch transaction request.');
+      setActionError(err.response?.data?.message || `Failed to perform handler action: ${actionType}`);
     } finally {
       setSubmitting(false);
     }
   };
 
+  const handleStoreActionSubmit = async (e) => {
+    e.preventDefault();
+    setActionError('');
+    setSubmitting(true);
+    try {
+      if (storeActionType === 'accept') {
+        await api.put(`/transactions/${selectedItem._id}/store-accept`, {
+          remarks: storeRemarks
+        });
+        alert('Transaction accepted by store successfully.');
+      } else {
+        await api.put(`/transactions/${selectedItem._id}/assign-handler`, {
+          handlerId,
+          remarks: storeRemarks
+        });
+        alert('Sourcing handler assigned successfully.');
+      }
+      const targetId = selectedItem._id;
+      setStoreModal(false);
+      setStoreRemarks('');
+      setHandlerId('');
+      setSelectedItem(null);
+      fetchApprovals();
+      navigate(`/transactions/${targetId}`);
+    } catch (err) {
+      setActionError(err.response?.data?.message || 'Store action failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDirectDispatch = async () => {
+    if (confirm('Directly dispatch materials to requester bypassing handler?')) {
+      setActionError('');
+      setSubmitting(true);
+      try {
+        await api.patch(`/transactions/${selectedItem._id}/store-action`, {
+          actionType: 'direct_dispatch',
+          remarks: 'Direct dispatch bypassed handler'
+        });
+        alert('Direct dispatch completed.');
+        const targetId = selectedItem._id;
+        setSelectedItem(null);
+        fetchApprovals();
+        navigate(`/transactions/${targetId}/receive`);
+      } catch (err) {
+        alert(err.response?.data?.message || 'Direct dispatch failed.');
+      } finally {
+        setSubmitting(false);
+      }
+    }
+  };
+
+  const handleConfirmDispatch = async (txnId) => {
+    setActionError('');
+    setSubmitting(true);
+    try {
+      await api.patch(`/transactions/${txnId}/handler-action`, {
+        actionType: 'dispatch',
+        remarks: 'Handler confirmed pick up, in transit.'
+      });
+      alert('In transit status logged.');
+      setSelectedItem(null);
+      fetchApprovals();
+      navigate(`/transactions/${txnId}/receive`);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Confirm dispatch failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCollectFromStore = async (txnId) => {
+    setActionError('');
+    setSubmitting(true);
+    try {
+      await api.patch(`/transactions/${txnId}/handler-action`, {
+        actionType: 'collect',
+        remarks: 'Handler collected materials from store.'
+      });
+      alert('Materials collected. Status updated to handler assigned.');
+      setSelectedItem(null);
+      fetchApprovals();
+      navigate(`/transactions/${txnId}`);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Collection failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleHandlerReject = async (txnId) => {
+    setRejectModalTitle('Reject Sourcing Assignment');
+    setRejectModalLabel('Please enter a reason for rejecting this assignment:');
+    setRejectActionCallback(() => async (reasonText) => {
+      setActionError('');
+      setSubmitting(true);
+      try {
+        await api.patch(`/transactions/${txnId}/handler-action`, {
+          actionType: 'reject',
+          remarks: reasonText
+        });
+        alert('Sourcing assignment rejected.');
+        setSelectedItem(null);
+        fetchApprovals();
+      } catch (err) {
+        alert(err.response?.data?.message || 'Rejection failed.');
+      } finally {
+        setSubmitting(false);
+      }
+    });
+    setRejectModalOpen(true);
+  };
+
+  const handleRequesterRejectReceipt = async (txnId) => {
+    setRejectModalTitle('Reject Material Receipt');
+    setRejectModalLabel('Please specify a rejection reason for this material receipt:');
+    setRejectActionCallback(() => async (reasonText) => {
+      setActionError('');
+      setSubmitting(true);
+      try {
+        await api.patch(`/transactions/${txnId}/reject-receipt`, {
+          reason: reasonText
+        });
+        alert('Receipt rejected and transaction closed.');
+        setSelectedItem(null);
+        fetchApprovals();
+      } catch (err) {
+        alert(err.response?.data?.message || 'Failed to reject receipt.');
+      } finally {
+        setSubmitting(false);
+      }
+    });
+    setRejectModalOpen(true);
+  };
+
+  const handleRequesterAcceptReceipt = async (txnId) => {
+    const remarks = prompt('Enter optional remarks for accepting this material receipt:');
+    setActionError('');
+    setSubmitting(true);
+    try {
+      const lat = (18.5204 + (Math.random() - 0.5) * 0.01).toFixed(4);
+      const lng = (73.8567 + (Math.random() - 0.5) * 0.01).toFixed(4);
+      await api.patch(`/transactions/${txnId}/receive`, {
+        receiverGeo: {
+          lat,
+          lng,
+          address: `Received Dock Area, Pune Plant (${lat}° N, ${lng}° E)`
+        },
+        materialCondition: 'Good',
+        remarks: remarks || 'Accepted from Pending dashboard',
+        photo: 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=400&q=80'
+      });
+      alert('Materials accepted. Barcodes distributed to inventory.');
+      setSelectedItem(null);
+      fetchApprovals();
+      navigate(`/transactions/${txnId}`);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error receiving materials.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+
   return (
     <div className="flex flex-col gap-5 h-[calc(100vh-7rem)] overflow-hidden">
       {/* Top Action Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0 pb-1">
         <div>
           <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white m-0">
             Approvals Command Center
@@ -429,18 +776,17 @@ const PendingTransactionsPage = () => {
           <p className="text-xs text-slate-500 mt-1">Active Role Profile: <span className="font-extrabold text-blue-650 dark:text-blue-400">{activeRole.label}</span></p>
         </div>
 
-        {/* Bulk Action Panel (Transactions only) */}
-        {selectedIds.size > 0 && (
-          <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 px-3.5 py-1.5 rounded-xl animate-in slide-in-from-top-2">
-            <span className="text-xs font-bold text-blue-700 dark:text-blue-400 mr-2">{selectedIds.size} Selected</span>
-            <Button size="xs" variant="success" onClick={() => handleApproveReject('approve')} disabled={submitting}>
-              Bulk Approve
-            </Button>
-            <Button size="xs" className="bg-rose-600 hover:bg-rose-700 text-white" onClick={() => handleApproveReject('reject')} disabled={submitting}>
-              Bulk Reject
-            </Button>
-          </div>
-        )}
+        {/* Search bar on the right side of title */}
+        <div className="w-full sm:w-80 relative">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <input
+            type="search"
+            placeholder="Search ID, barcode, sender..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg focus:outline-none focus:border-blue-500"
+          />
+        </div>
       </div>
 
       {/* Tabs */}
@@ -449,83 +795,43 @@ const PendingTransactionsPage = () => {
           Pending Requests
         </button>
         {(activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) && (
-          <>
-            <button onClick={() => setStatusTab('split_requests')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'split_requests' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-              Split Requests ({pendingSplits.length})
-            </button>
-            <button onClick={() => setStatusTab('return_requests')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'return_requests' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-              Return Requests ({pendingReturns.length})
-            </button>
-          </>
+          <button onClick={() => setStatusTab('split_requests')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'split_requests' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
+            Split Requests ({pendingSplits.length})
+          </button>
+        )}
+        {(activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store') || pendingReturns.length > 0) && (
+          <button onClick={() => setStatusTab('return_requests')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'return_requests' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
+            Return Requests ({pendingReturns.length})
+          </button>
         )}
         <button onClick={() => setStatusTab('approved')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'approved' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
           Approved History
         </button>
-        <button onClick={() => setStatusTab('rejected')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'rejected' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-          Rejected List
-        </button>
       </div>
 
-      {/* Filters and search block */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4.5 rounded-2xl shadow-sm flex flex-col md:flex-row gap-3.5 shrink-0">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-2.5 h-4.5 w-4.5 text-slate-400" />
-          <input
-            type="search"
-            placeholder="Search ID, barcode, sender..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-1.5 text-sm bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg focus:outline-none focus:border-blue-500"
-          />
-        </div>
 
-        <select
-          value={filterPriority}
-          onChange={(e) => setFilterPriority(e.target.value)}
-          className="text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3 py-1.5 focus:outline-none font-bold"
-        >
-          <option value="">All Priorities</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-          <option value="critical">Critical</option>
-        </select>
 
-        {/* Toggle checkboxes */}
-        <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-slate-650 dark:text-slate-400">
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" checked={filterDueToday} onChange={(e) => setFilterDueToday(e.target.checked)} className="rounded text-blue-600" />
-            <span>Due Today</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" checked={filterEscalated} onChange={(e) => setFilterEscalated(e.target.checked)} className="rounded text-blue-600" />
-            <span>Escalated</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" checked={filterCrossDept} onChange={(e) => setFilterCrossDept(e.target.checked)} className="rounded text-blue-600" />
-            <span>Cross-Dept</span>
-          </label>
-        </div>
-      </div>
-
-      {/* Main split display layout */}
+      {/* Main display layout */}
       <div className="flex-1 flex gap-5 overflow-hidden min-h-0">
         
-        {/* Left Side: Cards Queue list */}
-        <div className="w-full md:w-[350px] lg:w-[380px] flex flex-col gap-3 overflow-y-auto pr-1">
-          {((statusTab === 'pending' && filteredTxns.length === 0 && filteredTransfers.length === 0) ||
-            (statusTab === 'split_requests' && pendingSplits.length === 0) ||
-            (statusTab === 'return_requests' && pendingReturns.length === 0) ||
-            ((statusTab === 'approved' || statusTab === 'rejected') && filteredTxns.length === 0)) ? (
-            <div className="text-center py-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl">
-              <Clock className="w-10 h-10 text-slate-355 mx-auto mb-2.5 animate-pulse" />
-              <p className="text-sm font-bold text-slate-500">Queue is empty</p>
-            </div>
-          ) : (
-            <>
-              {/* Split Requests List */}
-              {statusTab === 'split_requests' && pendingSplits.length > 0 && (
-                <div className="flex flex-col gap-2">
+        {!selectedItem ? (
+          /* Left Side: Cards Queue list taking full width */
+          <div className="w-full flex flex-col gap-3 overflow-y-auto pr-1">
+            {((statusTab === 'pending' && filteredTxns.length === 0 && filteredTransfers.length === 0) ||
+              (statusTab === 'split_requests' && pendingSplits.length === 0) ||
+              (statusTab === 'return_requests' && pendingReturns.length === 0) ||
+              ((statusTab === 'approved' || statusTab === 'rejected') && filteredTxns.length === 0)) ? (
+              <div className="text-center py-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl">
+                <Clock className="w-10 h-10 text-slate-355 mx-auto mb-2.5 animate-pulse" />
+                <p className="text-sm font-bold text-slate-500">Queue is empty</p>
+              </div>
+            ) : (
+              <>
+                {/* Split Requests List */}
+                {statusTab === 'split_requests' && pendingSplits.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Split Requests</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Split Requests</span>
                   {pendingSplits.map(s => {
                     const isActive = selectedItem?._id === s._id && s.barcode && !s.fromUser;
@@ -541,7 +847,10 @@ const PendingTransactionsPage = () => {
                         `}
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{s.transactionId}</span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[10px] font-black uppercase text-orange-600 dark:text-orange-400 tracking-wider">Split Request</span>
+                            <span className="text-xs font-extrabold text-slate-655 dark:text-slate-400 font-mono">{s.transactionId}</span>
+                          </div>
                           <Badge variant="primary">PENDING</Badge>
                         </div>
                         <div>
@@ -549,17 +858,24 @@ const PendingTransactionsPage = () => {
                           <p className="text-[10px] text-slate-550 font-semibold mt-0.5">Parent: <span className="font-extrabold text-blue-600">{s.barcode}</span></p>
                           <p className="text-[10px] text-slate-550 font-semibold">Requester: <span className="font-extrabold">{s.requester?.fullName}</span></p>
                         </div>
+                        <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
+                          <span className="text-rose-600 dark:text-rose-400">
+                            {activeRole.role === 'department_admin' && activeRole.adminType === 'store' ? "Action Required: Approve Split" : "Tracking: Pending Split Approval"}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}
-                </div>
-              )}
+                    </div>
+                  </div>
+                )}
 
-              {/* Return Requests List */}
-              {statusTab === 'return_requests' && pendingReturns.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Return Requests</span>
-                  {pendingReturns.map(r => {
+                {/* Return Requests List */}
+                {statusTab === 'return_requests' && pendingReturns.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Return Requests</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {pendingReturns.map(r => {
                     const isActive = selectedItem?._id === r._id && r.barcode && r.condition;
                     return (
                       <div 
@@ -570,34 +886,44 @@ const PendingTransactionsPage = () => {
                         `}
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{r.transactionId}</span>
-                          <Badge variant="warning">PENDING RETURN</Badge>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[10px] font-black uppercase text-amber-600 dark:text-amber-450 tracking-wider">Return Request</span>
+                            <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{r.transactionId}</span>
+                          </div>
+                          <Badge variant={r.status === 'completed' ? 'success' : 'warning'}>
+                            {r.status.toUpperCase().replace('_', ' ')}
+                          </Badge>
                         </div>
                         <div>
                           <p className="text-xs font-extrabold text-slate-800 dark:text-slate-100">Barcode: <span className="font-mono text-blue-650 font-black">{r.barcode}</span></p>
                           <p className="text-[10px] text-slate-550 font-semibold mt-0.5">From: <span className="font-extrabold">{r.fromUser?.fullName}</span></p>
                           <p className="text-[10px] text-slate-550 font-semibold">Condition: <span className="font-extrabold text-amber-700 uppercase">{r.condition}</span></p>
                         </div>
+                        <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
+                          <span className="text-rose-600 dark:text-rose-400 font-extrabold">
+                            {r.status === 'handler_assigned' && (r.returnHandler?._id === user?._id || r.returnHandler === user?._id) ? "Action Required: Collect returning items" :
+                             r.status === 'collected' && (r.returnHandler?._id === user?._id || r.returnHandler === user?._id) ? "Action Required: Deliver to Store" :
+                             r.status === 'store_received' && (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) ? "Action Required: Confirm Return Receipt" :
+                             (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) && r.status === 'pending' ? "Action Required: Confirm Return Receipt" :
+                             `Tracking: ${r.status.toUpperCase().replace('_', ' ')}`}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}
-                </div>
-              )}
+                    </div>
+                  </div>
+                )}
 
-              {/* Transactions List */}
-              {statusTab !== 'split_requests' && filteredTxns.length > 0 && (
-                <div className="flex flex-col gap-2">
+                {/* Transactions List */}
+                {statusTab !== 'split_requests' && filteredTxns.length > 0 && (
+                  <div className="flex flex-col gap-2">
                   <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Material Requests</span>
                   
-                  {/* Select All */}
-                  <div className="flex justify-between items-center bg-slate-100/50 dark:bg-slate-800/40 p-2.5 rounded-lg text-xs font-bold mb-1 select-none">
-                    <button onClick={handleSelectAll} className="flex items-center gap-2 cursor-pointer text-slate-655 dark:text-slate-300">
-                      {selectedIds.size === filteredTxns.length ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4" />}
-                      Select All listed
-                    </button>
-                  </div>
 
-                  {filteredTxns.map(t => {
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {filteredTxns.map(t => {
                     const isSelected = selectedIds.has(t._id);
                     const isActive = selectedItem?._id === t._id && !selectedItem.barcode;
                     return (
@@ -610,18 +936,19 @@ const PendingTransactionsPage = () => {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-2">
-                            {/* Checkbox select */}
-                            <button onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleSelect(t._id);
-                            }} className="text-slate-400 hover:text-blue-600">
-                              {isSelected ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4" />}
-                            </button>
-                            <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{t.transactionId}</span>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px] font-black uppercase text-blue-655 dark:text-blue-450 tracking-wider">
+                                {t.status === 'submitted' ? 'Material Request (Team Lead Approval)' :
+                                 t.status === 'tl_approved' ? 'Material Request (Management Approval)' :
+                                 ['mgt_approved', 'ready_for_dispatch'].includes(t.status) ? 'Store Sourcing Request' :
+                                 t.status === 'store_accepted' ? 'Assign Sourcing Handler Request' :
+                                 t.status === 'handler_assigned' ? 'Handler Transit Request' :
+                                 t.status === 'dispatched' ? 'Requester Delivery Confirmation' : 'Material Request'}
+                              </span>
+                              <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{t.transactionId}</span>
+                            </div>
                           </div>
-                          <Badge variant={t.priority === 'critical' || t.priority === 'high' ? 'danger' : 'primary'}>
-                            {t.priority}
-                          </Badge>
+
                         </div>
 
                         <div>
@@ -633,6 +960,11 @@ const PendingTransactionsPage = () => {
                           <span>{t.documentType} Challan</span>
                           <span className="text-slate-700 dark:text-slate-300 font-black">₹{t.grandTotal?.toLocaleString() || '0'}</span>
                         </div>
+                        <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
+                          <span className={`${getCardStatusLine(t).startsWith('Action') ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
+                            {getCardStatusLine(t)}
+                          </span>
+                        </div>
 
                         {t.crossDepartment && (
                           <span className="absolute top-2 right-14 text-[9px] font-extrabold text-amber-700 bg-amber-50 dark:bg-amber-950/20 px-1.5 py-0.5 rounded">Cross-Dept</span>
@@ -640,14 +972,16 @@ const PendingTransactionsPage = () => {
                       </div>
                     );
                   })}
-                </div>
-              )}
+                    </div>
+                  </div>
+                )}
 
-              {/* Barcode Transfers List */}
-              {filteredTransfers.length > 0 && (
-                <div className="flex flex-col gap-2 mt-4">
-                  <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Barcode Transfers</span>
-                  {filteredTransfers.map(tr => {
+                {/* Barcode Transfers List */}
+                {filteredTransfers.length > 0 && (
+                  <div className="flex flex-col gap-2 mt-4">
+                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Barcode Transfers</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {filteredTransfers.map(tr => {
                     const isActive = selectedItem?._id === tr._id && !!selectedItem.barcode;
                     return (
                       <div 
@@ -658,7 +992,10 @@ const PendingTransactionsPage = () => {
                         `}
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <span className="text-xs font-extrabold text-indigo-650 dark:text-indigo-400 font-mono">{tr.barcode}</span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider">Transfer Request</span>
+                            <span className="text-xs font-extrabold text-indigo-655 dark:text-indigo-400 font-mono">{tr.barcode}</span>
+                          </div>
                           <Badge variant="warning">TRANSFER</Badge>
                         </div>
 
@@ -671,26 +1008,41 @@ const PendingTransactionsPage = () => {
                         <div className="text-[9px] text-slate-400 font-extrabold uppercase mt-1">
                           Type: {tr.type?.toUpperCase()}
                         </div>
+                        <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
+                          <span className={`${(tr.toUser?._id === user?._id || tr.toUser === user?._id) ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
+                            {(tr.toUser?._id === user?._id || tr.toUser === user?._id) ? "Action Required: Confirm Ownership" : "Tracking: Pending Recipient Confirmation"}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Right Side: Selected details preview workspace */}
-        <div className="hidden md:flex flex-1 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex-col">
-          {selectedItem ? (
-            selectedItem.condition ? (
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        ) : (
+          /* Right Side: Selected details preview workspace taking full width */
+          <div className="w-full flex bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex-col">
+            <div className="p-3 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-105 flex items-center shrink-0">
+              <button 
+                onClick={() => setSelectedItem(null)} 
+                className="flex items-center gap-2 text-xs font-black text-blue-650 hover:text-blue-700 transition animate-fade-in"
+              >
+                <ArrowLeft className="w-4 h-4" /> Back to Pending List
+              </button>
+            </div>
+            {selectedItem.condition ? (
               /* RETURN REQUEST PREVIEW */
               <div className="flex-1 flex flex-col overflow-hidden">
                 <div className="p-5 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-4">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-slate-400">Return Request</span>
-                      <Badge variant="warning">PENDING STORE CONFIRMATION</Badge>
+                      <Badge variant={selectedItem.status === 'completed' ? 'success' : 'warning'}>
+                        {selectedItem.status.toUpperCase().replace('_', ' ')}
+                      </Badge>
                     </div>
                     <h3 className="text-base font-extrabold text-slate-855 mt-1">Return of {selectedItem.barcode}</h3>
                   </div>
@@ -708,6 +1060,20 @@ const PendingTransactionsPage = () => {
                       <span className="font-bold text-amber-700 uppercase font-mono">{selectedItem.condition}</span>
                     </div>
                   </div>
+
+                  {selectedItem.returnHandler && (
+                    <div className="grid grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-950/40 p-4 rounded-xl border border-slate-100 dark:border-slate-800">
+                      <div>
+                        <span className="text-[9px] text-slate-400 font-bold block mb-0.5">ASSIGNED RETURN HANDLER</span>
+                        <span className="font-bold text-slate-855 dark:text-slate-150">{selectedItem.returnHandler?.fullName}</span>
+                        <span className="block text-[9px] text-slate-400 mt-0.5 font-bold">ID: {selectedItem.returnHandler?.employeeId}</span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] text-slate-400 font-bold block mb-0.5">DELIVERY METHOD</span>
+                        <span className="font-bold text-blue-650 uppercase font-mono">Via Courier Handler</span>
+                      </div>
+                    </div>
+                  )}
 
                   <div>
                     <h4 className="text-[10px] text-slate-400 font-extrabold uppercase mb-1.5">Reason for Return</h4>
@@ -742,13 +1108,47 @@ const PendingTransactionsPage = () => {
                     </div>
                   )}
 
-                  <div className="mt-auto border-t border-slate-100 dark:border-slate-800 pt-5 flex justify-end gap-3 shrink-0">
-                    <Button variant="outline" onClick={() => setSelectedItem(null)}>
-                      Cancel
-                    </Button>
-                    <Button variant="success" onClick={handleAcceptReturnRequest} disabled={submitting}>
-                      Confirm Receipt (Accept Return)
-                    </Button>
+                  <div className="mt-auto border-t border-slate-100 dark:border-slate-800 pt-5 flex flex-col gap-4">
+                    {/* Optional remarks input for handler actions */}
+                    {['handler_assigned', 'collected'].includes(selectedItem.status) && (
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Decision Comments / Remarks</label>
+                        <textarea
+                          value={actionRemarks}
+                          onChange={(e) => setActionRemarks(e.target.value)}
+                          placeholder="Add optional remarks for collection/delivery..."
+                          rows="2"
+                          className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3.5 py-2 font-semibold"
+                        />
+                      </div>
+                    )}
+                    
+                    <div className="flex justify-end gap-3 shrink-0">
+                      <Button variant="outline" onClick={() => { setSelectedItem(null); setActionRemarks(''); }}>
+                        Cancel
+                      </Button>
+                      
+                      {/* Handler Collect Button */}
+                      {selectedItem.status === 'handler_assigned' && (activeRole.role === 'super_admin' || selectedItem.returnHandler?._id === user?._id || selectedItem.returnHandler === user?._id) && (
+                        <Button variant="success" onClick={() => handleReturnHandlerAction('collect')} disabled={submitting}>
+                          Accept (Collect from Requester)
+                        </Button>
+                      )}
+                      
+                      {/* Handler Deliver Button */}
+                      {selectedItem.status === 'collected' && (activeRole.role === 'super_admin' || selectedItem.returnHandler?._id === user?._id || selectedItem.returnHandler === user?._id) && (
+                        <Button variant="success" onClick={() => handleReturnHandlerAction('deliver')} disabled={submitting}>
+                          Deliver to Store
+                        </Button>
+                      )}
+                      
+                      {/* Store Confirm Receipt Button */}
+                      {(selectedItem.status === 'pending' || selectedItem.status === 'store_received' || activeRole.role === 'super_admin') && (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) && (
+                        <Button variant="success" onClick={handleAcceptReturnRequest} disabled={submitting}>
+                          Confirm Receipt (Accept Return)
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -939,7 +1339,9 @@ const PendingTransactionsPage = () => {
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-0.5">EXPECTED RETURN</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{selectedItem.expectedReturnDate ? new Date(selectedItem.expectedReturnDate).toLocaleDateString() : 'N/A'}</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-200">
+                        {selectedItem.expectedReturnDate ? new Date(selectedItem.expectedReturnDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : (selectedItem.dueDate ? new Date(selectedItem.dueDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A')}
+                      </span>
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-0.5">GRAND TOTAL</span>
@@ -976,216 +1378,278 @@ const PendingTransactionsPage = () => {
                   </div>
 
                   {/* Approval Comments Form (only if status is pending) */}
-                  {statusTab === 'pending' && activeRole.role !== 'employee' && (
+                  {statusTab === 'pending' && activeRole.role !== 'employee' && !isHandler && (
                     <div className="mt-auto border-t border-slate-100 dark:border-slate-800 pt-5 flex flex-col gap-4">
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Decision Comments / Remarks</label>
-                        <textarea
-                          value={actionRemarks}
-                          onChange={(e) => setActionRemarks(e.target.value)}
-                          placeholder="Add optional remarks or rejection reason..."
-                          rows="3"
-                          className="w-full text-sm bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3.5 py-2 font-semibold"
-                        />
-                      </div>
+                      {((activeRole.role === 'department_admin' && activeRole.adminType === 'store') ||
+                        (activeRole.role === 'super_admin' && ['mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(selectedItem.status))) ? (
+                        <div className="flex flex-col gap-3">
+                          {actionError && <p className="text-xs text-rose-500 font-bold">{actionError}</p>}
+                          <div className="flex gap-3 justify-end">
+                            {selectedItem.materials?.every(m => !m.barcodes || m.barcodes.length === 0) ? (
+                              <Button
+                                variant="success"
+                                onClick={() => navigate(`/store-dispatch/${selectedItem.transactionId}`)}
+                                disabled={submitting}
+                              >
+                                Register & Dispatch Request
+                              </Button>
+                            ) : (
+                              <>
+                                {['submitted', 'tl_approved', 'mgt_approved', 'ready_for_dispatch'].includes(selectedItem.status) &&
+                                 !['store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'closed'].includes(selectedItem.status) && (
+                                  <Button
+                                    variant="success"
+                                    onClick={() => {
+                                      setStoreActionType('accept');
+                                      setStoreModal(true);
+                                    }}
+                                    disabled={submitting}
+                                  >
+                                    Ready (Store Accept)
+                                  </Button>
+                                )}
+                                {selectedItem.status === 'store_accepted' &&
+                                 selectedItem.materials?.every(m => !m.barcodes || m.barcodes.length === 0) &&
+                                 !['handler_assigned', 'dispatched', 'received', 'completed', 'active', 'closed'].includes(selectedItem.status) && (
+                                  <>
+                                    <Button variant="outline" onClick={handleDirectDispatch} disabled={submitting}>
+                                      Direct Dispatch (Bypass Handler)
+                                    </Button>
+                                    <Button
+                                      variant="success"
+                                      onClick={() => {
+                                        setStoreActionType('assign_handler');
+                                        setStoreModal(true);
+                                      }}
+                                      disabled={submitting}
+                                    >
+                                      Sourcing / Assign Handler
+                                    </Button>
+                                  </>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Decision Comments / Remarks</label>
+                            <textarea
+                              value={actionRemarks}
+                              onChange={(e) => setActionRemarks(e.target.value)}
+                              placeholder="Add optional remarks or rejection reason..."
+                              rows="3"
+                              className="w-full text-sm bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3.5 py-2 font-semibold"
+                            />
+                          </div>
 
+                          {actionError && <p className="text-xs text-rose-500 font-bold">{actionError}</p>}
+
+                          <div className="flex gap-3 justify-end">
+                            <Button variant="outline" className="text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => handleApproveReject('reject', selectedItem._id)} disabled={submitting}>
+                              Reject Request
+                            </Button>
+                            <Button 
+                              variant="success" 
+                              onClick={() => {
+                                const isStore = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
+                                const isSimplified = selectedItem.materials?.every(m => !m.barcodes || m.barcodes.length === 0);
+                                if (isStore && isSimplified) {
+                                  handleOpenDispatchModal(selectedItem);
+                                } else {
+                                  handleApproveReject('approve', selectedItem._id);
+                                }
+                              }} 
+                              disabled={submitting}
+                            >
+                              Approve & Forward
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Handler Actions Panel */}
+                  {(activeRole.role === 'super_admin' || selectedItem.handler?._id === user?._id || selectedItem.handler === user?._id) && ['store_accepted', 'handler_assigned'].includes(selectedItem.status) && (
+                    <div className="mt-auto border-t border-slate-100 dark:border-slate-800 pt-5 flex flex-col gap-4">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">Handler Sourcing Actions</h4>
                       {actionError && <p className="text-xs text-rose-500 font-bold">{actionError}</p>}
-
                       <div className="flex gap-3 justify-end">
-                        <Button variant="outline" className="text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => handleApproveReject('reject', selectedItem._id)} disabled={submitting}>
-                          Reject Request
-                        </Button>
-                        <Button 
-                          variant="success" 
-                          onClick={() => {
-                            const isStore = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
-                            const isSimplified = selectedItem.materials?.every(m => !m.barcodes || m.barcodes.length === 0);
-                            if (isStore && isSimplified) {
-                              handleOpenDispatchModal(selectedItem);
-                            } else {
-                              handleApproveReject('approve', selectedItem._id);
-                            }
-                          }} 
-                          disabled={submitting}
-                        >
-                          Approve & Forward
-                        </Button>
+                        <div className="flex gap-3">
+                          {selectedItem.status === 'store_accepted' ? (
+                            <>
+                              <Button
+                                variant="outline"
+                                className="text-rose-600 border-rose-250 hover:bg-rose-50"
+                                onClick={() => handleHandlerReject(selectedItem._id)}
+                                disabled={submitting}
+                              >
+                                Reject Assignment
+                              </Button>
+                              <Button
+                                variant="success"
+                                onClick={() => handleCollectFromStore(selectedItem._id)}
+                                disabled={submitting}
+                              >
+                                Accept (Collect from Store)
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              variant="success"
+                              onClick={() => handleConfirmDispatch(selectedItem._id)}
+                              disabled={submitting}
+                            >
+                              Send to Requester (In Transit)
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Requester Actions Panel */}
+                  {(activeRole.role === 'super_admin' || selectedItem.requester?._id === user?._id || selectedItem.requester === user?._id) && selectedItem.status === 'dispatched' && (
+                    <div className="mt-auto border-t border-slate-100 dark:border-slate-800 pt-5 flex flex-col gap-4">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">Requester Sourcing Actions</h4>
+                      {actionError && <p className="text-xs text-rose-500 font-bold">{actionError}</p>}
+                      <div className="flex gap-3 justify-end">
+                        <div className="flex gap-3">
+                          <Button
+                            variant="outline"
+                            className="text-rose-600 border-rose-250 hover:bg-rose-50"
+                            onClick={() => handleRequesterRejectReceipt(selectedItem._id)}
+                            disabled={submitting}
+                          >
+                            Reject Material Receipt
+                          </Button>
+                          <Button
+                            variant="success"
+                            onClick={() => handleRequesterAcceptReceipt(selectedItem._id)}
+                            disabled={submitting}
+                          >
+                            Accept Material Receipt
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   )}
                 </div>
               </div>
             )
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8">
-              <Clock className="w-12 h-12 mb-3.5 text-slate-300" />
-              <p className="text-sm font-semibold">Select a request card to inspect</p>
-            </div>
-          )}
+          }
         </div>
-      </div>
+      )}
+    </div>
 
-      {/* Dispatch Sourcing Request Modal */}
-      {dispatchModalOpen && dispatchTxn && (
+      {/* Store Sourcing / Action Modal */}
+      {storeModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-3xl w-full max-w-2xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-            <h3 className="text-base font-black text-slate-800 dark:text-white mb-3">Register & Dispatch Sourcing Request ({dispatchTxn.transactionId})</h3>
-            
-            <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs font-semibold">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Select
-                  id="dispatchReceiver"
-                  label="Receiver Employee *"
-                  placeholder="Select employee..."
-                  options={employeesList.map(emp => ({ value: emp._id, label: `${emp.fullName} (${emp.employeeId})` }))}
-                  value={dispatchReceiverId}
-                  onChange={(e) => setDispatchReceiverId(e.target.value)}
-                  required
-                />
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
+            <h3 className="text-lg font-black text-slate-900 dark:text-white">
+              Store dispatch / Sourcing Manager
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">Assign handler or complete DC sourcing check.</p>
 
-                <Select
-                  id="dispatchDocType"
-                  label="Document Type *"
-                  options={[
-                    { label: 'Returnable DC (RDC)', value: 'RDC' },
-                    { label: 'Delivery Challan (DC)', value: 'DC' },
-                    { label: 'Invoice', value: 'Invoice' },
-                    { label: 'Emergency Send', value: 'Emergency Send' }
-                  ]}
-                  value={dispatchDocType}
-                  onChange={(e) => setDispatchDocType(e.target.value)}
-                  required
-                />
+            <form onSubmit={handleStoreActionSubmit} className="mt-4 flex flex-col gap-4 text-xs font-semibold text-slate-650 dark:text-slate-400">
+              <div>
+                <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Action Mode *</label>
+                <select
+                  value={storeActionType}
+                  onChange={(e) => setStoreActionType(e.target.value)}
+                  className="w-full text-xs bg-slate-550 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition"
+                >
+                  <option value="accept">Mark Sourced (Ready to dispatch)</option>
+                  <option value="assign_handler">Assign Sourcing Handler</option>
+                </select>
+              </div>
 
-                {dispatchDocType === 'DC' && (
-                  <Select
-                    id="dispatchDcType"
-                    label="Challan Sub-Type *"
-                    options={[
-                      { label: 'DC-Internal', value: 'DC-Internal' },
-                      { label: 'DC-FOC (Free of Charge)', value: 'DC-FOC' }
-                    ]}
-                    value={dispatchDcType}
-                    onChange={(e) => setDispatchDcType(e.target.value)}
+              {storeActionType === 'assign_handler' && (
+                <div>
+                  <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Select Handler *</label>
+                  <select
+                    value={handlerId}
+                    onChange={(e) => setHandlerId(e.target.value)}
                     required
-                  />
-                )}
-
-                <Input
-                  id="dispatchDocNumber"
-                  label="Document / Gate Pass Reference Number *"
-                  placeholder="e.g. DC-10293"
-                  value={dispatchDocNumber}
-                  onChange={(e) => setDispatchDocNumber(e.target.value)}
-                  required
-                />
-
-                <Input
-                  id="dispatchReturnDate"
-                  label="Expected Return Date *"
-                  type="date"
-                  value={dispatchReturnDate}
-                  onChange={(e) => setDispatchReturnDate(e.target.value)}
-                  required
-                />
-
-                <Select
-                  id="dispatchPriority"
-                  label="Transaction Priority *"
-                  options={[
-                    { label: 'Low', value: 'low' },
-                    { label: 'Medium', value: 'medium' },
-                    { label: 'High', value: 'high' },
-                    { label: 'Critical', value: 'critical' }
-                  ]}
-                  value={dispatchPriority}
-                  onChange={(e) => setDispatchPriority(e.target.value)}
-                  required
-                />
-
-                <Input
-                  id="dispatchCostCenter"
-                  label="Cost Center / Project Reference"
-                  placeholder="e.g. DEPT-ENG-2026"
-                  value={dispatchCostCenter}
-                  onChange={(e) => setDispatchCostCenter(e.target.value)}
-                />
-
-                <div className="col-span-1 md:col-span-2">
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Purpose / Description</label>
-                  <textarea
-                    value={dispatchTxn.description}
-                    disabled
-                    rows="2"
-                    className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg dark:bg-slate-950 dark:border-slate-800 dark:text-slate-400 px-3 py-2 font-semibold"
-                  />
+                    className="w-full text-xs bg-slate-550 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition"
+                  >
+                    <option value="">Select Handler employee</option>
+                    {handlers.map(h => (
+                      <option key={h.value} value={h.value}>{h.label}</option>
+                    ))}
+                  </select>
                 </div>
-              </div>
+              )}
 
-              {/* Barcode scan layout matching materials quantity */}
-              <div className="space-y-4">
-                <span className="text-xs font-black text-blue-650 dark:text-blue-400 uppercase tracking-wider block">Assign Barcodes for Requested Materials</span>
-                {dispatchTxn.materials && dispatchTxn.materials.map((mat, matIdx) => (
-                  <div key={matIdx} className="bg-slate-50 dark:bg-slate-950/40 p-4 rounded-2xl border border-slate-200/60 dark:border-slate-800 space-y-4">
-                    <div className="grid grid-cols-2 gap-4 mb-2">
-                      <div>
-                        <span className="text-[10px] text-slate-400 block mb-0.5">MATERIAL NAME</span>
-                        <span className="font-extrabold text-slate-800 dark:text-slate-200">{mat.name}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-400 block mb-0.5">REQUESTED QTY</span>
-                        <span className="font-extrabold text-slate-800 dark:text-slate-200">{mat.quantity} {mat.unit || 'pcs'}</span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2 border-t border-slate-200/50">
-                      {(dispatchBarcodes[matIdx] || []).map((bcVal, bcIdx) => (
-                        <div key={bcIdx} className="flex flex-col gap-1">
-                          <label className="block text-[9px] font-bold text-slate-400 uppercase">Barcode #{bcIdx + 1} *</label>
-                          <input
-                            type="text"
-                            placeholder={`Scan/Type Barcode #${bcIdx + 1}`}
-                            value={bcVal}
-                            onChange={(e) => {
-                              const updated = { ...dispatchBarcodes };
-                              updated[matIdx] = [...(updated[matIdx] || [])];
-                              updated[matIdx][bcIdx] = e.target.value;
-                              setDispatchBarcodes(updated);
-                            }}
-                            required
-                            className="w-full text-xs bg-white border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-white px-3 py-2 font-mono font-bold"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Handler Assignment Select */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl space-y-3">
-                <span className="text-xs font-black text-slate-700 dark:text-slate-350 uppercase tracking-wider block">Logistics Delivery Option</span>
-                <Select
-                  id="dispatchHandler"
-                  label="Select Handler (Leave empty to send directly to requester) *"
-                  placeholder="Select Handler Employee..."
-                  options={employeesList.filter(emp => emp._id !== user?._id).map(emp => ({ value: emp._id, label: `${emp.fullName} (${emp.employeeId})` }))}
-                  value={dispatchHandlerId}
-                  onChange={(e) => setDispatchHandlerId(e.target.value)}
+              <div>
+                <label className="block text-slate-550 font-bold uppercase tracking-wider mb-1.5">Remarks / Sourcing notes</label>
+                <textarea
+                  value={storeRemarks}
+                  onChange={(e) => setStoreRemarks(e.target.value)}
+                  placeholder="e.g. Sourced from Shelf Bay 4..."
+                  rows="2"
+                  className="w-full text-xs bg-slate-550 border border-slate-250 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3.5 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition"
                 />
               </div>
-            </div>
 
-            <div className="flex gap-3 mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 shrink-0">
-              <Button variant="ghost" onClick={() => setDispatchModalOpen(false)}>Cancel</Button>
-              <div className="flex gap-2 ml-auto">
-                <Button variant="outline" className="border-blue-200 text-blue-600 hover:bg-blue-50" onClick={() => handleStoreDispatch('direct')} disabled={submitting}>
-                  Send Direct to Requester
-                </Button>
-                <Button variant="success" onClick={() => handleStoreDispatch('handler')} disabled={submitting}>
-                  Assign Handler & Send
-                </Button>
+              <div className="flex gap-2 justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
+                <Button variant="ghost" type="button" onClick={() => setStoreModal(false)}>Cancel</Button>
+                <Button variant="primary" type="submit" disabled={submitting}>Submit Sourcing Status</Button>
               </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Rejection Reason Dialog */}
+      {rejectModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
+            <h3 className="text-base font-black text-slate-900 dark:text-white">
+              {rejectModalTitle || 'Confirm Rejection'}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              {rejectModalLabel || 'Please specify a rejection reason:'}
+            </p>
+            <div className="mt-4">
+              <textarea
+                value={rejectReasonText}
+                onChange={(e) => setRejectReasonText(e.target.value)}
+                placeholder="Type reason here..."
+                rows="3"
+                className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-rose-500 transition"
+              />
+            </div>
+            <div className="flex gap-2 justify-end pt-4 border-t border-slate-100 dark:border-slate-800 mt-4">
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={() => {
+                  setRejectModalOpen(false);
+                  setRejectReasonText('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                type="button"
+                onClick={() => {
+                  if (!rejectReasonText.trim()) {
+                    alert('Rejection reason is required.');
+                    return;
+                  }
+                  if (rejectActionCallback) {
+                    rejectActionCallback(rejectReasonText.trim());
+                  }
+                  setRejectModalOpen(false);
+                  setRejectReasonText('');
+                }}
+              >
+                Confirm Rejection
+              </Button>
             </div>
           </div>
         </div>

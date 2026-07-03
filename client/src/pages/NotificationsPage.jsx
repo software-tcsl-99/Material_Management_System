@@ -1,10 +1,12 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Bell, ShieldAlert, CheckCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 
 export default function NotificationsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const { data: notifData, isLoading } = useQuery({
     queryKey: ['notificationsFullList'],
@@ -18,6 +20,19 @@ export default function NotificationsPage() {
     mutationFn: async (id) => api.put(`/notifications/${id}/read`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notificationsFullList'] })
   });
+
+  const handleNotificationClick = async (n) => {
+    if (!n.read) {
+      await readMutation.mutateAsync(n._id);
+    }
+    if (n.barcodeId) {
+      navigate(`/barcodes/${n.barcodeId}`);
+    } else if (n.transactionId) {
+      navigate(`/transactions/${n.transactionId}`);
+    } else if (n.actionUrl) {
+      navigate(n.actionUrl);
+    }
+  };
 
   return (
     <div className="max-w-2xl mx-auto bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6 animate-fade-in">
@@ -39,7 +54,8 @@ export default function NotificationsPage() {
           notifData?.map((n) => (
             <div
               key={n._id}
-              className={`p-4 border rounded-2xl flex justify-between items-start gap-4 transition ${
+              onClick={() => handleNotificationClick(n)}
+              className={`p-4 border rounded-2xl flex justify-between items-start gap-4 transition cursor-pointer hover:bg-slate-50/80 ${
                 n.read ? 'bg-slate-50 border-slate-200' : 'bg-white border-primary/20 shadow-sm shadow-primary/5'
               }`}
             >
@@ -48,15 +64,18 @@ export default function NotificationsPage() {
                   {n.title}
                 </p>
                 <p className="text-xs text-slate-500">{n.message}</p>
-                <p className="text-[9px] text-slate-400 font-bold mt-1">
+                <p className="text-[9px] text-slate-405 font-bold mt-1">
                   {new Date(n.createdAt).toLocaleString()}
                 </p>
               </div>
 
               {!n.read && (
                 <button
-                  onClick={() => readMutation.mutate(n._id)}
-                  className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    readMutation.mutate(n._id);
+                  }}
+                  className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-655"
                   title="Mark as Read"
                 >
                   <CheckCircle className="w-4 h-4" />

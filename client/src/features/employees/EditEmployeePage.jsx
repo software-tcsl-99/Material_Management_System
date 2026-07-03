@@ -63,7 +63,11 @@ const EditEmployeePage = () => {
         setFullName(empData.fullName);
         setEmail(empData.email);
         setPhone(empData.phone);
-        setRole(empData.role);
+        if (empData.role === 'department_admin' && empData.departmentAdminType === 'management') {
+          setRole('management');
+        } else {
+          setRole(empData.role);
+        }
         setDeptId(empData.department?._id || empData.department || '');
         setDesigId(empData.designation?._id || empData.designation || '');
         setLocId(empData.workLocation?._id || empData.workLocation || '');
@@ -188,7 +192,9 @@ const EditEmployeePage = () => {
               label="System Authorization Role"
               options={[
                 { label: 'Employee (Standard Portal Access)', value: 'employee' },
-                { label: 'Admin (System Control)', value: 'admin' }
+                { label: 'Team Lead (Department Lead)', value: 'team_lead' },
+                { label: 'Admin (System Control)', value: 'department_admin' },
+                { label: 'Management (Executive Board)', value: 'management' }
               ]}
               value={role}
               onChange={(e) => setRole(e.target.value)}

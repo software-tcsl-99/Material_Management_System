@@ -1,4 +1,4 @@
-import { ArrowRight, Calendar, DollarSign, FileSpreadsheet, FileText, Filter, RefreshCw, Eye } from 'lucide-react';
+import { ArrowRight, Calendar, DollarSign, FileSpreadsheet, FileText, Filter, RefreshCw, Eye, Tag } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Badge from '../../components/ui/Badge';
@@ -25,6 +25,9 @@ const ReportsPage = () => {
   const [endDate, setEndDate] = useState('');
   const [senderName, setSenderName] = useState('');
   const [receiverName, setReceiverName] = useState('');
+  const [handlerName, setHandlerName] = useState('');
+  const [barcodeQuery, setBarcodeQuery] = useState('');
+  const [expectedReturnDate, setExpectedReturnDate] = useState('');
   const [flow, setFlow] = useState('all');
   const [scope, setScope] = useState('all');
   const [showMobileFilters, setShowMobileFilters] = useState(false);
@@ -60,6 +63,9 @@ const ReportsPage = () => {
         endDate,
         sender: senderName,
         receiver: receiverName,
+        handler: handlerName,
+        barcode: barcodeQuery,
+        expectedReturnDate,
         flow,
         scope,
       };
@@ -78,7 +84,20 @@ const ReportsPage = () => {
 
   useEffect(() => {
     fetchReports();
-  }, [currentPage, status, docType, startDate, endDate, senderName, receiverName, flow, scope]);
+  }, [
+    currentPage, 
+    status, 
+    docType, 
+    startDate, 
+    endDate, 
+    senderName, 
+    receiverName, 
+    handlerName,
+    barcodeQuery,
+    expectedReturnDate,
+    flow, 
+    scope
+  ]);
 
   const handleExportExcel = async () => {
     setExporting(true);
@@ -90,6 +109,9 @@ const ReportsPage = () => {
         endDate,
         sender: senderName,
         receiver: receiverName,
+        handler: handlerName,
+        barcode: barcodeQuery,
+        expectedReturnDate,
         flow,
         scope,
       };
@@ -130,50 +152,20 @@ const ReportsPage = () => {
       ),
     },
     {
-      header: 'Type',
-      cell: (row) => {
-        const isReceiver = row.receiver?._id === user?._id || row.receiver === user?._id;
-        const isSender = row.sender?._id === user?._id || row.sender === user?._id;
-        const docType = (row.documentType || '').toLowerCase();
-
-        // Determine if this is an external receipt (from vendor/customer)
-        if (row.isExternal || docType.includes('external')) {
-          if (docType.includes('vendor')) {
-            return <Badge variant="warning">External (Vendor)</Badge>;
-          } else if (docType.includes('customer')) {
-            return <Badge variant="info">External (Customer)</Badge>;
-          }
-          return <Badge variant="warning">External</Badge>;
-        }
-
-        // For admin view or when flow filter is 'received', check if it's a received internal transaction
-        if (isAdmin) {
-          // Admin sees type based on context - completed with receiver = internal received
-          if (row.status === 'completed' && row.receiver) {
-            return <Badge variant="success">Internal</Badge>;
-          }
-          if (!row.receiver) {
-            return <Badge variant="neutral">Sent (Other)</Badge>;
-          }
-          return <Badge variant="info">Internal</Badge>;
-        }
-
-        // For employees
-        if (isReceiver && !isSender) {
-          return <Badge variant="success">Internal (Received)</Badge>;
-        }
-        if (isSender && !isReceiver) {
-          return <Badge variant="info">Sent</Badge>;
-        }
-        // Both sender and receiver somehow
-        return <Badge variant="neutral">Internal</Badge>;
-      }
-    },
-    {
       header: 'Date',
       cell: (row) => (
-        <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+        <span className="text-xs text-slate-550 dark:text-slate-450 font-medium">
           {new Date(row.createdAt).toLocaleDateString()}
+        </span>
+      ),
+    },
+    {
+      header: 'Expected Return',
+      cell: (row) => (
+        <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+          {row.expectedReturnDate 
+            ? new Date(row.expectedReturnDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) 
+            : 'N/A'}
         </span>
       ),
     },
@@ -181,9 +173,9 @@ const ReportsPage = () => {
       header: 'Sender Details',
       cell: (row) => (
         <div className="flex flex-col">
-          <span className="font-semibold text-slate-900 dark:text-slate-100">{row.sender?.fullName}</span>
+          <span className="font-semibold text-slate-900 dark:text-slate-100">{row.sender?.fullName || row.requester?.fullName}</span>
           <span className="text-[10px] text-slate-400 font-medium">
-            {row.sender?.employeeId} ({row.sender?.department?.name || 'N/A'})
+            {row.sender?.employeeId || row.requester?.employeeId}
           </span>
         </div>
       ),
@@ -196,18 +188,50 @@ const ReportsPage = () => {
             {row.receiver?.fullName || row.otherReceiverName || 'Other'}
           </span>
           <span className="text-[10px] text-slate-400 font-medium">
-            {row.receiver ? `${row.receiver.employeeId} (${row.receiver.department?.name || 'N/A'})` : 'External'}
+            {row.receiver ? row.receiver.employeeId : 'External'}
           </span>
         </div>
       ),
     },
     {
+      header: 'Handler',
+      cell: (row) => (
+        <span className="text-xs text-slate-600 dark:text-slate-450 font-medium">
+          {row.handler?.fullName || 'N/A'}
+        </span>
+      ),
+    },
+    {
       header: 'Material Details',
       cell: (row) => (
-        <span className="text-xs text-slate-600 dark:text-slate-400 font-medium truncate max-w-[180px] block">
+        <span className="text-xs text-slate-600 dark:text-slate-400 font-medium truncate max-w-[180px] block" title={row.materials?.map(m => `${m.qty ?? m.quantity} ${m.unit} x ${m.name}`).join(', ')}>
           {row.materials?.map(m => `${m.qty ?? m.quantity} ${m.unit} x ${m.name}`).join(', ')}
         </span>
       ),
+    },
+    {
+      header: 'Barcodes',
+      cell: (row) => {
+        const barcodes = [];
+        row.materials?.forEach(m => {
+          m.barcodes?.forEach(b => {
+            if (b.barcode) barcodes.push(b.barcode);
+          });
+        });
+        if (barcodes.length === 0) return <span className="text-[10px] text-slate-400">None</span>;
+        return (
+          <div className="flex flex-wrap gap-1 max-w-[140px]">
+            {barcodes.slice(0, 2).map((bc, idx) => (
+              <span key={idx} className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1 py-0.5 rounded text-[9px] font-mono border border-slate-200 dark:border-slate-700">
+                {bc}
+              </span>
+            ))}
+            {barcodes.length > 2 && (
+              <span className="text-[9px] text-slate-400 font-bold self-center">+{barcodes.length - 2}</span>
+            )}
+          </div>
+        );
+      }
     },
     {
       header: 'Valuation',
@@ -224,7 +248,7 @@ const ReportsPage = () => {
           size="sm"
           variant="ghost"
           onClick={() => navigate(row.isExternal ? `/receiving/${row._id}` : `/transactions/${row._id}`)}
-          className="p-1.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+          className="p-1.5 text-slate-505 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800"
           title="View Details"
         >
           <Eye className="w-4 h-4" />
@@ -328,7 +352,7 @@ const ReportsPage = () => {
         }
         className="border border-slate-100 dark:border-slate-800 shadow-sm rounded-xl p-3.5 bg-white dark:bg-slate-900 animate-in fade-in duration-300"
       >
-        <div className={`${showMobileFilters ? 'grid' : 'hidden md:grid'} grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2.5 items-end`}>
+        <div className={`${showMobileFilters ? 'grid' : 'hidden md:grid'} grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 items-end`}>
           
           <div>
             <Select
@@ -337,10 +361,15 @@ const ReportsPage = () => {
               placeholder="All Statuses"
               options={[
                 { label: 'Draft', value: 'draft' },
-                { label: 'Pending Approval', value: 'pending' },
-                { label: 'Accepted', value: 'accepted' },
-                { label: 'Rejected', value: 'rejected' },
-                { label: 'Completed', value: 'completed' }
+                { label: 'Pending Approval', value: 'submitted' },
+                { label: 'TL Approved', value: 'tl_approved' },
+                { label: 'Mgt Approved', value: 'mgt_approved' },
+                { label: 'Store Accepted', value: 'store_accepted' },
+                { label: 'Handler Assigned', value: 'handler_assigned' },
+                { label: 'Dispatched', value: 'dispatched' },
+                { label: 'Received', value: 'received' },
+                { label: 'Completed', value: 'completed' },
+                { label: 'Rejected', value: 'rejected' }
               ]}
               value={status}
               onChange={(e) => { setStatus(e.target.value); setCurrentPage(1); }}
@@ -419,9 +448,48 @@ const ReportsPage = () => {
             />
           </div>
 
+          <div>
+            <Select
+              id="handler"
+              label="Logistics Handler"
+              placeholder="All Handlers"
+              options={employees}
+              value={handlerName}
+              onChange={(e) => { setHandlerName(e.target.value); setCurrentPage(1); }}
+              className="[&_select]:py-1.5 [&_select]:text-xs [&_label]:text-[10px] [&_select]:h-9"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="barcode" className="text-[10px] font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+              Barcode Search
+            </label>
+            <input
+              id="barcode"
+              type="text"
+              placeholder="Scan or Enter Barcode..."
+              value={barcodeQuery}
+              onChange={(e) => { setBarcodeQuery(e.target.value); setCurrentPage(1); }}
+              className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-350 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all h-9 font-semibold"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="expectedReturnDate" className="text-[10px] font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+              Expected Return Date
+            </label>
+            <input
+              id="expectedReturnDate"
+              type="date"
+              value={expectedReturnDate}
+              onChange={(e) => { setExpectedReturnDate(e.target.value); setCurrentPage(1); }}
+              className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all h-9 cursor-pointer"
+            />
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <label htmlFor="startDate" className="text-[10px] font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-              Start Date
+              Created From
             </label>
             <input
               id="startDate"
@@ -434,7 +502,7 @@ const ReportsPage = () => {
 
           <div className="flex flex-col gap-1.5">
             <label htmlFor="endDate" className="text-[10px] font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-              End Date
+              Created To
             </label>
             <input
               id="endDate"
@@ -447,7 +515,7 @@ const ReportsPage = () => {
 
           {/* Action Buttons */}
           <div className="col-span-full flex justify-end gap-2 border-t border-slate-100 dark:border-slate-800/80 pt-2.5 mt-1">
-            {(status || docType || senderName || receiverName || startDate || endDate || flow !== 'all' || scope !== 'all') && (
+            {(status || docType || senderName || receiverName || handlerName || barcodeQuery || expectedReturnDate || startDate || endDate || flow !== 'all' || scope !== 'all') && (
               <Button
                 variant="outline"
                 size="sm"
@@ -457,6 +525,9 @@ const ReportsPage = () => {
                   setDocType('');
                   setSenderName('');
                   setReceiverName('');
+                  setHandlerName('');
+                  setBarcodeQuery('');
+                  setExpectedReturnDate('');
                   setStartDate('');
                   setEndDate('');
                   setFlow('all');

@@ -17,7 +17,8 @@ const Badge = ({
 
   const getStatusVariant = (status) => {
     if (!status) return 'neutral';
-    const lower = status.toLowerCase();
+    const strVal = typeof status === 'string' ? status : (Array.isArray(status) ? status.join(' ') : String(status));
+    const lower = strVal.toLowerCase();
     
     if (['accepted', 'completed', 'active', 'success'].includes(lower)) return 'success';
     if (['pending', 'warning', 'resubmitted'].includes(lower)) return 'warning';
