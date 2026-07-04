@@ -104,6 +104,16 @@ const barcodeSchema = new mongoose.Schema(
 
     // Transfer count
     transferCount: { type: Number, default: 0 },
+
+    // Close / DC Conversion Request schema
+    closeRequest: {
+      documentType: { type: String, enum: ['DC Internal', 'DC FOC', 'Invoice'] },
+      documentNumber: { type: String },
+      remarks: { type: String },
+      requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+      rejectionReason: { type: String }
+    }
   },
   {
     timestamps: true,

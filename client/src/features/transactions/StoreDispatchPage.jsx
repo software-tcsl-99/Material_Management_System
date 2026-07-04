@@ -62,8 +62,8 @@ const StoreDispatchPage = () => {
         const empList = empRes.data.employees || empRes.data.data || [];
         setEmployees(empList);
 
-        // Filter handlers
-        const handlerList = empList.filter(e => e.designation?.name?.toLowerCase().includes('handler') || e.role === 'employee');
+        // Filter handlers (disabled filtering to show all users)
+        const handlerList = empList;
         setHandlers(handlerList);
 
         // Fetch transaction details
@@ -77,6 +77,12 @@ const StoreDispatchPage = () => {
 
         // Default receiver to requester
         setReceiverId(tx.requester?._id || '');
+
+        // Fetch the expected return date from request form
+        if (tx.expectedReturnDate) {
+          const formattedDate = new Date(tx.expectedReturnDate).toISOString().split('T')[0];
+          setExpectedReturnDate(formattedDate);
+        }
 
         // Map transaction materials to local form rows
         const rows = tx.materials.map(m => {
@@ -114,7 +120,9 @@ const StoreDispatchPage = () => {
 
   const handleBarcodeChange = (matIndex, bcIndex, value) => {
     const updated = [...materialRows];
-    updated[matIndex].barcodes[bcIndex] = value.toUpperCase();
+    // Restrict input to digits only (strip alphabetic and special characters)
+    const numericValue = value.replace(/[^0-9]/g, '');
+    updated[matIndex].barcodes[bcIndex] = numericValue;
     setMaterialRows(updated);
   };
 
@@ -317,6 +325,10 @@ const StoreDispatchPage = () => {
         setError(`Please enter all barcodes for material "${row.name}".`);
         return;
       }
+      if (row.barcodes.some(bc => /[^0-9]/.test(bc))) {
+        setError(`Barcodes for material "${row.name}" must contain only numbers (no alphabetic characters).`);
+        return;
+      }
       if (!row.photo) {
         setError(`Geo-tagged verification photo is required for material "${row.name}".`);
         return;
@@ -418,14 +430,14 @@ const StoreDispatchPage = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-slate-550 dark:text-slate-400 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
+              <label className="block text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
                 Receiver Employee *
               </label>
               <div className="relative receiver-dropdown-container">
                 <button
                   type="button"
                   onClick={() => setEmpDropdownOpen(!empDropdownOpen)}
-                  className="w-full flex justify-between items-center text-xs bg-slate-550 border border-slate-250 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3.5 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition text-left text-slate-800 dark:text-slate-200"
+                  className="w-full flex justify-between items-center text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3.5 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition text-left text-slate-800 dark:text-slate-200"
                 >
                   <span>
                     {receiverId 
@@ -461,7 +473,7 @@ const StoreDispatchPage = () => {
                               setEmpDropdownOpen(false);
                               setEmpSearchQuery('');
                             }}
-                            className={`w-full text-left px-3.5 py-2 text-xs font-bold hover:bg-slate-550/20 dark:hover:bg-slate-850 cursor-pointer block transition ${emp._id === receiverId ? 'bg-blue-50/50 dark:bg-blue-955/20 text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-350'}`}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer block transition ${emp._id === receiverId ? 'bg-blue-50/50 dark:bg-blue-955/20 text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-350'}`}
                           >
                             {emp.fullName} ({emp.employeeId})
                           </button>
@@ -478,7 +490,7 @@ const StoreDispatchPage = () => {
             </div>
 
             <div>
-              <label className="block text-slate-550 dark:text-slate-400 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
+              <label className="block text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
                 Document Pass Reference Number *
               </label>
               <input
@@ -487,12 +499,12 @@ const StoreDispatchPage = () => {
                 onChange={(e) => setDocumentNumber(e.target.value)}
                 required
                 placeholder="e.g. DC-10293"
-                className="w-full text-xs bg-slate-550 border border-slate-250 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3.5 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition"
+                className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3.5 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition"
               />
             </div>
 
             <div>
-              <label className="block text-slate-550 dark:text-slate-400 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
+              <label className="block text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
                 Expected Return Date *
               </label>
               <input
@@ -500,7 +512,7 @@ const StoreDispatchPage = () => {
                 value={expectedReturnDate}
                 onChange={(e) => setExpectedReturnDate(e.target.value)}
                 required
-                className="w-full text-xs bg-slate-555 border border-slate-200 dark:bg-slate-955 dark:border-slate-800 rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition"
+                className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-955 dark:border-slate-800 rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition"
               />
             </div>
           </div>
@@ -547,14 +559,14 @@ const StoreDispatchPage = () => {
 
           {dispatchMethod === 'handler' && (
             <div className="pt-2 animate-in slide-in-from-top-2 duration-200">
-              <label className="block text-slate-550 dark:text-slate-400 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
+              <label className="block text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
                 Assign Sourcing Handler *
               </label>
               <div className="relative handler-dropdown-container">
                 <button
                   type="button"
                   onClick={() => setHandlerDropdownOpen(!handlerDropdownOpen)}
-                  className="w-full flex justify-between items-center text-xs bg-slate-555 border border-slate-200 dark:bg-slate-955 dark:border-slate-800 rounded-lg px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition text-left text-slate-800 dark:text-slate-200"
+                  className="w-full flex justify-between items-center text-xs bg-slate-50 border border-slate-200 dark:bg-slate-955 dark:border-slate-800 rounded-lg px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition text-left text-slate-800 dark:text-slate-200"
                 >
                   <span>
                     {handlerId 
@@ -590,7 +602,7 @@ const StoreDispatchPage = () => {
                               setHandlerDropdownOpen(false);
                               setHandlerSearchQuery('');
                             }}
-                            className={`w-full text-left px-3.5 py-2 text-xs font-bold hover:bg-slate-550/20 dark:hover:bg-slate-850 cursor-pointer block transition ${h._id === handlerId ? 'bg-blue-50/50 dark:bg-blue-955/20 text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-350'}`}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer block transition ${h._id === handlerId ? 'bg-blue-50/50 dark:bg-blue-955/20 text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-350'}`}
                           >
                             {h.fullName} ({h.employeeId})
                           </button>
@@ -630,24 +642,26 @@ const StoreDispatchPage = () => {
 
           <div className="space-y-6">
             {materialRows.map((row, matIndex) => (
-              <div key={matIndex} className="p-4 bg-slate-550/30 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800 rounded-xl space-y-4 relative animate-in zoom-in-95 duration-200">
+              <div key={matIndex} className="p-5 bg-slate-50/50 dark:bg-slate-950/25 border border-slate-200 dark:border-slate-800/80 rounded-2xl space-y-5 relative animate-in zoom-in-95 duration-200">
 
                 {/* Remove button for custom added rows */}
                 {!row.isPreExisting && (
                   <button
                     type="button"
                     onClick={() => handleRemoveMaterialRow(matIndex)}
-                    className="absolute top-2 right-2 text-rose-500 hover:text-rose-700 cursor-pointer"
+                    className="absolute top-3 right-3 text-rose-500 hover:text-rose-700 cursor-pointer"
                     title="Remove custom material"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
                 )}
 
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <div className="flex-1 w-full space-y-2">
-                    <span className="text-[10px] bg-blue-50 dark:bg-blue-950/40 text-blue-650 dark:text-blue-400 px-2 py-0.5 rounded font-black uppercase">
-                      MATERIAL
+                {/* Header/Pricing Specifications Row */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                  {/* Material Name */}
+                  <div className="md:col-span-5 space-y-1.5">
+                    <span className="text-[9px] bg-blue-50 dark:bg-blue-950/40 text-blue-650 dark:text-blue-400 px-2 py-0.5 rounded font-black uppercase tracking-wider">
+                      Material Specification
                     </span>
                     <input
                       type="text"
@@ -655,17 +669,20 @@ const StoreDispatchPage = () => {
                       onChange={(e) => handleMaterialNameChange(matIndex, e.target.value)}
                       placeholder="Enter Material Name..."
                       required
-                      className="w-full max-w-xs text-xs bg-white border border-slate-250 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-2.5 py-1.5 font-bold focus:outline-none focus:border-blue-500 mt-1"
+                      className="w-full text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 mt-1"
                     />
+                  </div>
 
-                    <div className="flex items-center gap-3 mt-1 text-xs">
-                      <span className="text-[10px] text-slate-400 font-bold">Qty:</span>
+                  {/* Quantity & Unit */}
+                  <div className="md:col-span-3 space-y-1.5">
+                    <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider block">Quantity</span>
+                    <div className="flex gap-2">
                       <input
                         type="number"
                         min="1"
                         value={row.quantity}
                         onChange={(e) => handleQuantityChange(matIndex, e.target.value)}
-                        className="w-16 text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded px-1.5 py-0.5 font-bold focus:outline-none"
+                        className="w-20 text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-2.5 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                       <input
                         type="text"
@@ -675,60 +692,65 @@ const StoreDispatchPage = () => {
                           updated[matIndex].unit = e.target.value;
                           setMaterialRows(updated);
                         }}
-                        placeholder="Unit (e.g. Nos)"
-                        className="w-20 text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded px-1.5 py-0.5 font-bold focus:outline-none"
+                        placeholder="Unit"
+                        className="flex-1 text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-2.5 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </div>
                   </div>
 
-                  {/* Price input */}
-                  <div className="flex items-center gap-3">
-                    <div>
-                      <label className="block text-slate-400 font-bold uppercase tracking-wider text-[9px] mb-1">
-                        UNIT PRICE (₹) *
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={row.price || ''}
-                        onChange={(e) => handlePriceChange(matIndex, e.target.value)}
-                        required
-                        placeholder="0"
-                        className="w-32 text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-2.5 py-1.5 font-bold focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <span className="block text-slate-400 font-bold uppercase tracking-wider text-[9px] mb-1">
-                        ROW TOTAL
-                      </span>
-                      <span className="block text-xs font-black text-slate-700 dark:text-slate-300 py-1.5">
-                        ₹{(row.price * row.quantity).toLocaleString()}
-                      </span>
-                    </div>
+                  {/* Unit Price */}
+                  <div className="md:col-span-2 space-y-1.5">
+                    <label className="block text-slate-400 font-extrabold uppercase tracking-wider text-[9px]">
+                      Unit Price (₹) *
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={row.price || ''}
+                      onChange={(e) => handlePriceChange(matIndex, e.target.value)}
+                      required
+                      placeholder="0"
+                      className="w-full text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  {/* Row Total */}
+                  <div className="md:col-span-2 space-y-1.5 pb-2 text-right">
+                    <span className="block text-slate-400 font-extrabold uppercase tracking-wider text-[9px]">
+                      Row Total
+                    </span>
+                    <span className="block text-xs font-black text-slate-850 dark:text-slate-200 font-mono">
+                      ₹{(row.price * row.quantity).toLocaleString()}
+                    </span>
                   </div>
                 </div>
 
-                {/* Barcode inputs */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                  {row.barcodes.map((bcVal, bcIndex) => (
-                    <div key={bcIndex}>
-                      <label className="block text-slate-455 font-bold uppercase tracking-wider mb-1 text-[9px]">
-                        Barcode #{bcIndex + 1} *
-                      </label>
-                      <input
-                        type="text"
-                        value={bcVal}
-                        onChange={(e) => handleBarcodeChange(matIndex, bcIndex, e.target.value)}
-                        required
-                        placeholder={`Scan/Type Barcode #${bcIndex + 1}`}
-                        className="w-full text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-3 py-1.5 font-bold focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  ))}
+                {/* Barcodes Assignment Sub-Panel */}
+                <div className="bg-white dark:bg-slate-950 p-4 rounded-xl border border-slate-100 dark:border-slate-850 space-y-3">
+                  <span className="block text-[9px] text-slate-400 font-extrabold uppercase tracking-wider">
+                    Serial Barcode Assignment
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {row.barcodes.map((bcVal, bcIndex) => (
+                      <div key={bcIndex} className="space-y-1">
+                        <label className="block text-slate-400 font-bold uppercase tracking-wider text-[9px]">
+                          Barcode #{bcIndex + 1} *
+                        </label>
+                        <input
+                          type="text"
+                          value={bcVal}
+                          onChange={(e) => handleBarcodeChange(matIndex, bcIndex, e.target.value)}
+                          required
+                          placeholder={`Scan/Type Barcode #${bcIndex + 1}`}
+                          className="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
-                {/* Material Photo Upload / Simulation */}
-                <div className="border-t border-slate-100 dark:border-slate-850 pt-3 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                {/* Material Photo Verification Card Footer */}
+                <div className="border-t border-slate-100 dark:border-slate-850 pt-3.5 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                   <div>
                     <label className="block text-slate-500 font-bold uppercase tracking-wider text-[10px]">
                       Material Photo Verification *
@@ -742,15 +764,15 @@ const StoreDispatchPage = () => {
                       variant="outline"
                       size="sm"
                       onClick={() => handleCaptureMaterialPhoto(matIndex)}
-                      className="flex items-center gap-1.5 text-blue-650 border-blue-200 dark:text-blue-400 dark:border-blue-800"
+                      className="flex items-center gap-1.5 text-blue-650 border-blue-200 dark:text-blue-400 dark:border-blue-800 font-bold text-xs"
                     >
                       <Camera className="h-3.5 w-3.5" />
                       Capture Tagged Photo
                     </Button>
 
                     {row.photo && (
-                      <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-955 p-2 rounded-lg border border-slate-200/80 dark:border-slate-800 animate-in zoom-in-95 duration-200">
-                        <img src={row.photo.url} alt="Material Capture" className="w-10 h-10 object-cover rounded border" />
+                      <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-950 p-2 rounded-lg border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-200">
+                        <img src={row.photo.url} alt="Material Capture" className="w-10 h-10 object-cover rounded border border-slate-200 dark:border-slate-800" />
                         <div className="text-[9px] text-slate-400 leading-tight">
                           <span className="block text-slate-600 dark:text-slate-300 font-bold flex items-center gap-1">
                             <MapPin className="h-2.5 w-2.5 text-rose-500" />

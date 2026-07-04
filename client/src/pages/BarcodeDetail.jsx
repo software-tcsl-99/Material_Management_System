@@ -4,7 +4,8 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  X
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -23,6 +24,13 @@ export default function BarcodeDetail() {
   const chatEndRef = useRef(null);
   const [acceptPhoto, setAcceptPhoto] = useState('/images/mock-accept.jpg');
   const [accepting, setAccepting] = useState(false);
+
+  // Close Request modal states
+  const [barcodeCloseModal, setBarcodeCloseModal] = useState(false);
+  const [barcodeCloseDocType, setBarcodeCloseDocType] = useState('DC Internal');
+  const [barcodeCloseDocNumber, setBarcodeCloseDocNumber] = useState('');
+  const [barcodeCloseRemarks, setBarcodeCloseRemarks] = useState('');
+  const [barcodeCloseSubmitting, setBarcodeCloseSubmitting] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['barcodeDetail', barcode],
@@ -129,6 +137,30 @@ export default function BarcodeDetail() {
     }
   };
 
+  const handleBarcodeCloseSubmit = async (e) => {
+    e.preventDefault();
+    if (!barcodeCloseDocNumber.trim()) {
+      alert('Please enter a document number.');
+      return;
+    }
+    setBarcodeCloseSubmitting(true);
+    try {
+      await api.post('/barcodes/close-request', {
+        barcode,
+        documentType: barcodeCloseDocType,
+        documentNumber: barcodeCloseDocNumber,
+        remarks: barcodeCloseRemarks
+      });
+      alert('Close request submitted successfully for Team Lead approval!');
+      setBarcodeCloseModal(false);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to submit close request.');
+    } finally {
+      setBarcodeCloseSubmitting(false);
+    }
+  };
+
   const material = bc.transaction?.materials?.find(m => 
     m.barcodes?.some(b => b.barcode === bc.barcode || b === bc.barcode)
   );
@@ -171,12 +203,37 @@ export default function BarcodeDetail() {
             (userData?.role === 'super_admin' || (userData?.role === 'department_admin' && userData?.departmentAdminType === 'store')) ||
               (bc.owner?._id || bc.owner)?.toString() === userData?._id?.toString()
           ) && (
+            !bc.transaction || 
+            ['received', 'active', 'partially_returned', 'closed'].includes(bc.transaction.status)
+          ) && (
+            !returns || 
+            !returns.some(r => ['pending', 'handler_assigned', 'collected', 'store_received'].includes(r.status))
+          ) && (
+            !transfers || 
+            !transfers.some(t => ['pending', 'approved'].includes(t.status))
+          ) && (
             <>
               <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${bc.barcode}/split`)}>
                 Split Serial
               </Button>
               <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${bc.barcode}/return`)}>
                 Return Request
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => {
+                setBarcodeCloseDocType('DC Internal');
+                setBarcodeCloseDocNumber('');
+                setBarcodeCloseRemarks('');
+                setBarcodeCloseModal(true);
+              }}>
+                Convert to DC
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => {
+                setBarcodeCloseDocType('Invoice');
+                setBarcodeCloseDocNumber('');
+                setBarcodeCloseRemarks('');
+                setBarcodeCloseModal(true);
+              }}>
+                Convert to Invoice
               </Button>
               <Button size="sm" onClick={() => navigate(`/barcodes/${bc.barcode}/transfer`)}>
                 Transfer Barcode
@@ -278,200 +335,219 @@ export default function BarcodeDetail() {
               {bc.status?.toUpperCase() === 'ACTIVE' ? 'Active (Transferred)' : bc.status?.toUpperCase()}
             </Badge>
           </div>
+      </div>
+    </div>
+
+    {/* Main Details Panel Content */}
+      <div className="w-full">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+          {/* Left Column: Photos, Remarks, Attachments (2 Columns) */}
+          <div className="lg:col-span-2 flex flex-col gap-6">
+            {/* Photos Panel with individual GPS Locations */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-3">
+              <div className="flex justify-between items-center pb-2 border-b border-slate-50 dark:border-slate-800/60">
+                <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider">Photos</h4>
+                <span className="text-[10px] text-blue-650 hover:underline font-bold cursor-pointer">View All</span>
+              </div>
+              <div className="flex flex-col gap-4">
+                {!bc.photos || bc.photos.length === 0 ? (
+                  <p className="text-xs text-slate-405 italic mt-1">No photos uploaded</p>
+                ) : (
+                  bc.photos.map((p, i) => (
+                    <div key={i} className="flex items-center gap-4 bg-slate-50 dark:bg-slate-950/20 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                      <div className="w-24 h-24 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
+                        <img src={p.url} alt={`Scan ${i + 1}`} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex flex-col gap-1 text-xs">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Photo #{i + 1} Location (GPS)</span>
+                        {p.lat && p.lng ? (
+                          <>
+                            <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                              {p.lat.toFixed(4)}° N, {p.lng.toFixed(4)}° E
+                            </p>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
+                              {p.address}
+                            </p>
+                          </>
+                        ) : bc.gps ? (
+                          <>
+                            <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                              {bc.gps.lat.toFixed(4)}° N, {bc.gps.lng.toFixed(4)}° E
+                            </p>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
+                              {bc.gps.address}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Remarks Panel */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-2">
+              <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-50 dark:border-slate-800/60">Remarks</h4>
+              <p className="text-xs text-slate-600 dark:text-slate-350 font-semibold leading-relaxed mt-1">
+                {bc.history?.[bc.history.length - 1]?.remarks || 'No remarks recorded for this status lot.'}
+              </p>
+            </div>
+
+            {/* Attachments Panel */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-2">
+              <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-50 dark:border-slate-800/60">Attachments</h4>
+              {bc.documents?.length === 0 ? (
+                <p className="text-xs text-slate-400 italic mt-1">No documents</p>
+              ) : (
+                <div className="flex flex-col gap-2.5 mt-1">
+                  {bc.documents.map((doc, idx) => (
+                    <a key={idx} href={doc.url} className="text-xs text-blue-650 hover:underline font-bold" target="_blank" rel="noreferrer">
+                      {doc.name}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: Left-Dated Stepper timeline (3 Columns) */}
+          <div className="lg:col-span-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
+            <div className="relative pl-[110px] py-4">
+              {/* Vertical green timeline line running in center of dates and texts */}
+              <div className="absolute left-[92px] top-4 bottom-4 w-0.5 bg-emerald-600" />
+
+              <div className="flex flex-col gap-8">
+                {filteredHistory.map((log, idx) => {
+                  const logDate = new Date(log.timestamp);
+                  const isTransfer = log.action.toLowerCase().includes('transfer');
+
+                  return (
+                    <div key={idx} className="relative flex items-start">
+                      {/* Date and Time on the left of the line */}
+                      <div className="absolute -left-[110px] w-[85px] text-right pr-3.5 flex flex-col gap-0.5 select-none">
+                        <span className="text-[10px] text-slate-800 dark:text-slate-200 font-extrabold uppercase tracking-wide">
+                          {logDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                        <span className="text-[9px] text-slate-405 block font-bold">
+                          {logDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                        </span>
+                      </div>
+
+                      {/* Middle: Stepper circle node exactly centered on the line */}
+                      <span className={`absolute left-[-22px] top-[4px] w-3 h-3 rounded-full ${isTransfer ? 'bg-orange-500' : 'bg-emerald-600'} border-2 border-white dark:border-slate-900 z-10`} />
+
+                      {/* Right side: Action details */}
+                      <div className="pl-4">
+                        <h5 className="text-xs font-black text-slate-800 dark:text-slate-100 font-sans leading-snug">
+                          {log.action}
+                        </h5>
+                        <p className="text-[10px] text-slate-500 font-medium italic mt-0.5">
+                          By: {log.user?.fullName || 'System'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
 
-      {/* Tabs Navigation Bar */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6 overflow-x-auto select-none no-scrollbar">
-        {[
-          { id: 'overview', label: 'Overview' },
-          { id: 'timeline', label: 'Timeline' },
-          { id: 'details', label: 'Details' }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`pb-2.5 text-[10px] font-extrabold uppercase tracking-widest border-b-2 transition-all cursor-pointer whitespace-nowrap
-              ${activeTab === tab.id
-                ? 'border-blue-650 text-blue-650 font-black'
-                : 'border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
-              }
-            `}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab Panel Content Body */}
-      <div className="w-full">
-        {/* TAB 1: Overview (Split Column: left is info panels, right is center timeline) */}
-        {activeTab === 'overview' && (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-
-            {/* Left Column: Photos, GPS, Remarks, Attachments (2 Columns) */}
-            <div className="lg:col-span-2 flex flex-col gap-6">
-              {/* Photos Panel */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-3">
-                <div className="flex justify-between items-center pb-2 border-b border-slate-50 dark:border-slate-800/60">
-                  <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider">Photos</h4>
-                  <span className="text-[10px] text-blue-650 hover:underline font-bold cursor-pointer">View All</span>
+      {/* Barcode Close / DC Conversion Modal */}
+      {barcodeCloseModal && (() => {
+        const materialName = material?.name || bc.materialName || 'Unknown Material';
+        const isInvoice = barcodeCloseDocType === 'Invoice';
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
+              <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                    {isInvoice ? 'Convert Barcode to Invoice' : 'Convert DC Type'}
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                    {isInvoice ? 'Invoice Conversion Request (Accounts Approval)' : 'Challan type migration event'}
+                  </p>
                 </div>
-                <div className="flex gap-3">
-                  {!bc.photos || bc.photos.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic mt-1">No photos uploaded</p>
-                  ) : (
-                    bc.photos.map((p, i) => (
-                      <div key={i} className="w-28 h-28 bg-slate-50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800 rounded-2xl overflow-hidden flex items-center justify-center shadow-xs">
-                        <img src={p.url} alt={`Scan ${i + 1}`} className="w-full h-full object-cover" />
-                      </div>
-                    ))
-                  )}
-                </div>
+                <button onClick={() => setBarcodeCloseModal(false)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-650">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              {/* Location (GPS) Panel */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-2">
-                <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-50 dark:border-slate-800/60">Location (GPS)</h4>
-                {bc.gps ? (
-                  <>
-                    <p className="font-mono text-xs text-slate-800 dark:text-slate-200 font-bold mt-1">
-                      {bc.gps.lat.toFixed(4)}° N, {bc.gps.lng.toFixed(4)}° E
-                    </p>
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
-                      {bc.gps.address}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-xs text-slate-400 italic mt-1">No location data</p>
-                )}
-              </div>
-
-              {/* Remarks Panel */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-2">
-                <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-50 dark:border-slate-800/60">Remarks</h4>
-                <p className="text-xs text-slate-600 dark:text-slate-350 font-semibold leading-relaxed mt-1">
-                  {bc.history?.[bc.history.length - 1]?.remarks || 'No remarks recorded for this status lot.'}
-                </p>
-              </div>
-
-              {/* Attachments Panel */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-2">
-                <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-50 dark:border-slate-800/60">Attachments</h4>
-                {bc.documents?.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic mt-1">No documents</p>
-                ) : (
-                  <div className="flex flex-col gap-2.5 mt-1">
-                    {bc.documents.map((doc, idx) => (
-                      <a key={idx} href={doc.url} className="text-xs text-blue-650 hover:underline font-bold" target="_blank" rel="noreferrer">
-                        {doc.name}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Right Column: Left-Dated Stepper timeline (3 Columns) */}
-            <div className="lg:col-span-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
-              <div className="relative pl-[110px] py-4">
-                {/* Vertical green timeline line running in center of dates and texts */}
-                <div className="absolute left-[92px] top-4 bottom-4 w-0.5 bg-emerald-600" />
-
-                <div className="flex flex-col gap-8">
-                  {filteredHistory.map((log, idx) => {
-                    const logDate = new Date(log.timestamp);
-                    const isTransfer = log.action.toLowerCase().includes('transfer');
-
-                    return (
-                      <div key={idx} className="relative flex items-start">
-                        {/* Date and Time on the left of the line */}
-                        <div className="absolute -left-[110px] w-[85px] text-right pr-3.5 flex flex-col gap-0.5 select-none">
-                          <span className="text-[10px] text-slate-800 dark:text-slate-200 font-extrabold uppercase tracking-wide">
-                            {logDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                          </span>
-                          <span className="text-[9px] text-slate-405 block font-bold">
-                            {logDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
-                          </span>
-                        </div>
-
-                        {/* Middle: Stepper circle node exactly centered on the line */}
-                        <span className={`absolute left-[-22px] top-[4px] w-3 h-3 rounded-full ${isTransfer ? 'bg-orange-500' : 'bg-emerald-600'} border-2 border-white dark:border-slate-900 z-10`} />
-
-                        {/* Right side: Action details */}
-                        <div className="pl-4">
-                          <h5 className="text-xs font-black text-slate-800 dark:text-slate-100 font-sans leading-snug">
-                            {log.action}
-                          </h5>
-                          <p className="text-[10px] text-slate-500 font-medium italic mt-0.5">
-                            By: {log.user?.fullName || 'System'}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-          </div>
-        )}
-
-        {/* TAB 2: Timeline Logs */}
-        {activeTab === 'timeline' && (
-          <Card title="Activity Timeline Logs">
-            <div className="flex flex-col gap-4">
-              {filteredHistory.map((hist, idx) => (
-                <div key={idx} className="p-3.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl flex items-start gap-3">
-                  <div className="p-2 bg-blue-50 dark:bg-blue-950/40 text-blue-650 rounded-lg shrink-0">
-                    <Check className="w-4 h-4" />
+              <form onSubmit={handleBarcodeCloseSubmit} className="mt-4 flex flex-col gap-4 text-xs">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="block text-slate-500 font-bold uppercase tracking-wider mb-1">Target Barcode</span>
+                    <span className="block font-mono font-black text-blue-650 dark:text-blue-450 text-xs mt-0.5">{barcode}</span>
                   </div>
                   <div>
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      {hist.action.toUpperCase()}
-                    </h4>
-                    {hist.remarks && <p className="text-[10px] text-slate-500 mt-0.5">{hist.remarks}</p>}
-                    <span className="text-[9px] text-slate-400 mt-1 block font-semibold">
-                      by {hist.user?.fullName || 'System'} on {new Date(hist.timestamp).toLocaleString()}
-                    </span>
+                    <span className="block text-slate-500 font-bold uppercase tracking-wider mb-1">Material</span>
+                    <span className="block font-sans font-extrabold text-slate-850 dark:text-slate-205 text-xs mt-0.5 truncate">{materialName}</span>
                   </div>
                 </div>
-              ))}
+
+                <div>
+                  <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Target Document Type *</label>
+                  {isInvoice ? (
+                    <input
+                      type="text"
+                      value="Invoice"
+                      disabled
+                      className="w-full text-xs bg-slate-100 dark:bg-slate-800 border border-slate-250 dark:border-slate-800 rounded-lg px-3 py-2.5 font-bold focus:outline-none cursor-not-allowed text-slate-500"
+                    />
+                  ) : (
+                    <select
+                      value={barcodeCloseDocType}
+                      onChange={(e) => setBarcodeCloseDocType(e.target.value)}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
+                    >
+                      <option value="DC Internal">DC Internal</option>
+                      <option value="DC FOC">DC FOC</option>
+                    </select>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">New Document Number *</label>
+                  <input
+                    type="text"
+                    value={barcodeCloseDocNumber}
+                    onChange={(e) => setBarcodeCloseDocNumber(e.target.value)}
+                    required
+                    placeholder={isInvoice ? "e.g. INV-20260012" : "e.g. DC-10092"}
+                    className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Remarks / Reason *</label>
+                  <textarea
+                    value={barcodeCloseRemarks}
+                    onChange={(e) => setBarcodeCloseRemarks(e.target.value)}
+                    required
+                    placeholder={isInvoice ? "Invoice conversion reason for Accounts Admin approval..." : "Conversion reason for TL approval..."}
+                    rows="2.5"
+                    className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex gap-2 justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
+                  <Button variant="ghost" type="button" onClick={() => setBarcodeCloseModal(false)}>Cancel</Button>
+                  <Button variant="primary" type="submit" disabled={barcodeCloseSubmitting}>
+                    {barcodeCloseSubmitting ? 'Requesting...' : 'Request Conversion'}
+                  </Button>
+                </div>
+              </form>
             </div>
-          </Card>
-        )}
-
-        {/* TAB 3: Details (Current Ownership Details) */}
-        {activeTab === 'details' && (
-          <Card title="Ownership Node Specifications">
-            <div className="space-y-3.5 text-xs font-semibold text-slate-650">
-              <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800/60">
-                <span className="text-slate-400">Current Owner:</span>
-                <span className="font-extrabold text-slate-800 dark:text-slate-200">{bc.owner?.fullName || 'N/A'}</span>
-              </div>
-              <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800/60">
-                <span className="text-slate-400">Owner Designation:</span>
-                <span className="font-extrabold text-slate-800 dark:text-slate-200">{bc.owner?.designation || '-'}</span>
-              </div>
-              <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800/60">
-                <span className="text-slate-400">Owner Dept:</span>
-                <span className="font-extrabold text-slate-800 dark:text-slate-200">{bc.ownerDepartment?.name || 'Stores'}</span>
-              </div>
-              <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800/60">
-                <span className="text-slate-400">Employee ID:</span>
-                <span className="font-extrabold text-slate-800 dark:text-slate-200">{bc.owner?.employeeId || '-'}</span>
-              </div>
-              <div className="flex justify-between py-2">
-                <span className="text-slate-400">Accumulated Transfers:</span>
-                <span className="font-extrabold text-slate-800 dark:text-slate-200">{bc.transferCount || 0} times</span>
-              </div>
-            </div>
-          </Card>
-        )}
-
-
-      </div>
-
+          </div>
+        );
+      })()}
     </div>
   );
 }

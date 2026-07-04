@@ -96,12 +96,17 @@ const buildReportFilter = async (req) => {
     const userBarcodes = await Barcode.find({ owner: req.user._id });
     const txnIds = userBarcodes.map(b => b.transactionId);
 
+    // Find all return requests (even completed/delivered ones) where the user was the return handler
+    const ReturnModel = require('../models/Return');
+    const returnDocs = await ReturnModel.find({ returnHandler: req.user._id });
+    const returnTxnIds = returnDocs.map(r => r.transactionId);
+
     // Employees can only see transactions they are part of (requester, receiver, handler) or own barcodes for
     const userConditions = [
       { requester: req.user._id },
       { receiver: req.user._id },
       { handler: req.user._id },
-      { transactionId: { $in: txnIds } }
+      { transactionId: { $in: [...txnIds, ...returnTxnIds] } }
     ];
 
     if (filter.$or) {
@@ -130,8 +135,83 @@ const buildReportFilter = async (req) => {
 
 exports.getTransactionReport = async (req, res) => {
   try {
-    const filter = await buildReportFilter(req);
+    const { reportType = 'transaction' } = req.query;
 
+    if (reportType === 'returns') {
+      const Return = require('../models/Return');
+      const { status, barcode, startDate, endDate, handler } = req.query;
+      const returnFilter = {};
+
+      if (req.user.role === 'employee') {
+        returnFilter.returnHandler = req.user._id;
+      }
+
+      if (status && status !== 'all' && status !== '') {
+        returnFilter.status = status;
+      }
+      if (barcode && barcode.trim()) {
+        returnFilter.barcode = { $regex: barcode.trim().toUpperCase(), $options: 'i' };
+      }
+      if (handler) {
+        returnFilter.returnHandler = handler;
+      }
+      if (startDate && endDate) {
+        returnFilter.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+      }
+
+      const returns = await Return.find(returnFilter)
+        .populate('fromUser', 'fullName employeeId')
+        .populate('returnHandler', 'fullName employeeId')
+        .sort({ createdAt: -1 });
+
+      return res.json({
+        data: returns,
+        report: returns,
+        summary: {
+          totalTransactions: returns.length,
+          totalValue: returns.filter(r => r.condition === 'good').length,
+          avgValue: returns.filter(r => r.condition !== 'good').length
+        },
+        total: returns.length
+      });
+    }
+
+    if (reportType === 'handler') {
+      const { handler } = req.query;
+      const filter = await buildReportFilter(req);
+
+      delete filter.$or;
+      delete filter.$and;
+
+      if (req.user.role === 'employee') {
+        filter.handler = req.user._id;
+      } else if (handler) {
+        filter.handler = handler;
+      } else {
+        filter.handler = { $ne: null };
+      }
+
+      const transactions = await Transaction.find(filter)
+        .populate('requester', 'fullName employeeId')
+        .populate('receiver', 'fullName employeeId department')
+        .populate('handler', 'fullName employeeId')
+        .populate('department', 'name')
+        .sort({ createdAt: -1 });
+
+      return res.json({
+        data: transactions,
+        report: transactions,
+        summary: {
+          totalTransactions: transactions.length,
+          totalValue: transactions.filter(t => ['received', 'completed', 'closed'].includes(t.status)).length,
+          avgValue: transactions.filter(t => !['received', 'completed', 'closed', 'rejected'].includes(t.status)).length
+        },
+        total: transactions.length
+      });
+    }
+
+    // Default: Transaction Report
+    const filter = await buildReportFilter(req);
     const transactions = await Transaction.find(filter)
       .populate('requester', 'fullName employeeId')
       .populate('receiver', 'fullName employeeId department')
@@ -139,7 +219,6 @@ exports.getTransactionReport = async (req, res) => {
       .populate('department', 'name')
       .sort({ createdAt: -1 });
 
-    // Calculate report dynamic summary stats
     const totalTransactions = transactions.length;
     const totalValue = transactions.reduce((sum, t) => sum + (t.grandTotal || 0), 0);
     const avgValue = totalTransactions > 0 ? totalValue / totalTransactions : 0;
@@ -162,55 +241,144 @@ exports.getTransactionReport = async (req, res) => {
 
 exports.exportTransactionReport = async (req, res) => {
   try {
-    const filter = await buildReportFilter(req);
-
-    const transactions = await Transaction.find(filter)
-      .populate('requester', 'fullName employeeId')
-      .populate('receiver', 'fullName employeeId department')
-      .populate('handler', 'fullName employeeId')
-      .populate('department', 'name');
-
+    const { reportType = 'transaction' } = req.query;
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Transactions');
 
-    sheet.columns = [
-      { header: 'Transaction ID', key: 'transactionId', width: 20 },
-      { header: 'Requester', key: 'requester', width: 25 },
-      { header: 'Receiver', key: 'receiver', width: 25 },
-      { header: 'Handler', key: 'handler', width: 25 },
-      { header: 'Department', key: 'department', width: 20 },
-      { header: 'Doc Type', key: 'documentType', width: 15 },
-      { header: 'Doc Number', key: 'documentNumber', width: 15 },
-      { header: 'Expected Return Date', key: 'expectedReturnDate', width: 20 },
-      { header: 'Grand Total (₹)', key: 'grandTotal', width: 15 },
-      { header: 'Status', key: 'status', width: 15 },
-      { header: 'Total Items', key: 'totalItems', width: 12 },
-      { header: 'Created At', key: 'createdAt', width: 20 },
-    ];
+    if (reportType === 'returns') {
+      const Return = require('../models/Return');
+      const { status, barcode, startDate, endDate, handler } = req.query;
+      const returnFilter = {};
 
-    for (const txn of transactions) {
-      sheet.addRow({
-        transactionId: txn.transactionId,
-        requester: txn.requester?.fullName || 'N/A',
-        receiver: txn.receiver?.fullName || txn.otherReceiverName || 'External',
-        handler: txn.handler?.fullName || 'N/A',
-        department: txn.department?.name || 'N/A',
-        documentType: txn.documentType || 'RDC',
-        documentNumber: txn.documentNumber || 'N/A',
-        expectedReturnDate: txn.expectedReturnDate ? txn.expectedReturnDate.toLocaleDateString() : 'N/A',
-        grandTotal: txn.grandTotal || 0,
-        status: txn.status,
-        totalItems: txn.totalItems,
-        createdAt: txn.createdAt?.toISOString(),
+      if (req.user.role === 'employee') {
+        returnFilter.returnHandler = req.user._id;
+      }
+
+      if (status && status !== 'all' && status !== '') {
+        returnFilter.status = status;
+      }
+      if (barcode && barcode.trim()) {
+        returnFilter.barcode = { $regex: barcode.trim().toUpperCase(), $options: 'i' };
+      }
+      if (handler) {
+        returnFilter.returnHandler = handler;
+      }
+      if (startDate && endDate) {
+        returnFilter.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+      }
+
+      const returns = await Return.find(returnFilter)
+        .populate('fromUser', 'fullName employeeId')
+        .populate('returnHandler', 'fullName employeeId')
+        .sort({ createdAt: -1 });
+
+      const sheet = workbook.addWorksheet('Returns');
+      sheet.columns = [
+        { header: 'Transaction ID', key: 'transactionId', width: 20 },
+        { header: 'Barcode', key: 'barcode', width: 15 },
+        { header: 'Returned By', key: 'fromUser', width: 25 },
+        { header: 'Return Handler', key: 'returnHandler', width: 25 },
+        { header: 'Condition', key: 'condition', width: 15 },
+        { header: 'Status', key: 'status', width: 15 },
+        { header: 'Reason', key: 'reason', width: 30 },
+        { header: 'Remarks', key: 'remarks', width: 30 },
+        { header: 'Created Date', key: 'createdAt', width: 20 }
+      ];
+
+      returns.forEach(r => {
+        sheet.addRow({
+          transactionId: r.transactionId,
+          barcode: r.barcode,
+          fromUser: r.fromUser?.fullName || 'N/A',
+          returnHandler: r.returnHandler?.fullName || 'N/A',
+          condition: r.condition,
+          status: r.status,
+          reason: r.reason,
+          remarks: r.remarks,
+          createdAt: r.createdAt.toLocaleDateString()
+        });
       });
+      sheet.getRow(1).font = { bold: true };
+    } else if (reportType === 'handler') {
+      const { handler } = req.query;
+      const filter = await buildReportFilter(req);
+
+      delete filter.$or;
+      delete filter.$and;
+
+      if (req.user.role === 'employee') {
+        filter.handler = req.user._id;
+      } else if (handler) {
+        filter.handler = handler;
+      } else {
+        filter.handler = { $ne: null };
+      }
+
+      const transactions = await Transaction.find(filter)
+        .populate('requester', 'fullName employeeId')
+        .populate('receiver', 'fullName employeeId department')
+        .populate('handler', 'fullName employeeId')
+        .populate('department', 'name')
+        .sort({ createdAt: -1 });
+
+      const sheet = workbook.addWorksheet('Handler Sourcing');
+      sheet.columns = [
+        { header: 'Transaction ID', key: 'transactionId', width: 20 },
+        { header: 'Handler Name', key: 'handler', width: 25 },
+        { header: 'Requester', key: 'requester', width: 25 },
+        { header: 'Receiver', key: 'receiver', width: 25 },
+        { header: 'Status', key: 'status', width: 15 },
+        { header: 'Grand Total', key: 'grandTotal', width: 15 },
+        { header: 'Created Date', key: 'createdAt', width: 20 }
+      ];
+
+      transactions.forEach(t => {
+        sheet.addRow({
+          transactionId: t.transactionId,
+          handler: t.handler?.fullName || 'N/A',
+          requester: t.requester?.fullName || 'N/A',
+          receiver: t.receiver?.fullName || t.otherReceiverName || 'N/A',
+          status: t.status,
+          grandTotal: t.grandTotal || 0,
+          createdAt: t.createdAt.toLocaleDateString()
+        });
+      });
+      sheet.getRow(1).font = { bold: true };
+    } else {
+      // Default: Transaction Report
+      const filter = await buildReportFilter(req);
+      const transactions = await Transaction.find(filter)
+        .populate('requester', 'fullName employeeId')
+        .populate('receiver', 'fullName employeeId department')
+        .populate('handler', 'fullName employeeId')
+        .populate('department', 'name');
+
+      const sheet = workbook.addWorksheet('Transactions');
+      sheet.columns = [
+        { header: 'Transaction ID', key: 'transactionId', width: 20 },
+        { header: 'Requester', key: 'requester', width: 25 },
+        { header: 'Receiver', key: 'receiver', width: 25 },
+        { header: 'Handler', key: 'handler', width: 25 },
+        { header: 'Status', key: 'status', width: 15 },
+        { header: 'Grand Total', key: 'grandTotal', width: 15 },
+        { header: 'Created Date', key: 'createdAt', width: 20 }
+      ];
+
+      transactions.forEach(t => {
+        sheet.addRow({
+          transactionId: t.transactionId,
+          requester: t.requester?.fullName || 'N/A',
+          receiver: t.receiver?.fullName || t.otherReceiverName || 'N/A',
+          handler: t.handler?.fullName || 'N/A',
+          status: t.status,
+          grandTotal: t.grandTotal || 0,
+          createdAt: t.createdAt.toLocaleDateString()
+        });
+      });
+      sheet.getRow(1).font = { bold: true };
     }
 
-    // Style header
-    sheet.getRow(1).font = { bold: true };
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=transactions_report.xlsx');
-
+    res.setHeader('Content-Disposition', `attachment; filename=MMS_Report_${reportType}.xlsx`);
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {

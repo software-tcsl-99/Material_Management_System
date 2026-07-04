@@ -218,7 +218,7 @@ export default function ReturnMaterial() {
                       value={handlerSearchQuery}
                       onChange={(e) => setHandlerSearchQuery(e.target.value)}
                       placeholder="Search handler..."
-                      className="w-full text-xs bg-slate-550 border border-slate-200 rounded px-2.5 py-1.5 font-semibold focus:outline-none focus:border-primary"
+                      className="w-full text-xs bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 font-semibold focus:outline-none focus:border-primary"
                       onClick={(e) => e.stopPropagation()}
                     />
                   </div>

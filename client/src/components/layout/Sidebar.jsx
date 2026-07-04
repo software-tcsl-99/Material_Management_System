@@ -38,14 +38,14 @@ export default function Sidebar() {
           api.get('/transactions'),
           api.get('/barcodes/pending/transfers'),
           isStore ? api.get('/barcodes/split-requests/pending') : Promise.resolve({ data: { data: [] } }),
-          isStore ? api.get('/barcodes/returns/pending') : Promise.resolve({ data: { data: [] } }),
+          api.get('/barcodes/returns/pending'),
           api.get('/notifications?unreadOnly=true')
         ]);
         
         const txns = txnRes.data.data || [];
         const transfers = transferRes.data.transfers || [];
         const splits = splitRes.data.data || [];
-        const returns = returnRes.data.data || [];
+        const returns = returnRes.data.returns || returnRes.data.data || [];
         const unreadCount = notifRes.data.notifications?.length || 0;
 
         setUnreadNotifCount(unreadCount);
@@ -54,14 +54,17 @@ export default function Sidebar() {
         
         if (user.role === 'employee') {
           filteredTxnsCount = txns.filter(t => 
-            ((t.handler?._id === user._id || t.handler === user._id) && t.status === 'store_accepted') ||
+            ((t.handler?._id === user._id || t.handler === user._id) && ['store_accepted', 'handler_assigned'].includes(t.status)) ||
             ((t.requester?._id === user._id || t.requester === user._id) && t.status === 'dispatched')
           ).length;
         } else if (user.role === 'team_lead') {
           filteredTxnsCount = txns.filter(t => t.status === 'submitted').length;
         } else if (user.role === 'department_admin') {
           if (user.departmentAdminType === 'management') {
-            filteredTxnsCount = txns.filter(t => t.status === 'tl_approved').length;
+            filteredTxnsCount = txns.filter(t => 
+              t.status === 'tl_approved' && 
+              (t.managementApprover?._id || t.managementApprover)?.toString() === user._id.toString()
+            ).length;
           } else if (user.departmentAdminType === 'store') {
             filteredTxnsCount = txns.filter(t => ['mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status)).length;
           }
@@ -69,7 +72,14 @@ export default function Sidebar() {
           filteredTxnsCount = txns.filter(t => ['submitted', 'tl_approved', 'mgt_approved'].includes(t.status)).length;
         }
 
-        const total = filteredTxnsCount + transfers.length + splits.length + returns.length;
+        const activeReturnsCount = isStore 
+          ? returns.length 
+          : returns.filter(r => 
+              (r.returnHandler?._id === user._id || r.returnHandler === user._id) &&
+              ['handler_assigned', 'collected'].includes(r.status)
+            ).length;
+
+        const total = filteredTxnsCount + transfers.length + splits.length + activeReturnsCount;
         setPendingCount(total);
       } catch (err) {
         console.error('Error fetching sidebar count data:', err);

@@ -30,17 +30,17 @@ const addTimeline = (transaction, action, description, userId, metadata = {}) =>
  */
 exports.createTransaction = async (req, res) => {
   try {
-    const { 
-      materials, 
-      description, 
-      priority, 
-      dueDate, 
-      documentType, 
-      remarks, 
+    const {
+      materials,
+      description,
+      priority,
+      dueDate,
+      documentType,
+      remarks,
       teamLeadId,
       managementApproverId,
       storeId,
-      isSimplified 
+      isSimplified
     } = req.body;
 
     if (!materials || materials.length === 0) {
@@ -96,10 +96,10 @@ exports.createTransaction = async (req, res) => {
     let finalTLId = teamLeadId || null;
     if (!finalTLId) {
       const User = require('../models/User');
-      const deptTL = await User.findOne({ 
-        department: req.user.department._id || req.user.department, 
-        role: 'team_lead', 
-        status: 'active' 
+      const deptTL = await User.findOne({
+        department: req.user.department._id || req.user.department,
+        role: 'team_lead',
+        status: 'active'
       });
       if (deptTL) {
         finalTLId = deptTL._id;
@@ -132,7 +132,7 @@ exports.createTransaction = async (req, res) => {
       totalItems,
       activeItems: isSimplified ? 0 : totalItems,
       chatMembers: [
-        req.user._id, 
+        req.user._id,
         ...(teamLeadId ? [teamLeadId] : []),
         ...(managementApproverId ? [managementApproverId] : []),
         ...(storeId ? [storeId] : [])
@@ -234,10 +234,19 @@ exports.getTransactions = async (req, res) => {
       const userBarcodes = await Barcode.find({ owner: req.user._id });
       const txnIds = userBarcodes.map(b => b.transactionId);
 
+      // Find active return requests where the user is the return handler
+      const ReturnModel = require('../models/Return');
+      const activeReturns = await ReturnModel.find({
+        returnHandler: req.user._id,
+        status: { $in: ['handler_assigned', 'collected'] }
+      });
+      const activeReturnTxnIds = activeReturns.map(r => r.transactionId);
+
       filter.$or = [
         { requester: req.user._id },
-        { handler: req.user._id },
-        { transactionId: { $in: txnIds } }
+        // For dispatch handler, only show if delivery is still active/in-progress
+        { handler: req.user._id, status: { $nin: ['received', 'closed', 'completed'] } },
+        { transactionId: { $in: [...txnIds, ...activeReturnTxnIds] } }
       ];
     } else if (req.user.role === 'team_lead') {
       filter.$or = [
@@ -252,6 +261,7 @@ exports.getTransactions = async (req, res) => {
       } else if (req.user.departmentAdminType === 'management') {
         // Management only sees requests after TL approved (exclude submitted)
         filter.status = { $ne: 'submitted' };
+        filter.managementApprover = req.user._id;
       } else if (req.user.departmentAdminType === 'accounts') {
         // Accounts see all
         // No filter - sees all
@@ -339,10 +349,17 @@ exports.getTransaction = async (req, res) => {
       .populate('owner', 'fullName employeeId department')
       .populate('ownerDepartment', 'name');
 
+    // Get return requests for this transaction
+    const ReturnModel = require('../models/Return');
+    const returns = await ReturnModel.find({ transactionId: transaction.transactionId })
+      .populate('fromUser', 'fullName employeeId')
+      .populate('returnHandler', 'fullName employeeId');
+
     res.json({
       data: transaction, // Added for frontend compatibility
       transaction,
-      barcodes
+      barcodes,
+      returns
     });
   } catch (error) {
     console.error('Get transaction error:', error);
@@ -642,6 +659,7 @@ exports.getPendingApprovals = async (req, res) => {
       filter.department = req.user.department._id || req.user.department;
     } else if (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management') {
       filter.status = 'tl_approved';
+      filter.managementApprover = req.user._id;
     } else if (req.user.role === 'super_admin') {
       filter.status = { $in: ['submitted', 'tl_approved', 'mgt_approved'] };
     } else {
@@ -700,7 +718,7 @@ exports.storeAction = async (req, res) => {
         transaction.chatMembers.push(handlerId);
       }
       addTimeline(transaction, 'Handler Assigned', `Handler assigned: ${remarks || ''}`, req.user._id, { handlerId });
-      
+
       await createNotification(
         handlerId,
         'handler_assigned',
@@ -805,7 +823,7 @@ exports.receiveTransaction = async (req, res) => {
     // Distribute barcodes: Update their owner to the transaction requester, update status to Active, add history
     await Barcode.updateMany(
       { transactionId: transaction.transactionId },
-      { 
+      {
         owner: transaction.requester,
         ownerDepartment: transaction.department,
         status: 'Active'
@@ -924,7 +942,7 @@ exports.rejectReceipt = async (req, res) => {
     // Set transaction status to 'rejected'
     transaction.status = 'rejected';
     transaction.rejectionReason = reason;
-    
+
     addTimeline(transaction, 'Receipt Rejected', `Material receipt rejected by requester. Reason: ${reason}`, req.user._id);
     await transaction.save();
 
@@ -957,14 +975,14 @@ exports.rejectReceipt = async (req, res) => {
 exports.storeDispatchTransaction = async (req, res) => {
   try {
     const { transactionId } = req.params;
-    const { 
-      receiver, 
-      otherReceiverName, 
-      documentType, 
-      documentNumber, 
-      expectedReturnDate, 
-      priority, 
-      costCenter, 
+    const {
+      receiver,
+      otherReceiverName,
+      documentType,
+      documentNumber,
+      expectedReturnDate,
+      priority,
+      costCenter,
       dcType,
       materials,
       dispatchMethod,
@@ -1060,7 +1078,7 @@ exports.storeDispatchTransaction = async (req, res) => {
       transaction.handler = null;
       addTimeline(transaction, 'Dispatched', 'Materials dispatched direct to requester', req.user._id);
     } else {
-      transaction.status = 'store_accepted';
+      transaction.status = 'handler_assigned';
       transaction.handler = handlerId;
       addTimeline(transaction, 'Handler Assigned', `Assigned handler for delivery`, req.user._id);
     }
@@ -1080,7 +1098,7 @@ exports.storeDispatchTransaction = async (req, res) => {
       await createNotification(
         handlerId,
         'handler_assigned',
-        'Delivery Job Assigned',
+        'Handler Job Assigned',
         `You have been assigned to deliver request ${transaction.transactionId}`,
         transaction.transactionId
       );
@@ -1129,7 +1147,7 @@ exports.updateTransaction = async (req, res) => {
     if (updates.costCenter !== undefined) transaction.costCenter = updates.costCenter;
     if (updates.dcType !== undefined) transaction.dcType = updates.dcType;
     if (updates.description !== undefined) transaction.description = updates.description;
-    
+
     if (updates.materials !== undefined) {
       transaction.materials = updates.materials.map(m => ({
         name: m.name,

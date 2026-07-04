@@ -17,6 +17,7 @@ const ReportsPage = () => {
   const [summary, setSummary] = useState({ totalTransactions: 0, totalValue: 0, avgValue: 0 });
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [reportType, setReportType] = useState('transaction'); // 'transaction' | 'handler' | 'returns'
 
   // Filters State
   const [status, setStatus] = useState('');
@@ -68,6 +69,7 @@ const ReportsPage = () => {
         expectedReturnDate,
         flow,
         scope,
+        reportType,
       };
 
       const response = await api.get('/reports', { params });
@@ -96,7 +98,8 @@ const ReportsPage = () => {
     barcodeQuery,
     expectedReturnDate,
     flow, 
-    scope
+    scope,
+    reportType
   ]);
 
   const handleExportExcel = async () => {
@@ -114,6 +117,7 @@ const ReportsPage = () => {
         expectedReturnDate,
         flow,
         scope,
+        reportType,
       };
       
       const response = await api.get('/reports/export', {
@@ -124,7 +128,7 @@ const ReportsPage = () => {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `MMS_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      link.setAttribute('download', `MMS_Report_${reportType}_${new Date().toISOString().slice(0, 10)}.xlsx`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -137,125 +141,270 @@ const ReportsPage = () => {
 
   const isAdmin = ['super_admin', 'admin'].includes(user?.role);
 
-  const columns = [
-    {
-      header: 'Transaction ID',
-      cell: (row) => <span className="font-bold text-indigo-600 dark:text-indigo-400">{row.transactionId}</span>,
-    },
-    {
-      header: 'Doc Ref',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold text-slate-800 dark:text-slate-200">{row.documentType}</span>
-          <span className="text-[10px] text-slate-400 font-medium">No: {row.documentNumber || 'N/A'}</span>
-        </div>
-      ),
-    },
-    {
-      header: 'Date',
-      cell: (row) => (
-        <span className="text-xs text-slate-550 dark:text-slate-450 font-medium">
-          {new Date(row.createdAt).toLocaleDateString()}
-        </span>
-      ),
-    },
-    {
-      header: 'Expected Return',
-      cell: (row) => (
-        <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-          {row.expectedReturnDate 
-            ? new Date(row.expectedReturnDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) 
-            : 'N/A'}
-        </span>
-      ),
-    },
-    {
-      header: 'Sender Details',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold text-slate-900 dark:text-slate-100">{row.sender?.fullName || row.requester?.fullName}</span>
-          <span className="text-[10px] text-slate-400 font-medium">
-            {row.sender?.employeeId || row.requester?.employeeId}
-          </span>
-        </div>
-      ),
-    },
-    {
-      header: 'Receiver Details',
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold text-slate-900 dark:text-slate-100">
-            {row.receiver?.fullName || row.otherReceiverName || 'Other'}
-          </span>
-          <span className="text-[10px] text-slate-400 font-medium">
-            {row.receiver ? row.receiver.employeeId : 'External'}
-          </span>
-        </div>
-      ),
-    },
-    {
-      header: 'Handler',
-      cell: (row) => (
-        <span className="text-xs text-slate-600 dark:text-slate-450 font-medium">
-          {row.handler?.fullName || 'N/A'}
-        </span>
-      ),
-    },
-    {
-      header: 'Material Details',
-      cell: (row) => (
-        <span className="text-xs text-slate-600 dark:text-slate-400 font-medium truncate max-w-[180px] block" title={row.materials?.map(m => `${m.qty ?? m.quantity} ${m.unit} x ${m.name}`).join(', ')}>
-          {row.materials?.map(m => `${m.qty ?? m.quantity} ${m.unit} x ${m.name}`).join(', ')}
-        </span>
-      ),
-    },
-    {
-      header: 'Barcodes',
-      cell: (row) => {
-        const barcodes = [];
-        row.materials?.forEach(m => {
-          m.barcodes?.forEach(b => {
-            if (b.barcode) barcodes.push(b.barcode);
-          });
-        });
-        if (barcodes.length === 0) return <span className="text-[10px] text-slate-400">None</span>;
-        return (
-          <div className="flex flex-wrap gap-1 max-w-[140px]">
-            {barcodes.slice(0, 2).map((bc, idx) => (
-              <span key={idx} className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1 py-0.5 rounded text-[9px] font-mono border border-slate-200 dark:border-slate-700">
-                {bc}
-              </span>
-            ))}
-            {barcodes.length > 2 && (
-              <span className="text-[9px] text-slate-400 font-bold self-center">+{barcodes.length - 2}</span>
+  const getColumns = () => {
+    if (reportType === 'returns') {
+      return [
+        {
+          header: 'Transaction ID',
+          cell: (row) => <span className="font-bold text-indigo-600 dark:text-indigo-400">{row.transactionId}</span>,
+        },
+        {
+          header: 'Barcode',
+          cell: (row) => <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{row.barcode}</span>,
+        },
+        {
+          header: 'Returned By',
+          cell: (row) => (
+            <div className="flex flex-col">
+              <span className="font-semibold text-slate-905 dark:text-slate-100">{row.fromUser?.fullName}</span>
+              <span className="text-[10px] text-slate-400 font-medium">ID: {row.fromUser?.employeeId}</span>
+            </div>
+          ),
+        },
+        {
+          header: 'Return Handler',
+          cell: (row) => (
+            <div className="flex flex-col">
+              <span className="font-semibold text-slate-905 dark:text-slate-100">{row.returnHandler?.fullName || 'N/A'}</span>
+              {row.returnHandler && <span className="text-[10px] text-slate-400 font-medium">ID: {row.returnHandler.employeeId}</span>}
+            </div>
+          ),
+        },
+        {
+          header: 'Condition',
+          cell: (row) => (
+            <Badge variant={row.condition === 'good' ? 'success' : 'warning'}>
+              {(row.condition || 'good').toUpperCase()}
+            </Badge>
+          ),
+        },
+        {
+          header: 'Reason',
+          cell: (row) => (
+            <span className="text-xs italic text-slate-600 dark:text-slate-400 truncate max-w-[150px] block" title={row.reason}>
+              {row.reason || 'N/A'}
+            </span>
+          ),
+        },
+        {
+          header: 'Status',
+          cell: (row) => (
+            <Badge variant={row.status === 'completed' ? 'success' : 'warning'}>
+              {(row.status || 'pending').toUpperCase().replace('_', ' ')}
+            </Badge>
+          ),
+        },
+        {
+          header: 'Request Date',
+          cell: (row) => (
+            <span className="text-xs text-slate-505 font-medium">
+              {new Date(row.createdAt).toLocaleDateString()}
+            </span>
+          ),
+        }
+      ];
+    }
+
+    if (reportType === 'handler') {
+      return [
+        {
+          header: 'Transaction ID',
+          cell: (row) => <span className="font-bold text-indigo-600 dark:text-indigo-400">{row.transactionId}</span>,
+        },
+        {
+          header: 'Handler Details',
+          cell: (row) => (
+            <div className="flex flex-col">
+              <span className="font-semibold text-slate-905 dark:text-slate-100">{row.handler?.fullName || 'N/A'}</span>
+              {row.handler && <span className="text-[10px] text-slate-400 font-medium">ID: {row.handler.employeeId}</span>}
+            </div>
+          ),
+        },
+        {
+          header: 'Sender (Requester)',
+          cell: (row) => (
+            <div className="flex flex-col">
+              <span className="font-semibold text-slate-905 dark:text-slate-100">{row.sender?.fullName || row.requester?.fullName}</span>
+              <span className="text-[10px] text-slate-400 font-medium">ID: {row.sender?.employeeId || row.requester?.employeeId}</span>
+            </div>
+          ),
+        },
+        {
+          header: 'Receiver Details',
+          cell: (row) => (
+            <div className="flex flex-col">
+              <span className="font-semibold text-slate-905 dark:text-slate-100">{row.receiver?.fullName || row.otherReceiverName || 'Other'}</span>
+              {row.receiver && <span className="text-[10px] text-slate-400 font-medium">ID: {row.receiver.employeeId}</span>}
+            </div>
+          ),
+        },
+        {
+          header: 'Valuation',
+          cell: (row) => <span className="font-bold text-slate-950 dark:text-white">₹{(row.grandTotal || 0).toLocaleString()}</span>,
+        },
+        {
+          header: 'Date Assigned',
+          cell: (row) => <span className="text-xs text-slate-505 font-medium">{new Date(row.createdAt).toLocaleDateString()}</span>,
+        },
+        {
+          header: 'Status',
+          cell: (row) => <Badge>{row.status}</Badge>,
+        },
+        {
+          header: 'Actions',
+          cell: (row) => (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => navigate(row.isExternal ? `/receiving/${row._id}` : `/transactions/${row._id}`)}
+              className="p-1.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+              title="View Details"
+            >
+              <Eye className="w-4 h-4" />
+            </Button>
+          ),
+        },
+      ];
+    }    return [
+      {
+        header: 'Transaction ID',
+        cell: (row) => <span className="font-bold text-indigo-600 dark:text-indigo-400">{row.transactionId}</span>,
+      },
+      {
+        header: 'Doc Ref',
+        cell: (row) => (
+          <div className="flex flex-col">
+            <span className="font-semibold text-slate-800 dark:text-slate-200">{row.documentType}</span>
+            {row.documentNumber && row.documentNumber !== 'N/A' && (
+              <span className="text-[10px] text-slate-400 font-medium">No: {row.documentNumber}</span>
             )}
           </div>
-        );
-      }
-    },
-    {
-      header: 'Valuation',
-      cell: (row) => <span className="font-bold text-slate-950 dark:text-white">₹{(row.grandTotal || 0).toLocaleString()}</span>,
-    },
-    {
-      header: 'Status',
-      cell: (row) => <Badge>{row.status}</Badge>,
-    },
-    {
-      header: 'Actions',
-      cell: (row) => (
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => navigate(row.isExternal ? `/receiving/${row._id}` : `/transactions/${row._id}`)}
-          className="p-1.5 text-slate-505 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800"
-          title="View Details"
-        >
-          <Eye className="w-4 h-4" />
-        </Button>
-      ),
-    },
-  ];
+        ),
+      },
+      {
+        header: 'Date',
+        cell: (row) => (
+          <span className="text-xs text-slate-505 dark:text-slate-450 font-medium">
+            {new Date(row.createdAt).toLocaleDateString()}
+          </span>
+        ),
+      },
+      {
+        header: 'Expected Return',
+        cell: (row) => (
+          <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+            {row.expectedReturnDate 
+              ? new Date(row.expectedReturnDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) 
+              : 'N/A'}
+          </span>
+        ),
+      },
+      {
+        header: 'Requester',
+        cell: (row) => (
+          <span className="font-semibold text-slate-900 dark:text-slate-100">
+            {row.requester?.fullName}
+          </span>
+        ),
+      },
+      {
+        header: 'Handler',
+        cell: (row) => (
+          <span className="text-xs text-slate-600 dark:text-slate-450 font-medium">
+            {row.handler?.fullName || 'N/A'}
+          </span>
+        ),
+      },
+      {
+        header: 'Material Details',
+        cell: (row) => (
+          <span className="text-xs text-slate-600 dark:text-slate-400 font-medium truncate max-w-[180px] block" title={row.materials?.map(m => `${m.qty ?? m.quantity} ${m.unit} x ${m.name}`).join(', ')}>
+            {row.materials?.map(m => `${m.qty ?? m.quantity} ${m.unit} x ${m.name}`).join(', ')}
+          </span>
+        ),
+      },
+      {
+        header: 'Barcodes',
+        cell: (row) => {
+          const barcodes = [];
+          row.materials?.forEach(m => {
+            m.barcodes?.forEach(b => {
+              if (b.barcode) barcodes.push(b.barcode);
+            });
+          });
+          if (barcodes.length === 0) return <span className="text-[10px] text-slate-400">None</span>;
+          return (
+            <div className="flex flex-wrap gap-1 max-w-[140px]">
+              {barcodes.slice(0, 2).map((bc, idx) => (
+                <span key={idx} className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1 py-0.5 rounded text-[9px] font-mono border border-slate-200 dark:border-slate-700">
+                  {bc}
+                </span>
+              ))}
+              {barcodes.length > 2 && (
+                <span className="text-[9px] text-slate-400 font-bold self-center">+{barcodes.length - 2}</span>
+              )}
+            </div>
+          );
+        }
+      },
+      {
+        header: 'Valuation',
+        cell: (row) => <span className="font-bold text-slate-950 dark:text-white">₹{(row.grandTotal || 0).toLocaleString()}</span>,
+      },
+      {
+        header: 'Status',
+        cell: (row) => <Badge>{row.status}</Badge>,
+      },
+      {
+        header: 'Actions',
+        cell: (row) => (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => navigate(row.isExternal ? `/receiving/${row._id}` : `/transactions/${row._id}`)}
+            className="p-1.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+            title="View Details"
+          >
+            <Eye className="w-4 h-4" />
+          </Button>
+        ),
+      },
+    ];
+  };
+
+  const getKpiLabels = () => {
+    if (reportType === 'returns') {
+      return {
+        title1: 'Returns Count',
+        value1: `${summary.totalTransactions} returns`,
+        title2: 'Good Condition',
+        value2: `${summary.totalValue} items`,
+        title3: 'Damaged / Issues',
+        value3: `${summary.avgValue} items`,
+      };
+    }
+    if (reportType === 'handler') {
+      return {
+        title1: 'Tasks Count',
+        value1: `${summary.totalTransactions} assignments`,
+        title2: 'Completed Tasks',
+        value2: `${summary.totalValue} delivered`,
+        title3: 'Active Tasks',
+        value3: `${summary.avgValue} active`,
+      };
+    }
+    return {
+      title1: 'Transfers Count',
+      value1: `${summary.totalTransactions} cycles`,
+      title2: 'Total Valuation',
+      value2: `₹${(summary.totalValue || 0).toLocaleString()}`,
+      title3: 'Average Valuation',
+      value3: `₹${Math.round(summary.avgValue || 0).toLocaleString()}`,
+    };
+  };
+
+  const kpis = getKpiLabels();
+  const columns = getColumns();
 
   return (
     <div className="flex flex-col gap-6 max-w-6xl mx-auto px-1">
@@ -285,6 +434,40 @@ const ReportsPage = () => {
         </Button>
       </div>
 
+      {/* Report Type Navigation Tabs */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6">
+        <button
+          onClick={() => { setReportType('transaction'); setCurrentPage(1); }}
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
+            reportType === 'transaction'
+              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          Transactions Report
+        </button>
+        <button
+          onClick={() => { setReportType('handler'); setCurrentPage(1); }}
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
+            reportType === 'handler'
+              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          Handlers Report
+        </button>
+        <button
+          onClick={() => { setReportType('returns'); setCurrentPage(1); }}
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
+            reportType === 'returns'
+              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          Returns Report
+        </button>
+      </div>
+
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
         {/* Count Card */}
@@ -292,9 +475,9 @@ const ReportsPage = () => {
           <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-bl-full pointer-events-none group-hover:scale-110 transition-transform" />
           <div className="flex items-center justify-between">
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Transfers Count</span>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{kpis.title1}</span>
               <span className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">
-                {summary.totalTransactions} cycles
+                {kpis.value1}
               </span>
             </div>
             <div className="p-3 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-xl border border-indigo-100 dark:border-indigo-900/30">
@@ -308,9 +491,9 @@ const ReportsPage = () => {
           <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-emerald-500/10 to-transparent rounded-bl-full pointer-events-none group-hover:scale-110 transition-transform" />
           <div className="flex items-center justify-between">
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Valuation</span>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{kpis.title2}</span>
               <span className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">
-                ₹{(summary.totalValue || 0).toLocaleString()}
+                {kpis.value2}
               </span>
             </div>
             <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-100 dark:border-emerald-900/30">
@@ -324,9 +507,9 @@ const ReportsPage = () => {
           <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-sky-500/10 to-transparent rounded-bl-full pointer-events-none group-hover:scale-110 transition-transform" />
           <div className="flex items-center justify-between">
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Average Valuation</span>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{kpis.title3}</span>
               <span className="text-2xl font-extrabold text-sky-600 dark:text-sky-400 mt-1">
-                ₹{Math.round(summary.avgValue || 0).toLocaleString()}
+                {kpis.value3}
               </span>
             </div>
             <div className="p-3 bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 rounded-xl border border-sky-100 dark:border-sky-900/30">

@@ -84,6 +84,27 @@ exports.transferBarcode = async (req, res) => {
     const bc = await Barcode.findOne({ barcode: normalizedBarcode }).populate('owner');
     if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
     if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+
+    // Validate that the parent transaction is fully delivered and received by the requester
+    if (bc.transactionId) {
+      const txn = await Transaction.findOne({ transactionId: bc.transactionId });
+      if (txn && !['received', 'active', 'partially_returned', 'closed'].includes(txn.status)) {
+        return res.status(400).json({ message: 'Cannot transfer barcode before the material is fully delivered and received.' });
+      }
+    }
+
+    // Validate that no return request is currently active/in-progress for this barcode
+    const activeReturn = await Return.findOne({ barcode: normalizedBarcode, status: { $nin: ['completed', 'rejected'] } });
+    if (activeReturn) {
+      return res.status(400).json({ message: 'Cannot transfer barcode while a return request is active.' });
+    }
+
+    // Validate that no other transfer request is currently active/in-progress for this barcode
+    const activeTransfer = await Transfer.findOne({ barcode: normalizedBarcode, status: { $in: ['pending', 'approved'] } });
+    if (activeTransfer) {
+      return res.status(400).json({ message: 'Cannot transfer barcode while another transfer is active.' });
+    }
+
     if (bc.owner._id.toString() !== req.user._id.toString() && req.user.role !== 'super_admin') {
       return res.status(403).json({ message: 'You are not the owner of this barcode.' });
     }
@@ -320,6 +341,26 @@ exports.returnBarcode = async (req, res) => {
     if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
     if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
 
+    // Validate that the parent transaction is fully delivered and received by the requester
+    if (bc.transactionId) {
+      const txn = await Transaction.findOne({ transactionId: bc.transactionId });
+      if (txn && !['received', 'active', 'partially_returned', 'closed'].includes(txn.status)) {
+        return res.status(400).json({ message: 'Cannot return barcode before the material is fully delivered and received.' });
+      }
+    }
+
+    // Validate that no return request is currently active/in-progress for this barcode
+    const activeReturn = await Return.findOne({ barcode: normalizedBarcode, status: { $nin: ['completed', 'rejected'] } });
+    if (activeReturn) {
+      return res.status(400).json({ message: 'Cannot return barcode while a return request is active.' });
+    }
+
+    // Validate that no transfer request is currently active/in-progress for this barcode
+    const activeTransfer = await Transfer.findOne({ barcode: normalizedBarcode, status: { $in: ['pending', 'approved'] } });
+    if (activeTransfer) {
+      return res.status(400).json({ message: 'Cannot return barcode while a transfer request is active.' });
+    }
+
     const status = returnHandler ? 'handler_assigned' : 'pending';
 
     const returnDoc = await Return.create({
@@ -483,6 +524,19 @@ exports.handleReturnHandlerAction = async (req, res) => {
         });
         await bc.save();
       }
+    } else if (actionType === 'reject' || actionType === 'decline') {
+      returnDoc.status = 'pending';
+      returnDoc.returnHandler = null;
+      
+      const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
+      if (bc) {
+        bc.history.push({
+          action: 'Return Assignment Declined by Handler',
+          user: req.user._id,
+          remarks: remarks || 'Handler declined return request assignment',
+        });
+        await bc.save();
+      }
     } else {
       return res.status(400).json({ message: 'Invalid handler action type.' });
     }
@@ -520,6 +574,26 @@ exports.createSplitRequest = async (req, res) => {
     const bc = await Barcode.findOne({ barcode: normalizedBarcode });
     if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
     if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+
+    // Validate that the parent transaction is fully delivered and received by the requester
+    if (bc.transactionId) {
+      const txn = await Transaction.findOne({ transactionId: bc.transactionId });
+      if (txn && !['received', 'active', 'partially_returned', 'closed'].includes(txn.status)) {
+        return res.status(400).json({ message: 'Cannot split barcode before the material is fully delivered and received.' });
+      }
+    }
+
+    // Validate that no return request is currently active/in-progress for this barcode
+    const activeReturn = await Return.findOne({ barcode: normalizedBarcode, status: { $nin: ['completed', 'rejected'] } });
+    if (activeReturn) {
+      return res.status(400).json({ message: 'Cannot split barcode while a return request is active.' });
+    }
+
+    // Validate that no transfer request is currently active/in-progress for this barcode
+    const activeTransfer = await Transfer.findOne({ barcode: normalizedBarcode, status: { $in: ['pending', 'approved'] } });
+    if (activeTransfer) {
+      return res.status(400).json({ message: 'Cannot split barcode while a transfer request is active.' });
+    }
 
     // Check ownership
     if (bc.owner.toString() !== req.user._id.toString()) {
@@ -893,8 +967,8 @@ exports.getPendingReturns = async (req, res) => {
     
     let filter = {};
     if (isStore) {
-      // Store sees all returns that are not completed yet
-      filter = { status: { $ne: 'completed' } };
+      // Store only sees returns that are pending (direct) or store_received (delivered by handler)
+      filter = { status: { $in: ['pending', 'store_received'] } };
     } else if (req.user.role === 'employee') {
       // Handler sees returns assigned to them OR returns created by them
       filter = {
@@ -971,6 +1045,241 @@ exports.getAllReturns = async (req, res) => {
     res.json({ data: returns });
   } catch (error) {
     console.error('Get all returns error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Assign/reassign handler for a Return request
+ */
+exports.assignReturnHandler = async (req, res) => {
+  try {
+    const { returnId } = req.params;
+    const { handlerId, remarks } = req.body;
+
+    const returnDoc = await Return.findById(returnId);
+    if (!returnDoc) return res.status(404).json({ message: 'Return request not found.' });
+
+    // Allow current handler, super_admin, or store admin to reassign
+    const isAssignedHandler = returnDoc.returnHandler && returnDoc.returnHandler.toString() === req.user._id.toString();
+    const isStore = req.user.role === 'department_admin' && req.user.departmentAdminType === 'store';
+    if (req.user.role !== 'super_admin' && !isAssignedHandler && !isStore) {
+      return res.status(403).json({ message: 'Not authorized to change return handler.' });
+    }
+
+    returnDoc.returnHandler = handlerId;
+    returnDoc.status = 'handler_assigned';
+    // Update barcode history
+    const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
+    if (bc) {
+      bc.history.push({
+        action: 'Return Handler Reassigned',
+        user: req.user._id,
+        remarks: remarks || `Reassigned return handler`,
+      });
+      await bc.save();
+    }
+
+    await returnDoc.save();
+
+    res.json({ message: 'Return handler updated successfully.', returnDoc });
+  } catch (error) {
+    console.error('Assign return handler error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Create a Close Request (Requester requests to close/convert a barcode to DC)
+ */
+exports.createCloseRequest = async (req, res) => {
+  try {
+    const { barcode, documentType, documentNumber, remarks } = req.body;
+
+    if (!barcode || !documentType || !documentNumber) {
+      return res.status(400).json({ message: 'Barcode, Document Type, and Document Number are required.' });
+    }
+
+    const Barcode = require('../models/Barcode');
+    const bc = await Barcode.findOne({ barcode });
+    if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
+    if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+
+    // Validate ownership
+    if (bc.owner.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'You are not the owner of this barcode.' });
+    }
+
+    // Validate that no active return or transfer exists
+    const Return = require('../models/Return');
+    const activeReturn = await Return.findOne({ barcode, status: { $nin: ['completed', 'rejected'] } });
+    if (activeReturn) {
+      return res.status(400).json({ message: 'Cannot convert barcode while a return request is active.' });
+    }
+
+    const Transfer = require('../models/Transfer');
+    const activeTransfer = await Transfer.findOne({ barcode, status: { $in: ['pending', 'approved'] } });
+    if (activeTransfer) {
+      return res.status(400).json({ message: 'Cannot convert barcode while a transfer request is active.' });
+    }
+
+    const CloseRequest = require('../models/CloseRequest');
+    const closeReq = await CloseRequest.create({
+      transactionId: bc.transactionId,
+      barcode,
+      documentType,
+      documentNumber,
+      remarks,
+      requester: req.user._id,
+      status: 'pending'
+    });
+
+    bc.closeRequest = {
+      documentType,
+      documentNumber,
+      remarks,
+      requester: req.user._id,
+      status: 'pending'
+    };
+
+    bc.history.push({
+      action: 'Close Requested',
+      user: req.user._id,
+      remarks: `Requested conversion to ${documentType} (${documentNumber}). ${remarks || ''}`
+    });
+    await bc.save();
+
+    res.json({ message: 'Barcode close request submitted successfully.', data: closeReq });
+  } catch (error) {
+    console.error('Create close request error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Get pending Close Requests (for Team Lead / Admin)
+ */
+exports.getPendingCloseRequests = async (req, res) => {
+  try {
+    const CloseRequest = require('../models/CloseRequest');
+    let query = { status: 'pending' };
+
+    if (req.user.role === 'team_lead') {
+      const User = require('../models/User');
+      const deptUsers = await User.find({ department: req.user.department }).select('_id');
+      const deptUserIds = deptUsers.map(u => u._id);
+      query.requester = { $in: deptUserIds };
+      query.documentType = { $in: ['DC Internal', 'DC FOC'] };
+    } else if (req.user.role === 'department_admin' && req.user.departmentAdminType === 'accounts') {
+      query.documentType = 'Invoice';
+    } else if (req.user.role === 'super_admin') {
+      // Sees all
+    } else {
+      // Others see nothing
+      return res.json({ data: [], requests: [] });
+    }
+
+    const requests = await CloseRequest.find(query)
+      .populate('requester', 'fullName employeeId department');
+
+    res.json({ data: requests, requests });
+  } catch (error) {
+    console.error('Get pending close requests error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Handle Close Request approval/rejection (by Team Lead / Admin)
+ */
+exports.handleCloseRequest = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { action, rejectionReason } = req.body;
+
+    const CloseRequest = require('../models/CloseRequest');
+    const closeReq = await CloseRequest.findById(requestId);
+    if (!closeReq) return res.status(404).json({ message: 'Close request not found.' });
+    if (closeReq.status !== 'pending') return res.status(400).json({ message: 'Request is already processed.' });
+
+    // Authorization check
+    if (closeReq.documentType === 'Invoice') {
+      if (req.user.role !== 'super_admin' && !(req.user.role === 'department_admin' && req.user.departmentAdminType === 'accounts')) {
+        return res.status(403).json({ message: 'Only Accounts Department Admin can approve Invoice close requests.' });
+      }
+    } else {
+      if (req.user.role !== 'super_admin' && req.user.role !== 'team_lead' && !(req.user.role === 'department_admin' && req.user.departmentAdminType === 'store')) {
+        return res.status(403).json({ message: 'Only Team Leads or Store Admins can approve DC close requests.' });
+      }
+    }
+
+    const Barcode = require('../models/Barcode');
+    const bc = await Barcode.findOne({ barcode: closeReq.barcode });
+    if (!bc) return res.status(404).json({ message: 'Associated barcode not found.' });
+
+    if (action === 'approve') {
+      closeReq.status = 'approved';
+      closeReq.approvedBy = req.user._id;
+      closeReq.approvedAt = new Date();
+
+      bc.status = 'Closed';
+      if (bc.closeRequest) {
+        bc.closeRequest.status = 'approved';
+      }
+      bc.history.push({
+        action: 'Closed',
+        user: req.user._id,
+        remarks: `Approved conversion to ${closeReq.documentType} (${closeReq.documentNumber})`
+      });
+      await bc.save();
+
+      // Log in transaction timeline and remove material if Invoice
+      const Transaction = require('../models/Transaction');
+      const txn = await Transaction.findOne({ $or: [{ _id: bc.transaction }, { transactionId: bc.transactionId }] });
+      if (txn) {
+        if (closeReq.documentType === 'Invoice') {
+          // Remove the barcode from materials loop
+          txn.materials = txn.materials.map(m => {
+            if (m.barcodes) {
+              m.barcodes = m.barcodes.filter(b => {
+                const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+                return bStr !== bc.barcode;
+              });
+            }
+            return m;
+          }).filter(m => m.barcodes && m.barcodes.length > 0);
+        }
+
+        txn.timeline.push({
+          action: 'Barcode Closed',
+          remarks: `Barcode ${bc.barcode} closed via ${closeReq.documentType} Conversion (${closeReq.documentNumber})`,
+          user: req.user._id,
+          timestamp: new Date()
+        });
+        await txn.save();
+      }
+    } else if (action === 'reject') {
+      closeReq.status = 'rejected';
+      closeReq.rejectionReason = rejectionReason || 'Rejected';
+
+      if (bc.closeRequest) {
+        bc.closeRequest.status = 'rejected';
+        bc.closeRequest.rejectionReason = rejectionReason || 'Rejected';
+      }
+      bc.history.push({
+        action: 'Close Rejected',
+        user: req.user._id,
+        remarks: rejectionReason || 'Rejection of conversion request'
+      });
+      await bc.save();
+    } else {
+      return res.status(400).json({ message: 'Invalid action.' });
+    }
+
+    await closeReq.save();
+    res.json({ message: `Close request successfully ${action}d.`, data: closeReq });
+  } catch (error) {
+    console.error('Handle close request error:', error);
     res.status(500).json({ message: 'Server error.' });
   }
 };

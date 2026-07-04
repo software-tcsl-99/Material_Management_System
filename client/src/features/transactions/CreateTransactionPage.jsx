@@ -19,7 +19,7 @@ const CreateTransactionPage = () => {
   // Form State
   const [expectedReturnDate, setExpectedReturnDate] = useState('');
   const [description, setDescription] = useState('');
-  
+
   // Routing dropdowns state
   const [mgtApprovers, setMgtApprovers] = useState([]);
   const [selectedMgt, setSelectedMgt] = useState('');
@@ -69,7 +69,7 @@ const CreateTransactionPage = () => {
   // Submit
   const handleSubmit = async () => {
     setError('');
-    
+
     if (!expectedReturnDate) {
       setError('Expected return date is required');
       return;
@@ -147,11 +147,11 @@ const CreateTransactionPage = () => {
 
       <Card title="Simplified Sourcing Request Form">
         <div className="grid grid-cols-1 gap-5 text-xs font-semibold">
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <Input
               id="expectedReturnDate"
-              label="Expected Return Date *"
+              label="Expected Return Date"
               type="date"
               min={new Date(Date.now() + 86400000).toISOString().split('T')[0]}
               value={expectedReturnDate}
@@ -161,7 +161,7 @@ const CreateTransactionPage = () => {
 
             <Select
               id="managementApprover"
-              label="Choose Management Approver *"
+              label="Choose Management Approver"
               placeholder="Select Management Approver..."
               options={mgtApprovers}
               value={selectedMgt}
@@ -171,7 +171,7 @@ const CreateTransactionPage = () => {
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 font-semibold">Purpose / Description *</label>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 font-semibold">Purpose / Description</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -196,7 +196,7 @@ const CreateTransactionPage = () => {
                   <div className="flex-1 grid grid-cols-3 gap-3">
                     <div className="col-span-2">
                       <Input
-                        label={`Material #${idx + 1} Name *`}
+                        label={`${idx + 1}. Material Name`}
                         placeholder="e.g. Torque Wrench"
                         value={mat.name}
                         onChange={(e) => handleMaterialChange(idx, 'name', e.target.value)}
@@ -205,7 +205,7 @@ const CreateTransactionPage = () => {
                     </div>
                     <div>
                       <Input
-                        label="Quantity *"
+                        label="Quantity"
                         type="number"
                         min="1"
                         value={mat.qty}

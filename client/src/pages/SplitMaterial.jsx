@@ -12,7 +12,7 @@ export default function SplitMaterial() {
 
   // Fetch barcode detail
   const { data: bcData, isLoading } = useQuery({
-    queryKey: ['barcodeDetail', barcode],
+    queryKey: ['barcodeSplitDetail', barcode],
     queryFn: async () => {
       const { data } = await api.get(`/barcodes/${barcode}`);
       return data.barcode;
@@ -25,6 +25,7 @@ export default function SplitMaterial() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['barcodeDetail', barcode] });
+      queryClient.invalidateQueries({ queryKey: ['barcodeSplitDetail', barcode] });
       alert('Split request submitted to store successfully!');
       navigate(`/barcodes/${barcode}`);
     },

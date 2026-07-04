@@ -16,12 +16,13 @@ router.post('/handle-transfer', requirePermission('transfer:create', 'transfer:a
 router.post('/return', requirePermission('return:create'), barcodeController.returnBarcode);
 router.put('/return/:returnId/accept', requirePermission('return:accept'), barcodeController.acceptReturn);
 router.put('/return/:returnId/handler-action', barcodeController.handleReturnHandlerAction);
-router.post('/split-request', barcodeController.createSplitRequest);
-router.get('/split-requests/pending', barcodeController.getPendingSplitRequests);
-router.get('/returns/pending', barcodeController.getPendingReturns);
-router.post('/approve-split', barcodeController.approveSplitRequest);
-router.post('/accept-split-material', barcodeController.acceptSplitMaterial);
-router.get('/list/transfers', requirePermission('barcode:view'), barcodeController.getAllTransfers);
-router.get('/list/returns', requirePermission('barcode:view'), barcodeController.getAllReturns);
+router.put('/return/:returnId/assign-handler', barcodeController.assignReturnHandler);
+router.post('/split-request', requirePermission('material:view'), barcodeController.createSplitRequest);
+router.get('/split-requests/pending', requirePermission('approval:view'), barcodeController.getPendingSplitRequests);
+router.get('/returns/pending', requirePermission('approval:view'), barcodeController.getPendingReturns);
+router.post('/approve-split', requirePermission('approval:approve'), barcodeController.approveSplitRequest);
+router.post('/close-request', requirePermission('barcode:view'), barcodeController.createCloseRequest);
+router.get('/close-requests/pending', requirePermission('approval:view'), barcodeController.getPendingCloseRequests);
+router.post('/close-requests/:requestId/respond', requirePermission('approval:approve'), barcodeController.handleCloseRequest);
 
 module.exports = router;

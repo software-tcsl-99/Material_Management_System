@@ -33,6 +33,7 @@ import MaterialsTree from './pages/MaterialsTree';
 import NotificationsPage from './pages/NotificationsPage';
 import ReceivingForm from './pages/ReceivingForm';
 import ReturnMaterial from './pages/ReturnMaterial';
+import ReturnMultiple from './pages/ReturnMultiple';
 import SplitMaterial from './pages/SplitMaterial';
 import StoreDashboard from './pages/StoreDashboard';
 import TransferMaterial from './pages/TransferMaterial';
@@ -62,7 +63,7 @@ export default function App() {
   }, [applyTheme]);
 
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
         {/* Public auth route */}
         <Route
@@ -89,6 +90,7 @@ export default function App() {
           <Route path="transactions/:id" element={<TransactionDetailPage />} />
           <Route path="transactions/:id/edit" element={<EditTransactionPage />} />
           <Route path="transactions/:id/receive" element={<ReceivingForm />} />
+          <Route path="transactions/:id/return-multiple" element={<ReturnMultiple />} />
           <Route path="transactions/:id/assign-handler" element={<HandlerAssignmentPage />} />
           <Route path="barcodes/:barcode" element={<BarcodeDetail />} />
           <Route path="barcodes/:barcode/split" element={<SplitMaterial />} />

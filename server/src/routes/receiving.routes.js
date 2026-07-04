@@ -7,14 +7,16 @@ const {
   exportReceiptToExcel, exportReceiptToPDF,
 } = require('../controllers/receiving.controller');
 
+const { requirePermission } = require('../middleware/rbac');
+
 router.use(auth);
 
-router.get('/internal', getInternalReceipts);
-router.post('/internal', createInternalReceipt);
-router.get('/external', getExternalReceipts);
-router.post('/external', createExternalReceipt);
-router.get('/:id', getReceipt);
-router.get('/:id/export/excel', exportReceiptToExcel);
-router.get('/:id/export/pdf', exportReceiptToPDF);
+router.get('/internal', requirePermission('receiving:receive'), getInternalReceipts);
+router.post('/internal', requirePermission('receiving:receive'), createInternalReceipt);
+router.get('/external', requirePermission('receiving:receive'), getExternalReceipts);
+router.post('/external', requirePermission('receiving:receive'), createExternalReceipt);
+router.get('/:id', requirePermission('receiving:receive'), getReceipt);
+router.get('/:id/export/excel', requirePermission('receiving:receive'), exportReceiptToExcel);
+router.get('/:id/export/pdf', requirePermission('receiving:receive'), exportReceiptToPDF);
 
 module.exports = router;

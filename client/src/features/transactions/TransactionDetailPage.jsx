@@ -43,6 +43,7 @@ const TransactionDetailPage = () => {
   const [loading, setLoading] = useState(true);
   const [txn, setTxn] = useState(null);
   const [barcodes, setBarcodes] = useState([]);
+  const [returnsList, setReturnsList] = useState([]);
   const [error, setError] = useState('');
 
   // Tabs
@@ -95,10 +96,18 @@ const TransactionDetailPage = () => {
 
   // Conversion state
   const [convertModal, setConvertModal] = useState(false);
-  const [convertType, setConvertType] = useState('DC');
+  const [convertType, setConvertType] = useState('DC Internal');
   const [convertDocNumber, setConvertDocNumber] = useState('');
   const [convertRemarks, setConvertRemarks] = useState('');
   const [convertSubmitting, setConvertSubmitting] = useState(false);
+
+  // Barcode Close / DC Conversion modal states
+  const [barcodeCloseModal, setBarcodeCloseModal] = useState(false);
+  const [selectedBarcodeForClose, setSelectedBarcodeForClose] = useState('');
+  const [barcodeCloseDocType, setBarcodeCloseDocType] = useState('DC Internal');
+  const [barcodeCloseDocNumber, setBarcodeCloseDocNumber] = useState('');
+  const [barcodeCloseRemarks, setBarcodeCloseRemarks] = useState('');
+  const [barcodeCloseSubmitting, setBarcodeCloseSubmitting] = useState(false);
 
   const chatEndRef = useRef(null);
 
@@ -158,6 +167,7 @@ const TransactionDetailPage = () => {
       const txnRes = await api.get(`/transactions/${id}`);
       const txnData = txnRes.data.transaction;
       setTxn(txnData);
+      setReturnsList(txnRes.data.returns || []);
       fetchTxnChat(txnData.transactionId);
 
       // Fetch barcodes matching this transaction
@@ -317,6 +327,19 @@ const TransactionDetailPage = () => {
           remarks: storeRemarks
         });
         alert('Transaction accepted by store successfully.');
+      } else if (storeActionType === 'assign_return_handler') {
+        const activeReturn = returnsList?.find(r => 
+          ['handler_assigned', 'collected'].includes(r.status)
+        );
+        if (!activeReturn) {
+          alert('No active return request found to assign handler to.');
+          return;
+        }
+        await api.put(`/barcodes/return/${activeReturn._id}/assign-handler`, {
+          handlerId,
+          remarks: storeRemarks
+        });
+        alert('Return handler assigned successfully.');
       } else {
         await api.put(`/transactions/${id}/assign-handler`, {
           handlerId,
@@ -454,6 +477,30 @@ const TransactionDetailPage = () => {
       alert(err.response?.data?.message || 'Failed to convert document.');
     } finally {
       setConvertSubmitting(false);
+    }
+  };
+
+  const handleBarcodeCloseSubmit = async (e) => {
+    e.preventDefault();
+    if (!barcodeCloseDocNumber.trim()) {
+      alert('Please enter a document number.');
+      return;
+    }
+    setBarcodeCloseSubmitting(true);
+    try {
+      await api.post('/barcodes/close-request', {
+        barcode: selectedBarcodeForClose,
+        documentType: barcodeCloseDocType,
+        documentNumber: barcodeCloseDocNumber,
+        remarks: barcodeCloseRemarks
+      });
+      alert('Close request submitted successfully for Team Lead approval!');
+      setBarcodeCloseModal(false);
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to submit close request.');
+    } finally {
+      setBarcodeCloseSubmitting(false);
     }
   };
 
@@ -839,34 +886,141 @@ const TransactionDetailPage = () => {
             {/* Handler Actions (Transfer / Send to Requester) */}
             {txn.status === 'handler_assigned' && isHandler && (
               <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setStoreActionType('assign_handler');
-                    setStoreModal(true);
-                  }}
-                >
-                  Transfer Handler Role
-                </Button>
-                <Button
-                  size="sm"
-                  variant="success"
-                  onClick={handleConfirmDispatch}
-                >
-                  Send to Requester
-                </Button>
+                {(() => {
+                  const hasAccepted = txn.timeline?.some(t => t.action?.toLowerCase()?.includes('handler accepted'));
+                  if (hasAccepted) {
+                    return (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setStoreActionType('assign_handler');
+                            setStoreModal(true);
+                          }}
+                        >
+                          Transfer Handler Role
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="success"
+                          onClick={handleConfirmDispatch}
+                        >
+                          Send to Requester
+                        </Button>
+                      </>
+                    );
+                  }
+                  return null;
+                })()}
               </>
             )}
 
-            {/* Convert Document Type (only shown after requester collects/receives material from store) */}
-            {['received', 'active', 'partially_returned', 'completed'].includes(txn.status) && (isSender || isAdmin) && (
-              <Button size="sm" variant="outline" onClick={() => {
-                setConvertType(txn.documentType === 'RDC' ? 'DC' : 'Invoice');
-                setConvertDocNumber(txn.documentNumber || '');
-                setConvertModal(true);
-              }}>
-                Convert Document
+            {/* Return Handler Actions Panel */}
+            {(() => {
+              const activeReturn = returnsList?.find(r => 
+                ['handler_assigned', 'collected'].includes(r.status)
+              );
+              if (!activeReturn) return null;
+
+              const isAssignedReturnHandler = activeReturn.returnHandler?._id === user?._id || activeReturn.returnHandler === user?._id;
+              const isStoreAdmin = activeRole.role === 'department_admin' && activeRole.adminType === 'store';
+              const isSuper = activeRole.role === 'super_admin';
+
+              if (!isAssignedReturnHandler && !isStoreAdmin && !isSuper) return null;
+
+              return (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-amber-600 bg-amber-50 dark:bg-amber-955/20 px-2.5 py-1.5 rounded-xl border border-amber-200 dark:border-amber-900 uppercase">
+                    Return of {activeReturn.barcode} ({activeReturn.status.replace('_', ' ')})
+                  </span>
+
+                  {activeReturn.status === 'handler_assigned' && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                        onClick={async () => {
+                          if (confirm('Decline this return assignment?')) {
+                            try {
+                              await api.put(`/barcodes/return/${activeReturn._id}/handler-action`, {
+                                actionType: 'reject',
+                                remarks: 'Handler declined return request assignment'
+                              });
+                              alert('Return request rejected successfully!');
+                              fetchData();
+                            } catch (err) {
+                              alert(err.response?.data?.message || 'Failed to decline return request.');
+                            }
+                          }
+                        }}
+                      >
+                        Reject Assignment
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="success"
+                        onClick={async () => {
+                          try {
+                            await api.put(`/barcodes/return/${activeReturn._id}/handler-action`, {
+                              actionType: 'collect',
+                              remarks: 'Handler collected returning items from requester'
+                            });
+                            alert('Return collected from requester successfully!');
+                            fetchData();
+                          } catch (err) {
+                            alert(err.response?.data?.message || 'Failed to collect return.');
+                          }
+                        }}
+                      >
+                        Accept (Collect from Requester)
+                      </Button>
+                    </>
+                  )}
+
+                  {activeReturn.status === 'collected' && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setStoreActionType('assign_return_handler');
+                          setStoreModal(true);
+                        }}
+                      >
+                        Change Handler
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="success"
+                        onClick={async () => {
+                          try {
+                            await api.put(`/barcodes/return/${activeReturn._id}/handler-action`, {
+                              actionType: 'deliver',
+                              remarks: 'Handler delivered returning items to store'
+                            });
+                            alert('Return delivered to store successfully!');
+                            fetchData();
+                          } catch (err) {
+                            alert(err.response?.data?.message || 'Failed to deliver to store.');
+                          }
+                        }}
+                      >
+                        Deliver to Store
+                      </Button>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
+
+
+            {/* Return Multiple Button (only shown when transaction is in active status) */}
+            {txn.status === 'active' && (
+              <Button size="sm" variant="outline" onClick={() => navigate(`/transactions/${txn._id}/return-multiple`)}>
+                Return Multiple
               </Button>
             )}
           </div>
@@ -1143,7 +1297,7 @@ const TransactionDetailPage = () => {
                             className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 p-2.5 rounded-lg flex items-center justify-between hover:bg-slate-50/50 dark:hover:bg-slate-800/40 cursor-pointer transition-colors gap-2"
                           >
                             <div className="min-w-0 flex flex-col gap-0.5">
-                              <span className="text-xs font-mono font-black text-blue-650 dark:text-blue-400 tracking-wide">
+                              <span className="text-xs font-mono font-black text-blue-650 dark:text-blue-450 tracking-wide">
                                 {bcStr}
                               </span>
                               <span className="text-[10px] text-slate-500 font-bold truncate">Owner: {ownerName}</span>
@@ -1476,7 +1630,7 @@ const TransactionDetailPage = () => {
                   value={txnChatText}
                   onChange={(e) => setTxnChatText(e.target.value)}
                   required
-                  className="flex-1 text-xs bg-slate-550 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl px-4 py-3 font-semibold focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                  className="flex-1 text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl px-4 py-3 font-semibold focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
                 />
                 <button
                   type="submit"
@@ -1573,14 +1727,18 @@ const TransactionDetailPage = () => {
                 <select
                   value={storeActionType}
                   onChange={(e) => setStoreActionType(e.target.value)}
-                  className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
+                  disabled={storeActionType === 'assign_return_handler'}
+                  className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition disabled:opacity-75"
                 >
                   <option value="accept">Mark Sourced (Ready to dispatch)</option>
                   <option value="assign_handler">Assign Sourcing Handler</option>
+                  {storeActionType === 'assign_return_handler' && (
+                    <option value="assign_return_handler">Change Return Handler</option>
+                  )}
                 </select>
               </div>
 
-              {storeActionType === 'assign_handler' && (
+              {(storeActionType === 'assign_handler' || storeActionType === 'assign_return_handler') && (
                 <div>
                   <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Select Handler *</label>
                   <select
@@ -1709,7 +1867,7 @@ const TransactionDetailPage = () => {
             <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800">
               <div>
                 <h3 className="text-lg font-black text-slate-900 dark:text-white">
-                  Convert Document Type
+                  Convert DC Type
                 </h3>
                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Challan type migration event</p>
               </div>
@@ -1726,9 +1884,8 @@ const TransactionDetailPage = () => {
                   onChange={(e) => setConvertType(e.target.value)}
                   className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
                 >
-                  <option value="DC">Delivery Challan (DC)</option>
-                  <option value="RDC">Returnable DC (RDC)</option>
-                  <option value="Invoice">Invoice</option>
+                  <option value="DC Internal">DC Internal</option>
+                  <option value="DC FOC">DC FOC</option>
                 </select>
               </div>
 
@@ -1759,7 +1916,76 @@ const TransactionDetailPage = () => {
               <div className="flex gap-2 justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
                 <Button variant="ghost" type="button" onClick={() => setConvertModal(false)}>Cancel</Button>
                 <Button variant="primary" type="submit" disabled={convertSubmitting}>
-                  {convertSubmitting ? 'Converting...' : 'Convert Document'}
+                  {convertSubmitting ? 'Converting...' : 'Convert to DC'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Barcode Close / DC Conversion Modal */}
+      {barcodeCloseModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                  Convert Barcode to DC
+                </h3>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">DC Conversion Approval Request</p>
+              </div>
+              <button onClick={() => setBarcodeCloseModal(false)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-650">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleBarcodeCloseSubmit} className="mt-4 flex flex-col gap-4 text-xs">
+              <div>
+                <span className="block text-slate-500 font-bold uppercase tracking-wider mb-1">Target Barcode</span>
+                <span className="block font-mono font-black text-blue-650 dark:text-blue-450 text-xs mt-0.5">{selectedBarcodeForClose}</span>
+              </div>
+
+              <div>
+                <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Target Document Type *</label>
+                <select
+                  value={barcodeCloseDocType}
+                  onChange={(e) => setBarcodeCloseDocType(e.target.value)}
+                  className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
+                >
+                  <option value="DC Internal">DC Internal</option>
+                  <option value="DC FOC">DC FOC</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">New Document Number *</label>
+                <input
+                  type="text"
+                  value={barcodeCloseDocNumber}
+                  onChange={(e) => setBarcodeCloseDocNumber(e.target.value)}
+                  required
+                  placeholder="e.g. DC-10092"
+                  className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Remarks / Reason *</label>
+                <textarea
+                  value={barcodeCloseRemarks}
+                  onChange={(e) => setBarcodeCloseRemarks(e.target.value)}
+                  required
+                  placeholder="Conversion reason for TL approval..."
+                  rows="2.5"
+                  className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
+                <Button variant="ghost" type="button" onClick={() => setBarcodeCloseModal(false)}>Cancel</Button>
+                <Button variant="primary" type="submit" disabled={barcodeCloseSubmitting}>
+                  {barcodeCloseSubmitting ? 'Requesting...' : 'Request Conversion'}
                 </Button>
               </div>
             </form>
