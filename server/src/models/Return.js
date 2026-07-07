@@ -9,7 +9,7 @@ const returnSchema = new mongoose.Schema(
     store: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     status: {
       type: String,
-      enum: ['pending', 'handler_assigned', 'collected', 'store_received', 'completed'],
+      enum: ['pending', 'handler_assigned', 'collected', 'store_received', 'completed', 'rejected'],
       default: 'pending',
     },
     reason: { type: String, default: '' },

@@ -281,6 +281,7 @@ const StoreDispatchPage = () => {
   // Filter out super_admin and apply search query for handlers
   const filteredHandlers = handlers.filter(h => {
     if (h.role === 'super_admin' || h._id === user?._id) return false;
+    if (h.role === 'department_admin' && h.departmentAdminType === 'store') return false;
     if (handlerSearchQuery.trim()) {
       const q = handlerSearchQuery.toLowerCase();
       const matchName = h.fullName?.toLowerCase().includes(q);

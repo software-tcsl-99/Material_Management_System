@@ -148,6 +148,20 @@ export default function BarcodeDetail() {
       });
     }
   }
+  if (bc?.status === 'Cancelled' || bc?.transaction?.status === 'rejected') {
+    const rejectTimeline = bc.transaction?.timeline?.find(t => t.action === 'Request Rejected' || t.action === 'Receipt Rejected' || t.action?.toLowerCase()?.includes('reject'));
+    const rejectUser = rejectTimeline?.user || bc.transaction?.requester;
+    const rejectTime = rejectTimeline?.timestamp || bc.transaction?.updatedAt;
+    const rejectRemarks = rejectTimeline?.remarks || bc.transaction?.rejectionReason;
+    
+    timelineHistory.push({
+      action: 'Transaction Rejected / Barcode Cancelled',
+      user: rejectUser,
+      timestamp: rejectTime,
+      remarks: `Status: Cancelled. Reason: ${rejectRemarks || 'No reason specified'}`
+    });
+  }
+  timelineHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
   const handleAcceptSplit = async () => {
     setAccepting(true);
@@ -283,44 +297,6 @@ export default function BarcodeDetail() {
         </div>
       </div>
 
-      {/* Split Material Acceptance Card */}
-      {bc.status === 'pending_acceptance' && (
-        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 p-6 rounded-3xl space-y-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-400 shrink-0" />
-            <div>
-              <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">Pending Split Material Acceptance</h3>
-              <p className="text-xs text-slate-650 dark:text-slate-400 mt-0.5 font-semibold">
-                {isOwner
-                  ? "You have received this split material. Please capture/specify a verification photo to accept it."
-                  : `Awaiting acceptance by owner: ${bc.owner?.fullName || 'Requester'}`
-                }
-              </p>
-            </div>
-          </div>
-
-          {isOwner && (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-3">
-                <img src={acceptPhoto} alt="Verification" className="w-16 h-16 object-cover rounded-lg border border-slate-200" />
-                <div className="flex flex-col gap-1">
-                  <span className="text-[9px] text-slate-450 font-bold uppercase tracking-wider">Verification Photo URL</span>
-                  <input
-                    type="text"
-                    value={acceptPhoto}
-                    onChange={(e) => setAcceptPhoto(e.target.value)}
-                    className="text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-lg px-2.5 py-1.5 focus:outline-none w-52 font-semibold"
-                    placeholder="Photo URL..."
-                  />
-                </div>
-              </div>
-              <Button variant="success" onClick={handleAcceptSplit} disabled={accepting} className="w-full sm:w-auto sm:ml-auto">
-                {accepting ? 'Accepting...' : 'Confirm Acceptance'}
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Main Details Grid Container */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm flex flex-col md:flex-row gap-6 justify-between items-stretch">
@@ -368,7 +344,7 @@ export default function BarcodeDetail() {
           </div>
           <div className="flex flex-col items-start gap-1">
             <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider block">Status</span>
-            <Badge variant={bc.status?.toUpperCase() === 'RETURNED' ? 'secondary' : bc.status?.toUpperCase() === 'ACTIVE' ? 'primary' : 'success'}>
+            <Badge variant={bc.status?.toUpperCase() === 'RETURNED' ? 'secondary' : bc.status?.toUpperCase() === 'CANCELLED' ? 'danger' : bc.status?.toUpperCase() === 'ACTIVE' ? 'primary' : 'success'}>
               {bc.status?.toUpperCase() === 'ACTIVE' ? 'Active (Transferred)' : bc.status?.toUpperCase()}
             </Badge>
           </div>
@@ -465,6 +441,7 @@ export default function BarcodeDetail() {
                   const isReturn = actionLower.includes('return');
                   const isSplit = actionLower.includes('split');
                   const isClose = actionLower.includes('close') || actionLower.includes('closed') || actionLower.includes('approval') || actionLower.includes('upload') || actionLower.includes('conversion');
+                  const isRejectedLog = actionLower.includes('reject') || actionLower.includes('cancel');
 
                   const hasLaterCompletion = timelineHistory.slice(idx + 1).some(laterH => {
                     const latAct = laterH.action.toLowerCase();
@@ -599,11 +576,13 @@ export default function BarcodeDetail() {
                         byLabel = `Initiated by: ${log.user?.fullName || 'Operator'}`;
                       }
                     }
+                  } else if (isRejectedLog) {
+                    statusLabel = 'REJECTED';
                   }
 
                   let circleColor = 'bg-emerald-600';
                   if (isTransfer) circleColor = 'bg-orange-500';
-                  else if (isReturn) circleColor = 'bg-rose-500';
+                  else if (isReturn || isRejectedLog) circleColor = 'bg-rose-500';
                   else if (isSplit) circleColor = 'bg-indigo-500';
                   else if (isClose) circleColor = 'bg-blue-500';
 

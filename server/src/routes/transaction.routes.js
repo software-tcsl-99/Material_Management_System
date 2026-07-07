@@ -14,7 +14,7 @@ router.put('/:id', requirePermission('transaction:create', 'transaction:view_own
 router.put('/:id/approve', requirePermission('approval:approve'), txnController.approveTransaction);
 router.put('/:id/reject', requirePermission('approval:reject'), txnController.rejectTransaction);
 router.put('/:id/store-accept', requirePermission('store:accept'), txnController.storeAccept);
-router.put('/:id/assign-handler', requirePermission('store:assign_handler'), txnController.assignHandler);
+router.put('/:id/assign-handler', requirePermission('store:assign_handler', 'transaction:view_own'), txnController.assignHandler);
 router.patch('/:id/store-action', requirePermission('store:accept', 'store:assign_handler'), txnController.storeAction);
 router.patch('/:id/handler-action', requirePermission('store:assign_handler', 'transaction:create', 'transaction:view_own'), txnController.handlerAction);
 router.patch('/:id/receive', requirePermission('transaction:create', 'transaction:view_own'), txnController.receiveTransaction);

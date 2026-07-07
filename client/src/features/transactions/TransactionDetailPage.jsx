@@ -197,7 +197,11 @@ const TransactionDetailPage = () => {
     api.get('/employees?limit=1000&allDepartments=true').then(res => {
       const empList = res.data.employees || res.data.data || [];
       setEmployees(empList.map(e => ({ value: e._id, label: `${e.fullName} (${e.employeeId})` })));
-      const handlerList = empList;
+      const handlerList = empList.filter(h =>
+        h._id !== user?._id &&
+        h.role !== 'super_admin' &&
+        !(h.role === 'department_admin' && h.departmentAdminType === 'store')
+      );
       setHandlers(handlerList.map(h => ({ value: h._id, label: `${h.fullName} (${h.employeeId})` })));
 
       const mgtList = empList.filter(e => e.role === 'department_admin' && e.departmentAdminType === 'management' && e._id !== user?._id);
@@ -305,10 +309,10 @@ const TransactionDetailPage = () => {
     }
     setRejectReceiptSubmitting(true);
     try {
-      await api.patch(`/transactions/${id}/reject-receipt`, {
+      const res = await api.patch(`/transactions/${id}/reject-receipt`, {
         reason: rejectReceiptReason
       });
-      alert('Receipt rejected and transaction closed.');
+      alert(res.data?.message || 'Receipt rejected successfully.');
       setRejectReceiptModal(false);
       setRejectReceiptReason('');
       fetchData();
@@ -329,7 +333,7 @@ const TransactionDetailPage = () => {
         });
         alert('Transaction accepted by store successfully.');
       } else if (storeActionType === 'assign_return_handler') {
-        const activeReturn = returnsList?.find(r => 
+        const activeReturn = returnsList?.find(r =>
           ['handler_assigned', 'collected'].includes(r.status)
         );
         if (!activeReturn) {
@@ -342,11 +346,15 @@ const TransactionDetailPage = () => {
         });
         alert('Return handler assigned successfully.');
       } else {
-        await api.put(`/transactions/${id}/assign-handler`, {
+        const res = await api.put(`/transactions/${id}/assign-handler`, {
           handlerId,
           remarks: storeRemarks
         });
-        alert('Sourcing handler assigned successfully.');
+        if (res.data?.pendingTransfer) {
+          alert('Handler transfer request sent. Waiting for acceptance.');
+        } else {
+          alert('Sourcing handler assigned successfully.');
+        }
       }
       setStoreModal(false);
       setStoreRemarks('');
@@ -387,6 +395,38 @@ const TransactionDetailPage = () => {
     }
   };
 
+  // Handler send back to store after requester rejection
+  const handleSendToStore = async () => {
+    if (confirm('Are you sure you want to send the rejected materials back to the store?')) {
+      try {
+        await api.patch(`/transactions/${id}/handler-action`, {
+          actionType: 'send_to_store',
+          remarks: 'Handler returned rejected materials to store.'
+        });
+        alert('Materials sent to store.');
+        fetchData();
+      } catch (err) {
+        alert(err.response?.data?.message || 'Action failed.');
+      }
+    }
+  };
+
+  // Store accept returned materials
+  const handleAcceptRejectedReturn = async () => {
+    if (confirm('Accept the returned materials from the handler? This will mark the transaction as rejected.')) {
+      try {
+        await api.patch(`/transactions/${id}/store-action`, {
+          actionType: 'accept_rejected_return',
+          remarks: 'Store accepted returned materials from handler.'
+        });
+        alert('Returned materials accepted by store. Transaction marked as rejected.');
+        fetchData();
+      } catch (err) {
+        alert(err.response?.data?.message || 'Action failed.');
+      }
+    }
+  };
+
   // Handler collect from store
   const handleCollectFromStore = async () => {
     try {
@@ -398,6 +438,76 @@ const TransactionDetailPage = () => {
       fetchData();
     } catch (err) {
       alert(err.response?.data?.message || 'Collection failed.');
+    }
+  };
+
+  // Handler reject job assignment
+  const handleHandlerReject = async () => {
+    const reason = prompt('Please specify a reason for rejecting this assignment:');
+    if (reason === null) return;
+    if (!reason.trim()) {
+      alert('Please enter a rejection reason.');
+      return;
+    }
+    try {
+      await api.patch(`/transactions/${id}/handler-action`, {
+        actionType: 'reject',
+        remarks: reason
+      });
+      alert('Sourcing assignment rejected.');
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Rejection failed.');
+    }
+  };
+
+  // Handler-2: Accept pending transfer request
+  const handleAcceptTransfer = async () => {
+    if (!confirm('Accept this handler transfer request? You will become the new handler.')) return;
+    try {
+      await api.patch(`/transactions/${id}/handler-action`, {
+        actionType: 'accept_transfer',
+        remarks: 'Transfer accepted.'
+      });
+      alert('Handler transfer accepted. You are now the handler.');
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Accept transfer failed.');
+    }
+  };
+
+  // Handler-2: Reject pending transfer request
+  const handleRejectTransfer = async () => {
+    const reason = prompt('Please specify a reason for rejecting this handler transfer:');
+    if (reason === null) return;
+    if (!reason.trim()) {
+      alert('Please enter a rejection reason.');
+      return;
+    }
+    try {
+      await api.patch(`/transactions/${id}/handler-action`, {
+        actionType: 'reject_transfer',
+        remarks: reason
+      });
+      alert('Handler transfer rejected.');
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Reject transfer failed.');
+    }
+  };
+
+  // Handler-1: Cancel pending transfer request
+  const handleCancelTransfer = async () => {
+    if (!confirm('Cancel the pending handler transfer request?')) return;
+    try {
+      await api.patch(`/transactions/${id}/handler-action`, {
+        actionType: 'cancel_transfer',
+        remarks: 'Cancelled by sender.'
+      });
+      alert('Handler transfer request cancelled.');
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Cancel transfer failed.');
     }
   };
 
@@ -533,9 +643,12 @@ const TransactionDetailPage = () => {
   const isSender = txn.requester?._id === user?._id || txn.requester === user?._id;
   const isReceiver = txn.receiver?._id === user?._id || txn.receiver === user?._id;
   const isHandler = txn.handler?._id === user?._id || txn.handler === user?._id;
+  const isPendingTransferTarget = txn.pendingHandlerTransfer?.status === 'pending' &&
+    (txn.pendingHandlerTransfer.toHandler?._id === user?._id || txn.pendingHandlerTransfer.toHandler === user?._id);
+  const hasPendingTransfer = txn.pendingHandlerTransfer?.status === 'pending';
   const showMatchTab = !['closed', 'completed', 'cancelled', 'rejected'].includes(txn.status) && txn.documentType === 'RDC' && (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'accounts'));
-  const canApprove = (activeRole.role === 'team_lead' && txn.status === 'submitted') ||
-    (activeRole.role === 'department_admin' && activeRole.adminType === 'management' && ['submitted', 'tl_approved'].includes(txn.status));
+  const canApprove = ((activeRole.role === 'team_lead' && txn.status === 'submitted') ||
+    (activeRole.role === 'department_admin' && activeRole.adminType === 'management' && ['submitted', 'tl_approved'].includes(txn.status))) && !isSender;
   const isAdmin = activeRole.role === 'super_admin';
   const isStore = activeRole.role === 'department_admin' && activeRole.adminType === 'store';
   // Helper to find dates from timeline
@@ -565,12 +678,13 @@ const TransactionDetailPage = () => {
     return null;
   };
   // Visual Timeline Definition matching Mockup Panel 3
+  const isRequesterTLOrAdmin = txn.requester?.role === 'team_lead' || txn.requester?.role === 'department_admin';
   const flowStages = [
     { label: 'Request Created', done: true, sub: getTimelineDate('Request Created') || new Date(txn.createdAt).toLocaleString(), originalIndex: 0 },
-    { label: 'Team Lead Approved', done: ['tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status), sub: getTimelineDate('Team Lead Approved'), originalIndex: 1 },
+    ...(!isRequesterTLOrAdmin ? [{ label: 'Team Lead Approved', done: ['tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status), sub: getTimelineDate('Team Lead Approved'), originalIndex: 1 }] : []),
     { label: 'Management Approved', done: ['mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status), sub: getTimelineDate('Management Approved'), originalIndex: 2 },
     { label: 'Store Accepted', done: ['store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status), sub: getTimelineDate('Store Accepted'), originalIndex: 3 },
-    { label: 'Handler Assigned', done: (txn.timeline?.some(t => t.action === 'Handler Accepted') || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status)), sub: getTimelineDate('Handler Accepted') || getTimelineDate('Handler Assigned'), originalIndex: 4 },
+    { label: 'Handler Assigned', done: (txn.timeline?.some(t => t.action === 'Handler Accepted' || t.action === 'Handler Transfer Accepted') || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status)), sub: getTimelineDate('Handler Accepted') || getTimelineDate('Handler Transfer Accepted') || getTimelineDate('Handler Assigned'), originalIndex: 4 },
     { label: 'Delivered to Requester', done: ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status), sub: getTimelineDate('Dispatched'), originalIndex: 5 },
     { label: 'Active / Distributed', done: ['received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status), sub: getTimelineDate('Received'), originalIndex: 6 },
     { label: 'Returns / Conversions in Progress', done: barcodes.some(b => ['Return Requested', 'Returned', 'Closed'].includes(b.status) || b.closeRequest?.status === 'pending'), sub: getTimelineDate('Return') || getTimelineDate('Close Requested') || getTimelineDate('Closed'), originalIndex: 7 },
@@ -601,7 +715,7 @@ const TransactionDetailPage = () => {
 
   // Construct unified transaction timeline events from approvals, transactions logs, and barcode histories
   const unifiedTimelineRaw = [];
-  let hasPending = false;
+  let isTerminated = false;
 
   // 1. Request Created (Always)
   if (txn.createdAt) {
@@ -616,69 +730,76 @@ const TransactionDetailPage = () => {
   }
 
   // 2. Team Lead Approval
-  const tlApp = txn.approvalChain?.find(a => a.role === 'team_lead');
-  if (tlApp) {
-    unifiedTimelineRaw.push({
-      timestamp: new Date(tlApp.timestamp || tlApp.createdAt),
-      action: tlApp.action === 'approved' ? 'Team Lead Approved' : 'Team Lead Rejected',
-      by: tlApp.user?.fullName || txn.teamLead?.fullName || 'Team Lead',
-      remarks: tlApp.remarks,
-      status: tlApp.action?.toUpperCase() || 'APPROVED',
-      badgeChar: 'T',
-      stageIndex: 2
-    });
-  } else {
-    const tlDone = ['tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
-    const isRejected = txn.status === 'rejected' && !txn.approvalChain?.some(a => a.role === 'management');
-    
-    if (tlDone || isRejected || !hasPending) {
-      if (!tlDone && !isRejected) hasPending = true;
+  if (!isRequesterTLOrAdmin && !isTerminated) {
+    const tlApp = txn.approvalChain?.find(a => a.role === 'team_lead');
+    if (tlApp) {
+      const tlStatus = tlApp.action === 'approved' ? 'APPROVED' : 'REJECTED';
+      unifiedTimelineRaw.push({
+        timestamp: new Date(tlApp.timestamp || tlApp.createdAt),
+        action: tlApp.action === 'approved' ? 'Team Lead Approved' : 'Team Lead Rejected',
+        by: tlApp.user?.fullName || txn.teamLead?.fullName || 'Team Lead',
+        remarks: tlApp.remarks,
+        status: tlStatus,
+        badgeChar: 'T',
+        stageIndex: 2
+      });
+      if (tlStatus === 'REJECTED') isTerminated = true;
+    } else {
+      const tlApproved = txn.approvalChain?.some(a => a.role === 'team_lead' && a.action === 'approved');
+      const tlDone = tlApproved || ['tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
+      const isRejected = txn.status === 'rejected' && !tlApproved && !txn.approvalChain?.some(a => a.role === 'management');
+
+      const tlStatus = tlDone ? 'APPROVED' : (isRejected ? 'REJECTED' : 'PENDING');
       unifiedTimelineRaw.push({
         timestamp: tlDone ? new Date(txn.createdAt) : null,
         action: isRejected ? 'Team Lead Rejected' : 'Team Lead Review',
         by: txn.teamLead?.fullName || 'Team Lead',
-        status: tlDone ? 'APPROVED' : (isRejected ? 'REJECTED' : 'PENDING'),
+        status: tlStatus,
         badgeChar: 'T',
         stageIndex: 2
       });
+      if (tlStatus === 'REJECTED' || tlStatus === 'PENDING') isTerminated = true;
     }
   }
 
   // 3. Management Approval
-  const mgtApp = txn.approvalChain?.find(a => a.role === 'management');
-  if (mgtApp) {
-    unifiedTimelineRaw.push({
-      timestamp: new Date(mgtApp.timestamp || mgtApp.createdAt),
-      action: mgtApp.action === 'approved' ? 'Management Approved' : 'Management Rejected',
-      by: mgtApp.user?.fullName || txn.managementApprover?.fullName || 'Management',
-      remarks: mgtApp.remarks,
-      status: mgtApp.action?.toUpperCase() || 'APPROVED',
-      badgeChar: 'M',
-      stageIndex: 3
-    });
-  } else {
-    const mgtDone = ['mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
-    const isRejected = txn.status === 'rejected';
-    
-    if (mgtDone || isRejected || !hasPending) {
-      if (!mgtDone && !isRejected) hasPending = true;
+  if (!isTerminated) {
+    const mgtApp = txn.approvalChain?.find(a => a.role === 'management');
+    if (mgtApp) {
+      const mgtStatus = mgtApp.action === 'approved' ? 'APPROVED' : 'REJECTED';
+      unifiedTimelineRaw.push({
+        timestamp: new Date(mgtApp.timestamp || mgtApp.createdAt),
+        action: mgtApp.action === 'approved' ? 'Management Approved' : 'Management Rejected',
+        by: mgtApp.user?.fullName || txn.managementApprover?.fullName || 'Management',
+        remarks: mgtApp.remarks,
+        status: mgtStatus,
+        badgeChar: 'M',
+        stageIndex: 3
+      });
+      if (mgtStatus === 'REJECTED') isTerminated = true;
+    } else {
+      const mgtApproved = txn.approvalChain?.some(a => a.role === 'management' && a.action === 'approved');
+      const mgtDone = mgtApproved || ['mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
+      const isRejected = txn.status === 'rejected' && !mgtApproved;
+
+      const mgtStatus = mgtDone ? 'APPROVED' : (isRejected ? 'REJECTED' : 'PENDING');
       unifiedTimelineRaw.push({
         timestamp: mgtDone ? new Date(txn.createdAt) : null,
         action: isRejected ? 'Management Rejected' : 'Management Review',
         by: txn.managementApprover?.fullName || 'Management',
-        status: mgtDone ? 'APPROVED' : (isRejected ? 'REJECTED' : 'PENDING'),
+        status: mgtStatus,
         badgeChar: 'M',
         stageIndex: 3
       });
+      if (mgtStatus === 'REJECTED' || mgtStatus === 'PENDING') isTerminated = true;
     }
   }
 
   // 4. Store Sourcing Check
-  const storeTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('store accepted') || t.action?.toLowerCase()?.includes('ready (store accept)'));
-  const storeDone = ['store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
-  
-  if (storeDone || !hasPending) {
-    if (!storeDone) hasPending = true;
+  if (!isTerminated) {
+    const storeTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('store accepted') || t.action?.toLowerCase()?.includes('ready (store accept)'));
+    const storeDone = ['store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || !!storeTimeline;
+
     unifiedTimelineRaw.push({
       timestamp: storeTimeline ? new Date(storeTimeline.timestamp || storeTimeline.createdAt) : (storeDone ? new Date(txn.createdAt) : null),
       action: 'Store Sourcing Check',
@@ -687,15 +808,15 @@ const TransactionDetailPage = () => {
       badgeChar: 'S',
       stageIndex: 4
     });
+    if (!storeDone) isTerminated = true;
   }
 
   // 5. Sourcing & Dispatch (Two-Way Flow)
-  if (!txn.handler) {
-    const dispatchTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('dispatched'));
-    const dispatchDone = ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
-    
-    if (dispatchDone || !hasPending) {
-      if (!dispatchDone) hasPending = true;
+  if (!isTerminated) {
+    if (!txn.handler) {
+      const dispatchTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('dispatched'));
+      const dispatchDone = ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || !!dispatchTimeline;
+
       unifiedTimelineRaw.push({
         timestamp: dispatchTimeline ? new Date(dispatchTimeline.timestamp || dispatchTimeline.createdAt) : null,
         action: 'Direct Dispatch to Requester',
@@ -704,58 +825,156 @@ const TransactionDetailPage = () => {
         badgeChar: 'D',
         stageIndex: 5
       });
-    }
-  } else {
-    const handlerAcceptedTimeline = txn.timeline?.find(t => t.action === 'Handler Accepted');
-    const handlerDone = !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
-    const handlerAssignedTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('handler assigned'));
-    
-    if (handlerDone || !hasPending) {
-      if (!handlerDone) hasPending = true;
-      unifiedTimelineRaw.push({
-        timestamp: handlerAcceptedTimeline ? new Date(handlerAcceptedTimeline.timestamp || handlerAcceptedTimeline.createdAt) : (handlerAssignedTimeline ? new Date(handlerAssignedTimeline.timestamp || handlerAssignedTimeline.createdAt) : null),
-        action: `Handler Assigned: ${txn.handler?.fullName || 'Handler'}`,
-        by: txn.store?.fullName || 'Store Admin',
-        status: handlerDone ? 'ACCEPTED' : 'PENDING',
-        badgeChar: 'H',
-        stageIndex: 5
-      });
-    }
+      if (!dispatchDone) isTerminated = true;
+    } else {
+      const allHandlerAssignedTimeline = txn.timeline?.filter(t => t.action === 'Handler Assigned' || t.action?.toLowerCase()?.includes('handler assigned')) || [];
+      const handlerAcceptedTimeline = txn.timeline?.find(t => t.action === 'Handler Accepted' || t.action === 'Handler Transfer Accepted');
 
-    const dispatchTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('dispatched'));
-    const dispatchDone = ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
-    
-    if (dispatchDone || !hasPending) {
-      if (!dispatchDone) {
-        hasPending = true;
+      if (allHandlerAssignedTimeline.length === 0) {
+        const handlerDone = !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
+        unifiedTimelineRaw.push({
+          timestamp: txn.createdAt ? new Date(txn.createdAt) : null,
+          action: `Handler Assigned: ${txn.handler?.fullName || 'Handler'}`,
+          by: txn.store?.fullName || 'Store Admin',
+          status: handlerDone ? 'ACCEPTED' : 'PENDING',
+          badgeChar: 'H',
+          stageIndex: 5
+        });
+        if (!handlerDone) isTerminated = true;
       } else {
+        allHandlerAssignedTimeline.forEach((tEntry, index) => {
+          const isLastAssignment = index === allHandlerAssignedTimeline.length - 1;
+          const handlerDone = !isLastAssignment || !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
+
+          let handlerName = txn.handler?.fullName || 'Handler';
+          const match = tEntry.description?.match(/Handler Assigned:\s*([^.]+)/i);
+          if (match && match[1]) {
+            handlerName = match[1].trim();
+          } else if (tEntry.metadata?.handlerId && tEntry.metadata.handlerId === txn.handler?._id) {
+            handlerName = txn.handler?.fullName;
+          }
+
+          let remarksVal = '';
+          if (tEntry.description?.includes(':')) {
+            remarksVal = tEntry.description.substring(tEntry.description.indexOf(':') + 1).trim();
+          } else {
+            remarksVal = tEntry.description;
+          }
+
+          unifiedTimelineRaw.push({
+            timestamp: new Date(tEntry.timestamp || tEntry.createdAt),
+            action: `Handler Assigned: ${handlerName}`,
+            by: tEntry.user?.fullName || txn.store?.fullName || 'Store Admin',
+            remarks: remarksVal,
+            status: handlerDone ? 'ACCEPTED' : 'PENDING',
+            badgeChar: 'H',
+            stageIndex: 5
+          });
+
+          if (isLastAssignment && !handlerDone) {
+            isTerminated = true;
+          }
+        });
+      }
+
+      let dispatchDone = false;
+      const handlerDone = !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
+      if (handlerDone) {
+        const dispatchTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('dispatched'));
+        dispatchDone = ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || !!dispatchTimeline;
+
         unifiedTimelineRaw.push({
           timestamp: dispatchTimeline ? new Date(dispatchTimeline.timestamp || dispatchTimeline.createdAt) : null,
           action: 'Handler Delivery / Transit',
           by: txn.handler?.fullName || 'Handler',
-          status: 'DISPATCHED',
+          status: dispatchDone ? 'DISPATCHED' : 'PENDING',
           badgeChar: 'D',
           stageIndex: 6
         });
       }
+      if (!handlerDone || !dispatchDone) isTerminated = true;
     }
   }
 
   // 6. Requester Collection / Acceptance
-  const receiveTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('received'));
-  const receiveDone = ['received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
-  
-  if (receiveDone || !hasPending) {
-    if (!receiveDone) hasPending = true;
-    unifiedTimelineRaw.push({
-      timestamp: receiveTimeline ? new Date(receiveTimeline.timestamp || receiveTimeline.createdAt) : null,
-      action: 'Requester Collection Check',
-      by: txn.requester?.fullName || 'Requester',
-      status: receiveDone ? 'ACCEPTED' : 'PENDING',
-      badgeChar: 'R',
-      stageIndex: 7
-    });
+  if (!isTerminated) {
+    const receiveTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('received'));
+    const rejectTimeline = txn.timeline?.find(t => t.action === 'Request Rejected' || t.action === 'Receipt Rejected');
+    const receiveDone = ['received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
+    const requesterRejected = !!txn.requesterRejected;
+
+    if (receiveDone || requesterRejected) {
+      let statusVal = 'PENDING';
+      if (receiveDone) {
+        statusVal = 'ACCEPTED';
+      } else if (requesterRejected) {
+        statusVal = 'REJECTED';
+      }
+
+      unifiedTimelineRaw.push({
+        timestamp: receiveTimeline
+          ? new Date(receiveTimeline.timestamp || receiveTimeline.createdAt)
+          : (rejectTimeline ? new Date(rejectTimeline.timestamp || rejectTimeline.createdAt) : null),
+        action: 'Requester Collection Check',
+        by: rejectTimeline
+          ? (rejectTimeline.user?.fullName || txn.requester?.fullName || 'Requester')
+          : (txn.requester?.fullName || 'Requester'),
+        remarks: rejectTimeline?.description || rejectTimeline?.remarks,
+        status: statusVal,
+        badgeChar: 'R',
+        stageIndex: 7
+      });
+    }
   }
+
+  // 5.5. Handler Transfer Timeline Events
+  txn.timeline?.forEach((t, tIdx) => {
+    const act = t.action?.toLowerCase();
+    if (act?.includes('handler transfer')) {
+      let statusLabel = 'COMPLETED';
+      let badgeChar = 'H';
+
+      if (act.includes('requested')) {
+        const hasResolution = txn.timeline.slice(tIdx + 1).some(laterT => {
+          const laterAct = laterT.action?.toLowerCase();
+          return laterAct?.includes('handler transfer accepted') ||
+            laterAct?.includes('handler transfer rejected') ||
+            laterAct?.includes('handler transfer cancelled');
+        });
+        statusLabel = hasResolution ? 'COMPLETED' : 'PENDING';
+      } else if (act.includes('rejected') || act.includes('cancelled')) {
+        statusLabel = 'REJECTED';
+      } else if (act.includes('accepted')) {
+        statusLabel = 'APPROVED';
+      }
+
+      unifiedTimelineRaw.push({
+        timestamp: new Date(t.timestamp || t.createdAt),
+        action: t.action,
+        by: t.user?.fullName || 'Handler',
+        remarks: t.description || '',
+        status: statusLabel,
+        badgeChar,
+        stageIndex: 5.5
+      });
+    }
+  });
+
+  // 6.5. Return/Rejection Timeline Events
+  txn.timeline?.forEach(t => {
+    const act = t.action?.toLowerCase();
+    if (act?.includes('returned to store') || act?.includes('store accepted return')) {
+      unifiedTimelineRaw.push({
+        timestamp: new Date(t.timestamp || t.createdAt),
+        action: t.action,
+        by: t.user?.fullName || txn.store?.fullName || 'Store Admin',
+        remarks: t.description,
+        status: 'COMPLETED',
+        badgeChar: 'R',
+        stageIndex: 7.5
+      });
+    }
+  });
 
   // 7. Post-delivery Barcode Operations (Transfers, Splits, Returns, Conversions)
   barcodes.forEach(bc => {
@@ -781,11 +1000,11 @@ const TransactionDetailPage = () => {
     historyToRender.forEach((h, hIdx) => {
       // Include post-delivery specific barcode operations: Transfer, Return, Split, Close, Closed, Approval
       const isPostDelivery = h.action.toLowerCase().includes('transfer') ||
-                             h.action.toLowerCase().includes('split') ||
-                             h.action.toLowerCase().includes('return') ||
-                             h.action.toLowerCase().includes('close') ||
-                             h.action.toLowerCase().includes('closed') ||
-                             h.action.toLowerCase().includes('approval');
+        h.action.toLowerCase().includes('split') ||
+        h.action.toLowerCase().includes('return') ||
+        h.action.toLowerCase().includes('close') ||
+        h.action.toLowerCase().includes('closed') ||
+        h.action.toLowerCase().includes('approval');
       if (!isPostDelivery) return;
 
       const ts = h.timestamp || h.createdAt;
@@ -797,14 +1016,14 @@ const TransactionDetailPage = () => {
         // Check if there is a later completion event in history for this barcode
         const hasLaterCompletion = historyToRender.slice(hIdx + 1).some(laterH => {
           const latAct = laterH.action.toLowerCase();
-          return latAct.includes('accepted') || 
-                 latAct.includes('completed') || 
-                 latAct.includes('approved') || 
-                 latAct.includes('rejected') || 
-                 latAct.includes('closed') ||
-                 latAct.includes('returned') ||
-                 latAct.includes('first approval') ||
-                 latAct.includes('approval');
+          return latAct.includes('accepted') ||
+            latAct.includes('completed') ||
+            latAct.includes('approved') ||
+            latAct.includes('rejected') ||
+            latAct.includes('closed') ||
+            latAct.includes('returned') ||
+            latAct.includes('first approval') ||
+            latAct.includes('approval');
         });
 
         let byLabel = h.user?.fullName || 'Operator';
@@ -1015,8 +1234,8 @@ const TransactionDetailPage = () => {
               </>
             )}
 
-            {/* Edit request for requester before team lead approval or when rejected */}
-            {(txn.status === 'submitted' || txn.status === 'rejected') && isSender && (
+            {/* Edit request for requester before team lead approval */}
+            {txn.status === 'submitted' && isSender && !isRequesterTLOrAdmin && (
               <Button size="sm" variant="outline" onClick={() => navigate(`/transactions/${id}/edit`)}>
                 Edit Request
               </Button>
@@ -1044,24 +1263,85 @@ const TransactionDetailPage = () => {
 
 
 
-            {/* Handler Actions (Transfer / Send to Requester) */}
-            {txn.status === 'handler_assigned' && isHandler && (
+            {/* Pending Handler Transfer Status and Actions */}
+            {hasPendingTransfer && isHandler && (
+              <div className="flex items-center gap-2.5 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-xl text-amber-600 dark:text-amber-400 font-semibold text-xs">
+                <span>Waiting for Handler Acceptance ({txn.pendingHandlerTransfer?.toHandler?.fullName || 'New Handler'})</span>
+                <Button size="xs" variant="outline" className="text-rose-600 border-rose-200 hover:bg-rose-50" onClick={handleCancelTransfer}>
+                  Cancel Request
+                </Button>
+              </div>
+            )}
+
+            {isPendingTransferTarget && (
+              <div className="flex items-center gap-2.5 bg-indigo-500/10 border border-indigo-500/20 p-2.5 rounded-xl">
+                <span className="text-xs font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                  New Handler Assignment Request (From {txn.pendingHandlerTransfer?.fromHandler?.fullName || 'Previous Handler'})
+                </span>
+                <Button size="sm" variant="success" onClick={handleAcceptTransfer}>
+                  Accept
+                </Button>
+                <Button size="sm" variant="outline" className="text-rose-600 border-rose-200 hover:bg-rose-50" onClick={handleRejectTransfer}>
+                  Reject
+                </Button>
+              </div>
+            )}
+
+            {/* Handler Actions (Transfer / Send to Requester / Send to Store) */}
+            {txn.status === 'handler_assigned' && isHandler && !hasPendingTransfer && (
               <>
                 {(() => {
-                  const hasAccepted = txn.timeline?.some(t => t.action?.toLowerCase()?.includes('handler accepted'));
-                  if (hasAccepted) {
+                  const hasAccepted = (() => {
+                    const timeline = txn.timeline || [];
+                    const assignments = timeline.filter(t => t.action === 'Handler Assigned' || t.action?.toLowerCase()?.includes('handler assigned'));
+                    if (assignments.length === 0) {
+                      return timeline.some(t => t.action === 'Handler Accepted' || t.action === 'Handler Transfer Accepted' || t.action?.toLowerCase()?.includes('handler accepted') || t.action?.toLowerCase()?.includes('handler transfer accepted'));
+                    }
+                    const sortedAssignments = [...assignments].sort((a, b) => new Date(b.timestamp || b.createdAt) - new Date(a.timestamp || a.createdAt));
+                    const lastAssignmentTime = new Date(sortedAssignments[0].timestamp || sortedAssignments[0].createdAt);
+                    const acceptances = timeline.filter(t => t.action === 'Handler Accepted' || t.action === 'Handler Transfer Accepted' || t.action?.toLowerCase()?.includes('handler accepted') || t.action?.toLowerCase()?.includes('handler transfer accepted'));
+                    return acceptances.some(t => new Date(t.timestamp || t.createdAt) >= lastAssignmentTime);
+                  })();
+                  const wasRejected = txn.timeline?.some(t =>
+                    t.action?.toLowerCase()?.includes('receipt rejected') ||
+                    t.action?.toLowerCase()?.includes('request rejected')
+                  );
+
+                  if (!hasAccepted) {
                     return (
                       <>
                         <Button
                           size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setStoreActionType('assign_handler');
-                            setStoreModal(true);
-                          }}
+                          variant="success"
+                          onClick={handleCollectFromStore}
                         >
-                          Transfer Handler Role
+                          Accept Delivery Job
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                          onClick={handleHandlerReject}
+                        >
+                          Reject Job
+                        </Button>
+                      </>
+                    );
+                  }
+
+                  return (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setStoreActionType('assign_handler');
+                          setStoreModal(true);
+                        }}
+                      >
+                        Transfer Handler Role
+                      </Button>
+                      {!wasRejected ? (
                         <Button
                           size="sm"
                           variant="success"
@@ -1069,17 +1349,79 @@ const TransactionDetailPage = () => {
                         >
                           Send to Requester
                         </Button>
-                      </>
-                    );
-                  }
-                  return null;
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="success"
+                          onClick={handleSendToStore}
+                        >
+                          Send to Store
+                        </Button>
+                      )}
+                    </>
+                  );
                 })()}
               </>
             )}
 
+            {/* Requester Actions (Confirm / Reject Receipt) */}
+            {txn.status === 'dispatched' && isSender && !txn.requesterRejected && !txn.rejectedDeliveryStatus && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-rose-600 border-rose-205 hover:bg-rose-50"
+                  onClick={() => setRejectReceiptModal(true)}
+                >
+                  Reject Receipt
+                </Button>
+                <Button
+                  size="sm"
+                  variant="success"
+                  onClick={() => setReceiveModal(true)}
+                >
+                  Confirm Receipt
+                </Button>
+              </>
+            )}
+
+            {/* Handler Actions (After Requester Rejection) */}
+            {txn.status === 'dispatched' && txn.rejectedDeliveryStatus === 'rejected_by_requester' && isHandler && !hasPendingTransfer && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setStoreActionType('assign_handler');
+                    setStoreModal(true);
+                  }}
+                >
+                  Transfer Handler Role
+                </Button>
+                <Button
+                  size="sm"
+                  variant="success"
+                  onClick={handleSendToStore}
+                >
+                  Send to Store
+                </Button>
+              </>
+            )}
+
+            {/* Store Admin Action (Accept Returned Materials from Handler) */}
+            {txn.status === 'dispatched' && txn.rejectedDeliveryStatus === 'sent_to_store' && (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) && (
+              <Button
+                size="sm"
+                variant="success"
+                onClick={handleAcceptRejectedReturn}
+              >
+                Accept Returned Materials
+              </Button>
+            )}
+
             {/* Return Handler Actions Panel */}
             {(() => {
-              const activeReturn = returnsList?.find(r => 
+              const activeReturn = returnsList?.find(r =>
                 ['handler_assigned', 'collected'].includes(r.status)
               );
               if (!activeReturn) return null;
@@ -1087,8 +1429,9 @@ const TransactionDetailPage = () => {
               const isAssignedReturnHandler = activeReturn.returnHandler?._id === user?._id || activeReturn.returnHandler === user?._id;
               const isStoreAdmin = activeRole.role === 'department_admin' && activeRole.adminType === 'store';
               const isSuper = activeRole.role === 'super_admin';
+              const isEligibleRole = ['team_lead', 'employee'].includes(activeRole.role);
 
-              if (!isAssignedReturnHandler && !isStoreAdmin && !isSuper) return null;
+              if (!isAssignedReturnHandler && !isStoreAdmin && !isSuper && !isEligibleRole) return null;
 
               return (
                 <div className="flex items-center gap-2">
@@ -1198,6 +1541,16 @@ const TransactionDetailPage = () => {
             Reason: <span className="font-semibold text-slate-600 dark:text-slate-400">{txn.rejectionReason || 'No reason specified.'}</span>
           </p>
           {(() => {
+            if (txn.requesterRejected) {
+              const rejectTimeline = txn.timeline?.find(t => t.action === 'Request Rejected' || t.action === 'Receipt Rejected');
+              const rejectUser = rejectTimeline?.user || txn.requester;
+              const rejectTime = rejectTimeline?.timestamp || txn.updatedAt;
+              return (
+                <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mt-1">
+                  Rejected by: {rejectUser?.fullName || 'Requester'} (REQUESTER) on {new Date(rejectTime).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })} at {new Date(rejectTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                </p>
+              );
+            }
             const rejectEntry = txn.approvalChain?.find(a => a.action === 'rejected');
             if (rejectEntry) {
               return (
@@ -1248,26 +1601,28 @@ const TransactionDetailPage = () => {
             </div>
 
             {/* Team Lead Row */}
-            <div className="flex items-start gap-3.5">
-              <div className="p-2.5 bg-blue-50 dark:bg-blue-950/30 text-blue-600 rounded-xl shrink-0">
-                <Shield className="w-5 h-5" />
+            {!isRequesterTLOrAdmin && (
+              <div className="flex items-start gap-3.5">
+                <div className="p-2.5 bg-blue-50 dark:bg-blue-950/30 text-blue-600 rounded-xl shrink-0">
+                  <Shield className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block mb-0.5">Team Lead</span>
+                  <p className="font-bold text-slate-800 dark:text-slate-200 text-xs truncate">
+                    {txn.teamLead?.fullName || 'Approving Authority'}
+                  </p>
+                  <p className="text-[10px] text-slate-500 font-medium italic">
+                    {(() => {
+                      const tlApp = txn.approvalChain?.find(a => a.role === 'team_lead');
+                      if (tlApp?.action === 'rejected') {
+                        return `Rejected on ${new Date(tlApp.timestamp).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}`;
+                      }
+                      return getTimelineDate('Team Lead Approved') ? `Approved on ${getTimelineDate('Team Lead Approved')}` : 'Awaiting Approval';
+                    })()}
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block mb-0.5">Team Lead</span>
-                <p className="font-bold text-slate-800 dark:text-slate-200 text-xs truncate">
-                  {txn.teamLead?.fullName || 'Approving Authority'}
-                </p>
-                <p className="text-[10px] text-slate-500 font-medium italic">
-                  {(() => {
-                    const tlApp = txn.approvalChain?.find(a => a.role === 'team_lead');
-                    if (tlApp?.action === 'rejected') {
-                      return `Rejected on ${new Date(tlApp.timestamp).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}`;
-                    }
-                    return getTimelineDate('Team Lead Approved') ? `Approved on ${getTimelineDate('Team Lead Approved')}` : 'Awaiting Approval';
-                  })()}
-                </p>
-              </div>
-            </div>
+            )}
 
             {/* Management Approver Row */}
             <div className="flex items-start gap-3.5">
@@ -1378,7 +1733,7 @@ const TransactionDetailPage = () => {
               { label: 'Active', val: activeCount, icon: ArrowRightLeft, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20' },
               { label: 'Returned', val: barcodes.filter(b => b.status === 'Returned').length, icon: RotateCcw, color: 'text-amber-600 bg-amber-50 dark:bg-amber-950/20' },
               { label: 'Closed', val: barcodes.filter(b => b.status === 'Closed').length, icon: Lock, color: 'text-rose-600 bg-rose-50 dark:bg-rose-950/20' },
-              { label: 'Cancelled', val: txn.status === 'cancelled' ? (txn.totalItems || totalItemsCount) : 0, icon: AlertTriangle, color: 'text-slate-650 bg-slate-50 dark:bg-slate-950/20' }
+              { label: 'Cancelled', val: barcodes.filter(b => b.status === 'Cancelled').length + (txn.status === 'cancelled' ? (txn.totalItems || totalItemsCount) : 0), icon: AlertTriangle, color: 'text-slate-650 bg-slate-50 dark:bg-slate-950/20' }
             ].map((kpi, idx) => (
               <div key={idx} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col gap-3 shadow-xs">
                 <div className={`p-2 rounded-xl shrink-0 self-start ${kpi.color}`}>
@@ -1464,7 +1819,7 @@ const TransactionDetailPage = () => {
                               <span className="text-[10px] text-slate-500 font-bold truncate">Owner: {ownerName}</span>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
-                              <Badge variant={status === 'Returned' ? 'secondary' : status === 'Active' ? 'success' : 'primary'} className="text-[9px] px-2 py-0.5 leading-none shrink-0 font-bold">
+                              <Badge variant={status === 'Returned' ? 'secondary' : status === 'Cancelled' ? 'danger' : status === 'Active' ? 'success' : 'primary'} className="text-[9px] px-2 py-0.5 leading-none shrink-0 font-bold">
                                 {status.toUpperCase()}
                               </Badge>
                               <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -1505,7 +1860,7 @@ const TransactionDetailPage = () => {
                     : isRejected
                       ? 'bg-rose-600 border-rose-600 text-white'
                       : 'bg-emerald-600 border-emerald-600 text-white';
-                  
+
                   return (
                     <div key={idx} className={`relative ${isPending ? 'opacity-60' : ''}`}>
                       <span className={`absolute -left-[45px] top-[2px] w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-black shadow-sm select-none ${badgeColor}`}>
@@ -1567,7 +1922,7 @@ const TransactionDetailPage = () => {
               <div className="flex justify-between items-center py-1">
                 <span className="text-xs text-slate-400 font-semibold">Cancelled</span>
                 <span className="font-extrabold text-slate-800 dark:text-slate-200 text-xs">
-                  {txn.status === 'cancelled' ? barcodes.length : 0}
+                  {barcodes.filter(b => b.status === 'Cancelled').length || (txn.status === 'cancelled' ? barcodes.length : 0)}
                 </span>
               </div>
             </div>
@@ -1884,37 +2239,19 @@ const TransactionDetailPage = () => {
 
             <form onSubmit={handleStoreAction} className="mt-4 flex flex-col gap-4 text-xs">
               <div>
-                <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Action Mode *</label>
+                <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Select Handler *</label>
                 <select
-                  value={storeActionType}
-                  onChange={(e) => setStoreActionType(e.target.value)}
-                  disabled={storeActionType === 'assign_return_handler'}
-                  className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition disabled:opacity-75"
+                  value={handlerId}
+                  onChange={(e) => setHandlerId(e.target.value)}
+                  required
+                  className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
                 >
-                  <option value="accept">Mark Sourced (Ready to dispatch)</option>
-                  <option value="assign_handler">Assign Sourcing Handler</option>
-                  {storeActionType === 'assign_return_handler' && (
-                    <option value="assign_return_handler">Change Return Handler</option>
-                  )}
+                  <option value="">Select Handler employee</option>
+                  {handlers.map(h => (
+                    <option key={h.value} value={h.value}>{h.label}</option>
+                  ))}
                 </select>
               </div>
-
-              {(storeActionType === 'assign_handler' || storeActionType === 'assign_return_handler') && (
-                <div>
-                  <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Select Handler *</label>
-                  <select
-                    value={handlerId}
-                    onChange={(e) => setHandlerId(e.target.value)}
-                    required
-                    className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
-                  >
-                    <option value="">Select Handler employee</option>
-                    {handlers.map(h => (
-                      <option key={h.value} value={h.value}>{h.label}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
 
               <div>
                 <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Remarks / Sourcing notes</label>

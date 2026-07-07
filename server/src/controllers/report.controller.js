@@ -130,6 +130,26 @@ const buildReportFilter = async (req) => {
     }
   }
 
+  if (req.user.role !== 'super_admin') {
+    const orConditions = [
+      { status: { $ne: 'rejected' } },
+      { requester: req.user._id },
+      { teamLead: req.user._id },
+      { managementApprover: req.user._id },
+      { handler: req.user._id },
+      { store: req.user._id }
+    ];
+    if (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store') {
+      orConditions.push({ status: 'rejected' });
+    }
+    const rejectedVisibility = { $or: orConditions };
+    if (filter.$and) {
+      filter.$and.push(rejectedVisibility);
+    } else {
+      filter.$and = [rejectedVisibility];
+    }
+  }
+
   return filter;
 };
 

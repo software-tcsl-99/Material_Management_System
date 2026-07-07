@@ -128,6 +128,20 @@ const transactionSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     remarks: { type: String, default: '' },
     rejectionReason: { type: String, default: '' },
+    requesterRejected: { type: Boolean, default: false },
+    rejectedDeliveryStatus: { type: String, enum: ['', 'rejected_by_requester', 'sent_to_store', 'store_accepted'], default: '' },
+
+    // Pending handler transfer (two-step accept/reject)
+    pendingHandlerTransfer: {
+      toHandler: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      fromHandler: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      requestedAt: { type: Date },
+      status: { type: String, enum: ['pending', 'accepted', 'rejected', 'cancelled'], default: null },
+      remarks: { type: String, default: '' },
+      rejectReason: { type: String, default: '' },
+      resolvedAt: { type: Date },
+    },
 
     // Materials with per-unit barcodes
     materials: [materialSchema],

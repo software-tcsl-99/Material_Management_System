@@ -47,16 +47,28 @@ exports.getMessages = async (req, res) => {
       }
     }
 
-    let isMember =
-      txn.chatMembers.some((m) => (m._id || m).toString() === req.user._id.toString()) ||
-      req.user.role === 'super_admin' ||
-      (txn.requester?._id || txn.requester)?.toString() === req.user._id.toString() ||
-      (txn.teamLead?._id || txn.teamLead)?.toString() === req.user._id.toString() ||
-      (txn.handler?._id || txn.handler)?.toString() === req.user._id.toString() ||
-      (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store') ||
-      (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management');
+    let isMember = false;
+    if (txn.status === 'rejected') {
+      isMember =
+        req.user.role === 'super_admin' ||
+        (txn.requester?._id || txn.requester)?.toString() === req.user._id.toString() ||
+        (txn.teamLead?._id || txn.teamLead)?.toString() === req.user._id.toString() ||
+        (txn.managementApprover?._id || txn.managementApprover)?.toString() === req.user._id.toString() ||
+        (txn.handler?._id || txn.handler)?.toString() === req.user._id.toString() ||
+        (req.user.role === 'department_admin' && (req.user.departmentAdminType === 'store' || req.user.department?.name?.toLowerCase()?.includes('store'))) ||
+        (txn.store?._id || txn.store)?.toString() === req.user._id.toString();
+    } else {
+      isMember =
+        txn.chatMembers.some((m) => (m._id || m).toString() === req.user._id.toString()) ||
+        req.user.role === 'super_admin' ||
+        (txn.requester?._id || txn.requester)?.toString() === req.user._id.toString() ||
+        (txn.teamLead?._id || txn.teamLead)?.toString() === req.user._id.toString() ||
+        (txn.handler?._id || txn.handler)?.toString() === req.user._id.toString() ||
+        (req.user.role === 'department_admin' && (req.user.departmentAdminType === 'store' || req.user.department?.name?.toLowerCase()?.includes('store'))) ||
+        (req.user.role === 'department_admin' && (req.user.departmentAdminType === 'management' || req.user.department?.name?.toLowerCase()?.includes('management')));
+    }
 
-    if (!isMember) {
+    if (!isMember && txn.status !== 'rejected') {
       const Barcode = require('../models/Barcode');
       const hasBarcodeAccess = await Barcode.findOne({
         transactionId,
@@ -138,16 +150,28 @@ exports.sendMessage = async (req, res) => {
       return res.status(403).json({ message: 'Chat is locked or disabled for this transaction.' });
     }
 
-    let isMember =
-      txn.chatMembers.some((m) => (m._id || m).toString() === req.user._id.toString()) ||
-      req.user.role === 'super_admin' ||
-      (txn.requester?._id || txn.requester)?.toString() === req.user._id.toString() ||
-      (txn.teamLead?._id || txn.teamLead)?.toString() === req.user._id.toString() ||
-      (txn.handler?._id || txn.handler)?.toString() === req.user._id.toString() ||
-      (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store') ||
-      (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management');
+    let isMember = false;
+    if (txn.status === 'rejected') {
+      isMember =
+        req.user.role === 'super_admin' ||
+        (txn.requester?._id || txn.requester)?.toString() === req.user._id.toString() ||
+        (txn.teamLead?._id || txn.teamLead)?.toString() === req.user._id.toString() ||
+        (txn.managementApprover?._id || txn.managementApprover)?.toString() === req.user._id.toString() ||
+        (txn.handler?._id || txn.handler)?.toString() === req.user._id.toString() ||
+        (req.user.role === 'department_admin' && (req.user.departmentAdminType === 'store' || req.user.department?.name?.toLowerCase()?.includes('store'))) ||
+        (txn.store?._id || txn.store)?.toString() === req.user._id.toString();
+    } else {
+      isMember =
+        txn.chatMembers.some((m) => (m._id || m).toString() === req.user._id.toString()) ||
+        req.user.role === 'super_admin' ||
+        (txn.requester?._id || txn.requester)?.toString() === req.user._id.toString() ||
+        (txn.teamLead?._id || txn.teamLead)?.toString() === req.user._id.toString() ||
+        (txn.handler?._id || txn.handler)?.toString() === req.user._id.toString() ||
+        (req.user.role === 'department_admin' && (req.user.departmentAdminType === 'store' || req.user.department?.name?.toLowerCase()?.includes('store'))) ||
+        (req.user.role === 'department_admin' && (req.user.departmentAdminType === 'management' || req.user.department?.name?.toLowerCase()?.includes('management')));
+    }
 
-    if (!isMember) {
+    if (!isMember && txn.status !== 'rejected') {
       const Barcode = require('../models/Barcode');
       const hasBarcodeAccess = await Barcode.findOne({
         transactionId,

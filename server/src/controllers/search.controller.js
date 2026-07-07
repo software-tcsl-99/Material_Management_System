@@ -12,15 +12,32 @@ const globalSearch = async (req, res) => {
 
     const searchRegex = { $regex: q, $options: 'i' };
 
+    const searchFilter = {
+      $or: [
+        { transactionId: searchRegex },
+        { documentNumber: searchRegex },
+        { 'materials.name': searchRegex },
+        { 'materials.barcode': searchRegex },
+      ],
+    };
+
+    if (req.user.role !== 'super_admin') {
+      const orConditions = [
+        { status: { $ne: 'rejected' } },
+        { requester: req.user._id },
+        { teamLead: req.user._id },
+        { managementApprover: req.user._id },
+        { handler: req.user._id },
+        { store: req.user._id }
+      ];
+      if (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store') {
+        orConditions.push({ status: 'rejected' });
+      }
+      searchFilter.$and = [{ $or: orConditions }];
+    }
+
     const [transactions, employees, externalReceipts] = await Promise.all([
-      Transaction.find({
-        $or: [
-          { transactionId: searchRegex },
-          { documentNumber: searchRegex },
-          { 'materials.name': searchRegex },
-          { 'materials.barcode': searchRegex },
-        ],
-      })
+      Transaction.find(searchFilter)
         .populate('sender', 'fullName employeeId')
         .populate('receiver', 'fullName employeeId')
         .limit(10)

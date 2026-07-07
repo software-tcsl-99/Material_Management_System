@@ -38,7 +38,7 @@ const TransactionListPage = () => {
     try {
       let statusFilter = '';
       if (activeTab === 'Pending') statusFilter = 'submitted';
-      else if (activeTab === 'In Progress') statusFilter = 'tl_approved'; // Or multiple progress states
+      else if (activeTab === 'In Progress') statusFilter = 'in_progress'; // Or multiple progress states
       else if (activeTab === 'Completed') statusFilter = 'completed';
       else if (activeTab === 'Closed') statusFilter = 'rejected';
 

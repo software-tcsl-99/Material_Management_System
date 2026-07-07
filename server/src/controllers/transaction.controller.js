@@ -92,9 +92,13 @@ exports.createTransaction = async (req, res) => {
 
     // Determine initial status based on requester role
     let initialStatus = 'submitted';
+    const isBypassed = req.user.role === 'team_lead' || req.user.role === 'department_admin';
+    if (isBypassed) {
+      initialStatus = 'tl_approved';
+    }
 
     let finalTLId = teamLeadId || null;
-    if (!finalTLId) {
+    if (!finalTLId && !isBypassed) {
       const User = require('../models/User');
       const deptTL = await User.findOne({
         department: req.user.department._id || req.user.department,
@@ -109,7 +113,7 @@ exports.createTransaction = async (req, res) => {
     const transaction = await Transaction.create({
       requester: req.user._id,
       department: req.user.department._id || req.user.department,
-      teamLead: finalTLId,
+      teamLead: isBypassed ? null : finalTLId,
       managementApprover: managementApproverId || null,
       store: storeId || null,
       status: initialStatus,
@@ -133,7 +137,7 @@ exports.createTransaction = async (req, res) => {
       activeItems: isSimplified ? 0 : totalItems,
       chatMembers: [
         req.user._id,
-        ...(teamLeadId ? [teamLeadId] : []),
+        ...((teamLeadId && !isBypassed) ? [teamLeadId] : []),
         ...(managementApproverId ? [managementApproverId] : []),
         ...(storeId ? [storeId] : [])
       ],
@@ -208,7 +212,7 @@ exports.createTransaction = async (req, res) => {
     });
 
     await transaction.populate([
-      { path: 'requester', select: 'fullName employeeId email department' },
+      { path: 'requester', select: 'fullName employeeId email role department' },
       { path: 'department', select: 'name' },
       { path: 'teamLead', select: 'fullName employeeId' },
     ]);
@@ -246,6 +250,8 @@ exports.getTransactions = async (req, res) => {
         { requester: req.user._id },
         // For dispatch handler, only show if delivery is still active/in-progress
         { handler: req.user._id, status: { $nin: ['received', 'closed', 'completed'] } },
+        // For pending handler transfer targets
+        { 'pendingHandlerTransfer.toHandler': req.user._id, 'pendingHandlerTransfer.status': 'pending' },
         { transactionId: { $in: [...txnIds, ...activeReturnTxnIds] } }
       ];
     } else if (req.user.role === 'team_lead') {
@@ -274,6 +280,26 @@ exports.getTransactions = async (req, res) => {
     }
     // super_admin sees all — no filter
 
+    if (req.user.role !== 'super_admin') {
+      const orConditions = [
+        { status: { $ne: 'rejected' } },
+        { requester: req.user._id },
+        { teamLead: req.user._id },
+        { managementApprover: req.user._id },
+        { handler: req.user._id },
+        { store: req.user._id }
+      ];
+      if (req.user.role === 'department_admin' && (req.user.departmentAdminType === 'store' || req.user.department?.name?.toLowerCase()?.includes('store'))) {
+        orConditions.push({ status: 'rejected' });
+      }
+      const rejectedVisibility = { $or: orConditions };
+      if (filter.$and) {
+        filter.$and.push(rejectedVisibility);
+      } else {
+        filter.$and = [rejectedVisibility];
+      }
+    }
+
     if (status && status !== 'all') {
       if (status === 'in_progress') {
         filter.status = { $in: ['submitted', 'tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'active', 'partially_returned'] };
@@ -295,12 +321,14 @@ exports.getTransactions = async (req, res) => {
     }
 
     const allTransactions = await Transaction.find(filter)
-      .populate('requester', 'fullName employeeId email')
+      .populate('requester', 'fullName employeeId email role')
       .populate('department', 'name')
       .populate('teamLead', 'fullName employeeId')
       .populate('handler', 'fullName employeeId')
       .populate('managementApprover', 'fullName employeeId')
       .populate('store', 'fullName employeeId')
+      .populate('pendingHandlerTransfer.toHandler', 'fullName employeeId')
+      .populate('pendingHandlerTransfer.fromHandler', 'fullName employeeId')
       .sort({ createdAt: -1 });
 
     let filteredTransactions = allTransactions.filter(txn => txn.status !== 'closed');
@@ -354,7 +382,7 @@ exports.getTransaction = async (req, res) => {
   try {
     const { id } = req.params;
     const transaction = await Transaction.findOne(getQueryByIdOrTxnId(id))
-      .populate('requester', 'fullName employeeId email department designation')
+      .populate('requester', 'fullName employeeId email role department designation')
       .populate('department', 'name')
       .populate('teamLead', 'fullName employeeId email')
       .populate('handler', 'fullName employeeId email')
@@ -363,10 +391,29 @@ exports.getTransaction = async (req, res) => {
       .populate('approvalChain.user', 'fullName employeeId role')
       .populate('timeline.user', 'fullName employeeId')
       .populate('chatMembers', 'fullName employeeId profilePhoto')
-      .populate('materials.barcodes.owner', 'fullName employeeId');
+      .populate('materials.barcodes.owner', 'fullName employeeId')
+      .populate('pendingHandlerTransfer.toHandler', 'fullName employeeId email')
+      .populate('pendingHandlerTransfer.fromHandler', 'fullName employeeId email')
+      .populate('pendingHandlerTransfer.requestedBy', 'fullName employeeId');
 
     if (!transaction) {
       return res.status(404).json({ message: 'Transaction not found.' });
+    }
+
+    if (transaction.status === 'rejected' && req.user.role !== 'super_admin') {
+      const userIdStr = req.user._id.toString();
+      const isRequester = (transaction.requester?._id || transaction.requester)?.toString() === userIdStr;
+      const isTeamLead = (transaction.teamLead?._id || transaction.teamLead)?.toString() === userIdStr;
+      const isManagement = (transaction.managementApprover?._id || transaction.managementApprover)?.toString() === userIdStr;
+      const isStoreAdmin = req.user.role === 'department_admin' && (req.user.departmentAdminType === 'store' || req.user.department?.name?.toLowerCase()?.includes('store'));
+      const isAssignedStore = (transaction.store?._id || transaction.store)?.toString() === userIdStr;
+      const isAssignedHandler = (transaction.handler?._id || transaction.handler)?.toString() === userIdStr;
+      const isPendingTransferHandler = transaction.pendingHandlerTransfer?.toHandler &&
+        (transaction.pendingHandlerTransfer.toHandler._id || transaction.pendingHandlerTransfer.toHandler)?.toString() === userIdStr;
+
+      if (!isRequester && !isTeamLead && !isManagement && !isStoreAdmin && !isAssignedStore && !isAssignedHandler && !isPendingTransferHandler) {
+        return res.status(403).json({ message: 'Access denied. You do not have permission to view this rejected transaction.' });
+      }
     }
 
     // Get barcodes for this transaction
@@ -534,15 +581,17 @@ exports.rejectTransaction = async (req, res) => {
 
     // Determine previous status based on current status
     const previousStatusMap = {
-      'submitted': 'submitted',        // TL rejects → back to submitted (requester can edit/resubmit)
-      'tl_approved': 'submitted',      // Management rejects → back to submitted
+      'submitted': 'rejected',         // TL rejects → rejected permanently
+      'tl_approved': 'rejected',       // Management rejects → rejected permanently
       'mgt_approved': 'tl_approved',   // Store rejects → back to tl_approved
       'store_accepted': 'mgt_approved', // Rejection at store accepted → back to mgt_approved
       'handler_assigned': 'store_accepted', // Handler decline handled separately but as fallback
       'dispatched': 'handler_assigned',
     };
 
-    const previousStatus = previousStatusMap[transaction.status] || 'submitted';
+    const oldStatus = transaction.status;
+    const previousStatus = previousStatusMap[oldStatus] || 'submitted';
+    const isPermanentRejection = previousStatus === 'rejected';
 
     transaction.status = previousStatus;
     transaction.rejectionReason = reason;
@@ -552,17 +601,37 @@ exports.rejectTransaction = async (req, res) => {
       action: 'rejected',
       remarks: reason,
     });
-    addTimeline(transaction, 'Request Rejected', `Rejected by ${req.user.fullName}: ${reason}. Reverted to ${previousStatus.replace(/_/g, ' ')} stage.`, req.user._id);
+
+    const timelineDesc = isPermanentRejection
+      ? `Rejected by ${req.user.fullName}: ${reason}.`
+      : `Rejected by ${req.user.fullName}: ${reason}. Reverted to ${previousStatus.replace(/_/g, ' ')} stage.`;
+    addTimeline(transaction, 'Request Rejected', timelineDesc, req.user._id);
 
     await transaction.save();
+
+    if (isPermanentRejection) {
+      // Cancel all barcodes associated with the transaction
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { status: 'Cancelled' }
+      );
+    }
+
+    const notifMessage = isPermanentRejection
+      ? `Your request ${transaction.transactionId} was rejected by ${req.user.fullName}: ${reason}.`
+      : `Your request ${transaction.transactionId} was rejected by ${req.user.fullName}: ${reason}. It has been reverted for re-review.`;
 
     await createNotification(
       transaction.requester,
       'request_rejected',
       'Request Rejected',
-      `Your request ${transaction.transactionId} was rejected by ${req.user.fullName}: ${reason}. It has been reverted for re-review.`,
+      notifMessage,
       transaction.transactionId
     );
+
+    const auditDesc = isPermanentRejection
+      ? `Rejected transaction ${transaction.transactionId}: ${reason}. Status updated from ${oldStatus} to rejected.`
+      : `Rejected transaction ${transaction.transactionId}: ${reason}. Status reverted from ${oldStatus} to ${previousStatus}.`;
 
     await AuditLog.create({
       action: 'REJECT',
@@ -570,10 +639,14 @@ exports.rejectTransaction = async (req, res) => {
       entityId: transaction.transactionId,
       user: req.user._id,
       userName: req.user.fullName,
-      description: `Rejected transaction ${transaction.transactionId}: ${reason}. Status reverted from ${transaction.status} to ${previousStatus}.`,
+      description: auditDesc,
     });
 
-    res.json({ message: `Transaction rejected and reverted to ${previousStatus.replace(/_/g, ' ')} stage.`, transaction });
+    const responseMsg = isPermanentRejection
+      ? `Transaction rejected successfully.`
+      : `Transaction rejected and reverted to ${previousStatus.replace(/_/g, ' ')} stage.`;
+
+    res.json({ message: responseMsg, transaction });
   } catch (error) {
     res.status(500).json({ message: 'Server error.' });
   }
@@ -644,12 +717,86 @@ exports.assignHandler = async (req, res) => {
       return res.status(404).json({ message: 'Transaction not found.' });
     }
 
+    // Check authorization: store admin, super admin, or the current assigned handler
+    const isStore = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store');
+    const isCurrentHandler = transaction.handler && transaction.handler.toString() === req.user._id.toString();
+
+    if (!isStore && !isCurrentHandler) {
+      return res.status(403).json({ message: 'Access denied. You are not authorized to assign handler for this transaction.' });
+    }
+
+    const User = require('../models/User');
+    const handlerUser = await User.findById(handlerId);
+    const handlerName = handlerUser ? handlerUser.fullName : 'Handler';
+
+    // If a handler-to-handler transfer, use two-step pending flow
+    if (isCurrentHandler && !isStore) {
+      // Check for existing pending transfer
+      if (transaction.pendingHandlerTransfer && transaction.pendingHandlerTransfer.status === 'pending') {
+        return res.status(400).json({ message: 'There is already a pending handler transfer request. Please wait for it to be resolved or cancel it first.' });
+      }
+
+      transaction.pendingHandlerTransfer = {
+        toHandler: handlerId,
+        fromHandler: req.user._id,
+        requestedBy: req.user._id,
+        requestedAt: new Date(),
+        status: 'pending',
+        remarks: remarks || '',
+        rejectReason: '',
+        resolvedAt: null,
+      };
+
+      if (!transaction.chatMembers.includes(handlerId)) {
+        transaction.chatMembers.push(handlerId);
+      }
+
+      addTimeline(transaction, 'Handler Transfer Requested', `Handler transfer requested to ${handlerName}. Remarks: ${remarks || ''}`, req.user._id, { toHandlerId: handlerId });
+
+      await transaction.save();
+
+      const materialsStr = transaction.materials?.map(m => m.name).join(', ') || 'N/A';
+      const barcodes = await Barcode.find({ transactionId: transaction.transactionId });
+      const barcodesStr = barcodes.map(b => b.barcode).join(', ') || 'N/A';
+
+      await createNotification(
+        handlerId,
+        'handler_transfer_request',
+        'Handler Transfer Request',
+        `You have received a handler assignment request.\n\nTransaction:\n${transaction.transactionId}\n\nMaterial:\n${materialsStr}\n\nBarcode:\n${barcodesStr}\n\nCurrent Handler:\n${req.user.fullName}`,
+        transaction.transactionId
+      );
+
+      await AuditLog.create({
+        action: 'HANDLER_TRANSFER_REQUEST',
+        entity: 'Transaction',
+        entityId: transaction.transactionId,
+        user: req.user._id,
+        userName: req.user.fullName,
+        description: `Handler transfer requested to ${handlerName} for ${transaction.transactionId}`,
+      });
+
+      return res.json({ message: 'Handler transfer request sent. Waiting for acceptance.', transaction, pendingTransfer: true });
+    }
+
+    // Store admin / super admin: immediate assignment (existing behavior)
     transaction.handler = handlerId;
     transaction.status = 'handler_assigned';
+    transaction.requesterRejected = false;
+    transaction.rejectedDeliveryStatus = undefined;
+    // Clear any pending transfer
+    transaction.pendingHandlerTransfer = undefined;
     if (!transaction.chatMembers.includes(handlerId)) {
       transaction.chatMembers.push(handlerId);
     }
-    addTimeline(transaction, 'Handler Assigned', `Handler assigned: ${remarks || ''}`, req.user._id, { handlerId });
+
+    // Reset barcodes to pending_acceptance
+    await Barcode.updateMany(
+      { transactionId: transaction.transactionId },
+      { status: 'pending_acceptance' }
+    );
+
+    addTimeline(transaction, 'Handler Assigned', `Handler Assigned: ${handlerName}. Remarks: ${remarks || ''}`, req.user._id, { handlerId });
 
     await transaction.save();
 
@@ -672,7 +819,12 @@ exports.assignHandler = async (req, res) => {
 
     res.json({ message: 'Handler assigned.', transaction });
   } catch (error) {
-    res.status(500).json({ message: 'Server error.' });
+    console.error('Assign handler error:', error);
+    try {
+      const fs = require('fs');
+      fs.writeFileSync('error.log', 'Assign handler error:\n' + (error.stack || error.message || String(error)));
+    } catch (e) {}
+    res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
 
@@ -702,10 +854,10 @@ exports.cancelTransaction = async (req, res) => {
 
     await transaction.save();
 
-    // Close all barcodes
+    // Cancel all barcodes
     await Barcode.updateMany(
       { transactionId: transaction.transactionId },
-      { status: 'Closed' }
+      { status: 'Cancelled' }
     );
 
     res.json({ message: 'Transaction cancelled.', transaction });
@@ -782,10 +934,22 @@ exports.storeAction = async (req, res) => {
       }
       transaction.handler = handlerId;
       transaction.status = 'handler_assigned';
+      transaction.requesterRejected = false;
+      transaction.rejectedDeliveryStatus = undefined;
       if (!transaction.chatMembers.includes(handlerId)) {
         transaction.chatMembers.push(handlerId);
       }
-      addTimeline(transaction, 'Handler Assigned', `Handler assigned: ${remarks || ''}`, req.user._id, { handlerId });
+
+      // Reset barcodes to pending_acceptance
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { status: 'pending_acceptance' }
+      );
+
+      const User = require('../models/User');
+      const handlerUser = await User.findById(handlerId);
+      const handlerName = handlerUser ? handlerUser.fullName : 'Handler';
+      addTimeline(transaction, 'Handler Assigned', `Handler Assigned: ${handlerName}. Remarks: ${remarks || ''}`, req.user._id, { handlerId });
 
       await createNotification(
         handlerId,
@@ -797,6 +961,19 @@ exports.storeAction = async (req, res) => {
     } else if (actionType === 'direct_dispatch') {
       transaction.status = 'dispatched';
       addTimeline(transaction, 'Dispatched', `Direct dispatch bypassed handler: ${remarks || ''}`, req.user._id);
+    } else if (actionType === 'accept_rejected_return') {
+      if (transaction.rejectedDeliveryStatus !== 'sent_to_store') {
+        return res.status(400).json({ message: 'Invalid transaction state for store acceptance.' });
+      }
+      transaction.status = 'rejected';
+      transaction.rejectedDeliveryStatus = 'store_accepted';
+      addTimeline(transaction, 'Store Accepted Return', `Store accepted returned materials from handler. ${remarks || ''}`, req.user._id);
+
+      // Cancel all barcodes
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { status: 'Cancelled' }
+      );
     } else {
       return res.status(400).json({ message: 'Invalid store action type.' });
     }
@@ -832,11 +1009,18 @@ exports.handlerAction = async (req, res) => {
       return res.status(404).json({ message: 'Transaction not found.' });
     }
 
-    // Authorize: Only the handler, store admin, or super_admin can confirm dispatch
-    const isStoreAdmin = req.user.role === 'department_admin' && req.user.departmentAdminType === 'store';
+    // Extract safe ObjectId values handling both populated and unpopulated states
     const handlerId = transaction.handler?._id || transaction.handler;
+    const toHandlerId = transaction.pendingHandlerTransfer?.toHandler?._id || transaction.pendingHandlerTransfer?.toHandler;
+    const fromHandlerId = transaction.pendingHandlerTransfer?.fromHandler?._id || transaction.pendingHandlerTransfer?.fromHandler;
+
+    // Authorize: handler, pending toHandler, store admin, or super_admin
+    const isStoreAdmin = req.user.role === 'department_admin' && req.user.departmentAdminType === 'store';
     const isAssignedHandler = handlerId && handlerId.toString() === req.user._id.toString();
-    if (req.user.role !== 'super_admin' && !isStoreAdmin && !isAssignedHandler) {
+    const isPendingToHandler = transaction.pendingHandlerTransfer?.status === 'pending' &&
+      toHandlerId && toHandlerId.toString() === req.user._id.toString();
+
+    if (req.user.role !== 'super_admin' && !isStoreAdmin && !isAssignedHandler && !isPendingToHandler) {
       return res.status(403).json({ message: 'You are not authorized to perform handler actions for this transaction.' });
     }
 
@@ -850,6 +1034,116 @@ exports.handlerAction = async (req, res) => {
       transaction.status = 'store_accepted';
       transaction.handler = null;
       addTimeline(transaction, 'Handler Declined', `Sourcing assignment declined by handler. Reason: ${remarks || ''}`, req.user._id);
+    } else if (actionType === 'send_to_store') {
+      const wasRejected = transaction.timeline?.some(t => 
+        t.action?.toLowerCase()?.includes('receipt rejected') || 
+        t.action?.toLowerCase()?.includes('request rejected')
+      );
+      const isValidState = (transaction.status === 'dispatched' && transaction.rejectedDeliveryStatus === 'rejected_by_requester') ||
+                           (transaction.status === 'handler_assigned' && wasRejected);
+
+      if (!isValidState) {
+        return res.status(400).json({ message: 'Invalid transaction state for sending to store.' });
+      }
+      transaction.status = 'dispatched';
+      transaction.rejectedDeliveryStatus = 'sent_to_store';
+      addTimeline(transaction, 'Returned to Store', `Handler returned rejected materials to store. ${remarks || ''}`, req.user._id);
+    } else if (actionType === 'accept_transfer') {
+      // Handler-2 accepts pending transfer
+      if (!transaction.pendingHandlerTransfer || transaction.pendingHandlerTransfer.status !== 'pending') {
+        return res.status(400).json({ message: 'No pending handler transfer request found.' });
+      }
+      if (!toHandlerId || toHandlerId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: 'You are not the target of this handler transfer request.' });
+      }
+
+      const User = require('../models/User');
+      const newHandlerUser = await User.findById(req.user._id);
+      const newHandlerName = newHandlerUser ? newHandlerUser.fullName : 'Handler';
+
+      // Transfer ownership
+      transaction.handler = req.user._id;
+      transaction.pendingHandlerTransfer.status = 'accepted';
+      transaction.pendingHandlerTransfer.resolvedAt = new Date();
+
+      // Reset barcodes to pending_acceptance for the new handler
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { status: 'pending_acceptance' }
+      );
+
+      addTimeline(transaction, 'Handler Transfer Accepted', `Handler transfer accepted by ${newHandlerName}. ${remarks || ''}`, req.user._id, { fromHandler: fromHandlerId, toHandler: req.user._id });
+
+      // Notify Handler-1
+      await createNotification(
+        fromHandlerId,
+        'handler_transfer_accepted',
+        'Handler Transfer Accepted',
+        `${newHandlerName} has accepted the handler transfer for ${transaction.transactionId}. You are no longer the handler.`,
+        transaction.transactionId
+      );
+    } else if (actionType === 'reject_transfer') {
+      // Handler-2 rejects pending transfer
+      if (!transaction.pendingHandlerTransfer || transaction.pendingHandlerTransfer.status !== 'pending') {
+        return res.status(400).json({ message: 'No pending handler transfer request found.' });
+      }
+      if (!toHandlerId || toHandlerId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: 'You are not the target of this handler transfer request.' });
+      }
+
+      const User = require('../models/User');
+      const rejectingUser = await User.findById(req.user._id);
+      const rejectingName = rejectingUser ? rejectingUser.fullName : 'Handler';
+
+      transaction.pendingHandlerTransfer.status = 'rejected';
+      transaction.pendingHandlerTransfer.rejectReason = remarks || 'No reason provided';
+      transaction.pendingHandlerTransfer.resolvedAt = new Date();
+      // handler field stays unchanged — Handler-1 retains ownership
+
+      addTimeline(transaction, 'Handler Transfer Rejected', `Handler transfer rejected by ${rejectingName}. Reason: ${remarks || 'No reason provided'}`, req.user._id, { fromHandler: fromHandlerId, toHandler: req.user._id });
+
+      // Notify Handler-1 (fromHandler)
+      await createNotification(
+        fromHandlerId,
+        'handler_transfer_rejected',
+        'Handler Assignment Rejected',
+        `Handler: ${rejectingName}\nReason: ${remarks || 'No reason provided'}\n\nMaterial returned to your responsibility. Please assign another handler or deliver yourself.`,
+        transaction.transactionId
+      );
+
+      // Notify Store Admin (if configured)
+      if (transaction.store) {
+        await createNotification(
+          transaction.store,
+          'handler_transfer_rejected_store',
+          'Handler Transfer Rejected',
+          `Handler transfer rejected. Current owner remains ${rejectingUser ? rejectingUser.fullName : 'Handler'}.`,
+          transaction.transactionId
+        );
+      }
+    } else if (actionType === 'cancel_transfer') {
+      // Handler-1 cancels their own pending transfer
+      if (!transaction.pendingHandlerTransfer || transaction.pendingHandlerTransfer.status !== 'pending') {
+        return res.status(400).json({ message: 'No pending handler transfer request to cancel.' });
+      }
+      if (!fromHandlerId || fromHandlerId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: 'You are not the initiator of this handler transfer request.' });
+      }
+
+      transaction.pendingHandlerTransfer.status = 'cancelled';
+      transaction.pendingHandlerTransfer.rejectReason = 'Cancelled by sender';
+      transaction.pendingHandlerTransfer.resolvedAt = new Date();
+
+      addTimeline(transaction, 'Handler Transfer Cancelled', `Handler transfer request cancelled by ${req.user.fullName}.`, req.user._id);
+
+      // Notify Handler-2
+      await createNotification(
+        toHandlerId,
+        'handler_transfer_cancelled',
+        'Handler Transfer Cancelled',
+        `Handler transfer request for ${transaction.transactionId} has been cancelled by ${req.user.fullName}.`,
+        transaction.transactionId
+      );
     } else {
       return res.status(400).json({ message: 'Invalid handler action type.' });
     }
@@ -868,7 +1162,11 @@ exports.handlerAction = async (req, res) => {
     res.json({ message: 'Handler action logged successfully.', transaction });
   } catch (error) {
     console.error('Handler action error:', error);
-    res.status(500).json({ message: 'Server error.' });
+    try {
+      const fs = require('fs');
+      fs.writeFileSync('error.log', 'Handler action error:\n' + (error.stack || error.message || String(error)));
+    } catch (e) {}
+    res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
 
@@ -1008,30 +1306,63 @@ exports.rejectReceipt = async (req, res) => {
       return res.status(400).json({ message: 'Rejection reason is required.' });
     }
 
-    // Revert transaction status to previous phase (dispatched)
-    transaction.status = 'dispatched';
-    transaction.rejectionReason = reason;
+    const hasHandler = !!transaction.handler;
 
-    addTimeline(transaction, 'Receipt Rejected', `Material receipt rejected by requester. Reason: ${reason}. Status reverted to dispatched.`, req.user._id);
-    await transaction.save();
+    if (!hasHandler) {
+      // Direct dispatch reject -> permanently rejected
+      transaction.status = 'rejected';
+      transaction.rejectionReason = reason;
+      transaction.requesterRejected = true;
+      transaction.rejectedDeliveryStatus = 'rejected_by_requester';
 
-    // Revert barcode statuses back to pending_acceptance
-    await Barcode.updateMany(
-      { transactionId: transaction.transactionId },
-      { status: 'pending_acceptance' }
-    );
+      addTimeline(transaction, 'Request Rejected', `Material receipt rejected by requester. Reason: ${reason}. Transaction rejected.`, req.user._id);
+      await transaction.save();
 
-    // Write to audit log
-    await AuditLog.create({
-      action: 'REJECT_RECEIPT',
-      entity: 'Transaction',
-      entityId: transaction.transactionId,
-      user: req.user._id,
-      userName: req.user.fullName,
-      description: `Requester rejected material receipt. Reason: ${reason}. Status reverted to dispatched.`,
-    });
+      // Cancel barcodes
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { status: 'Cancelled' }
+      );
 
-    res.json({ message: 'Material receipt rejected and reverted to dispatched stage.', transaction });
+      // Write to audit log
+      await AuditLog.create({
+        action: 'REJECT_RECEIPT',
+        entity: 'Transaction',
+        entityId: transaction.transactionId,
+        user: req.user._id,
+        userName: req.user.fullName,
+        description: `Requester rejected material receipt. Reason: ${reason}. Transaction rejected.`,
+      });
+
+      return res.json({ message: 'Material receipt rejected and transaction closed.', transaction });
+    } else {
+      // Handler dispatch reject -> wait for handler to send to store
+      transaction.status = 'dispatched';
+      transaction.rejectionReason = reason;
+      transaction.requesterRejected = true;
+      transaction.rejectedDeliveryStatus = 'rejected_by_requester';
+
+      addTimeline(transaction, 'Receipt Rejected', `Material receipt rejected by requester. Reason: ${reason}. Waiting for handler to return materials to store.`, req.user._id);
+      await transaction.save();
+
+      // Cancel barcodes
+      await Barcode.updateMany(
+        { transactionId: transaction.transactionId },
+        { status: 'Cancelled' }
+      );
+
+      // Write to audit log
+      await AuditLog.create({
+        action: 'REJECT_RECEIPT',
+        entity: 'Transaction',
+        entityId: transaction.transactionId,
+        user: req.user._id,
+        userName: req.user.fullName,
+        description: `Requester rejected material receipt. Reason: ${reason}. Waiting for return to store.`,
+      });
+
+      return res.json({ message: 'Material receipt rejected. Waiting for handler return to store.', transaction });
+    }
   } catch (error) {
     console.error('Reject receipt error:', error);
     res.status(500).json({ message: 'Server error.' });
@@ -1149,7 +1480,10 @@ exports.storeDispatchTransaction = async (req, res) => {
     } else {
       transaction.status = 'handler_assigned';
       transaction.handler = handlerId;
-      addTimeline(transaction, 'Handler Assigned', `Assigned handler for delivery`, req.user._id);
+      const User = require('../models/User');
+      const handlerUser = await User.findById(handlerId);
+      const handlerName = handlerUser ? handlerUser.fullName : 'Handler';
+      addTimeline(transaction, 'Handler Assigned', `Handler Assigned: ${handlerName}. Remarks: Assigned handler for delivery`, req.user._id);
     }
 
     await transaction.save();
@@ -1200,6 +1534,10 @@ exports.updateTransaction = async (req, res) => {
     const transaction = await Transaction.findOne(getQueryByIdOrTxnId(id));
     if (!transaction) {
       return res.status(404).json({ message: 'Transaction not found.' });
+    }
+
+    if (transaction.status === 'rejected') {
+      return res.status(400).json({ message: 'Cannot edit a rejected transaction.' });
     }
 
     if (transaction.requester.toString() !== req.user._id.toString() && req.user.role !== 'super_admin') {

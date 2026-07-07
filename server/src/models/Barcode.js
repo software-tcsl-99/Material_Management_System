@@ -48,7 +48,7 @@ const barcodeSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['Active', 'Returned', 'Closed', 'Split', 'pending_acceptance'],
+      enum: ['Active', 'Returned', 'Closed', 'Cancelled', 'Split', 'pending_acceptance'],
       default: 'Active',
     },
     owner: {

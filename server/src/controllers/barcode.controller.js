@@ -505,15 +505,17 @@ exports.handleReturnHandlerAction = async (req, res) => {
     const returnDoc = await Return.findById(returnId);
     if (!returnDoc) return res.status(404).json({ message: 'Return request not found.' });
 
-    // Validate authorization (must be the assigned handler or super admin)
+    // Validate authorization (must be the assigned handler, employee, team_lead, or super admin)
     const isAssignedHandler = returnDoc.returnHandler && returnDoc.returnHandler.toString() === req.user._id.toString();
-    if (req.user.role !== 'super_admin' && !isAssignedHandler) {
+    const isEligibleRole = ['super_admin', 'team_lead', 'employee'].includes(req.user.role);
+    if (!isEligibleRole && !isAssignedHandler) {
       return res.status(403).json({ message: 'You are not authorized to perform handler actions for this return.' });
     }
 
     if (actionType === 'collect') {
       returnDoc.status = 'collected';
       returnDoc.collectedAt = new Date();
+      returnDoc.returnHandler = req.user._id; // Set current user who collected it as the handler
       
       const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
       if (bc) {
@@ -538,7 +540,7 @@ exports.handleReturnHandlerAction = async (req, res) => {
         await bc.save();
       }
     } else if (actionType === 'reject' || actionType === 'decline') {
-      returnDoc.status = 'pending';
+      returnDoc.status = 'rejected';
       returnDoc.returnHandler = null;
       
       const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
@@ -550,6 +552,15 @@ exports.handleReturnHandlerAction = async (req, res) => {
         });
         await bc.save();
       }
+
+      await createNotification(
+        returnDoc.fromUser,
+        'return_rejected',
+        'Return Request Rejected',
+        `Return request for ${returnDoc.barcode} was rejected by handler. Reason: ${remarks || 'No reason provided'}.`,
+        returnDoc.transactionId,
+        returnDoc.barcode
+      );
     } else {
       return res.status(400).json({ message: 'Invalid handler action type.' });
     }
@@ -568,7 +579,11 @@ exports.handleReturnHandlerAction = async (req, res) => {
     res.json({ message: `Return ${actionType}ed successfully.`, return: returnDoc });
   } catch (error) {
     console.error('Handle return handler action error:', error);
-    res.status(500).json({ message: 'Server error.' });
+    try {
+      const fs = require('fs');
+      fs.writeFileSync('error.log', 'Handle return handler action error:\n' + (error.stack || error.message || String(error)));
+    } catch (e) {}
+    res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
 

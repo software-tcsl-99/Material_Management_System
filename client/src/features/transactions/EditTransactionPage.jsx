@@ -50,13 +50,14 @@ const EditTransactionPage = () => {
         const txnData = txnRes.data.data || txnRes.data.transaction;
 
         // Safety check: can only edit before Team Lead approval
-        if (!['draft', 'submitted', 'rejected'].includes(txnData.status)) {
-          alert('You cannot edit a transaction that has already been approved or processed.');
+        if (!['draft', 'submitted'].includes(txnData.status)) {
+          alert('You cannot edit a transaction that has already been approved, processed, or rejected.');
           navigate(`/transactions/${id}`);
           return;
         }
 
-        setExpectedReturnDate('');
+        const dateVal = txnData.dueDate || txnData.expectedReturnDate;
+        setExpectedReturnDate(dateVal ? new Date(dateVal).toISOString().split('T')[0] : '');
         setDescription(txnData.description || '');
         setSelectedMgt(txnData.managementApprover?._id || txnData.managementApprover || '');
 
