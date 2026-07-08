@@ -249,7 +249,7 @@ exports.getTransactions = async (req, res) => {
       filter.$or = [
         { requester: req.user._id },
         // For dispatch handler, only show if delivery is still active/in-progress
-        { handler: req.user._id, status: { $nin: ['received', 'closed', 'completed'] } },
+        { handler: req.user._id, status: { $in: ['store_accepted', 'handler_assigned', 'dispatched'] } },
         // For pending handler transfer targets
         { 'pendingHandlerTransfer.toHandler': req.user._id, 'pendingHandlerTransfer.status': 'pending' },
         { transactionId: { $in: [...txnIds, ...activeReturnTxnIds] } }
@@ -331,17 +331,37 @@ exports.getTransactions = async (req, res) => {
       .populate('pendingHandlerTransfer.fromHandler', 'fullName employeeId')
       .sort({ createdAt: -1 });
 
-    let filteredTransactions = allTransactions.filter(txn => txn.status !== 'closed');
+    let filteredTransactions = allTransactions;
     if (req.user.role === 'employee') {
       const txnIds = filteredTransactions.map(t => t.transactionId);
       const barcodesForTxns = await Barcode.find({ transactionId: { $in: txnIds } });
       const activePostDispatch = ['dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'];
+
+      // Fetch active returns for the user to keep return handler transactions visible
+      const ReturnModel = require('../models/Return');
+      const activeReturnsForUser = await ReturnModel.find({
+        returnHandler: req.user._id,
+        status: { $in: ['handler_assigned', 'collected'] }
+      });
+      const activeReturnTxnIds = new Set(activeReturnsForUser.map(r => r.transactionId));
 
       filteredTransactions = filteredTransactions.filter(txn => {
         const isRequester = (txn.requester?._id || txn.requester)?.toString() === req.user._id.toString();
         if (isRequester) {
           return true;
         }
+
+        // Keep if the user is the assigned sourcing handler and delivery is in progress
+        const isSourcingHandler = (txn.handler?._id || txn.handler)?.toString() === req.user._id.toString();
+        if (isSourcingHandler && ['store_accepted', 'handler_assigned', 'dispatched'].includes(txn.status)) {
+          return true;
+        }
+
+        // Keep if the user is the return handler for active return requests in this transaction
+        if (activeReturnTxnIds.has(txn.transactionId)) {
+          return true;
+        }
+
         if (activePostDispatch.includes(txn.status)) {
           const txnBarcodes = barcodesForTxns.filter(b => b.transactionId === txn.transactionId);
           const hasActiveMaterial = txnBarcodes.some(b => 

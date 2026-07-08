@@ -55,6 +55,14 @@ function SuperAdminRoute({ children }) {
   return user?.role === 'super_admin' ? children : <Navigate to="/" replace />;
 }
 
+function AuditLogRoute({ children }) {
+  const user = useAuthStore((s) => s.user);
+  const isSuper = user?.role === 'super_admin';
+  const isMgt = user?.role === 'department_admin' && user?.departmentAdminType === 'management';
+  const isStore = user?.role === 'department_admin' && user?.departmentAdminType === 'store';
+  return (isSuper || isMgt || isStore) ? children : <Navigate to="/" replace />;
+}
+
 export default function App() {
   const applyTheme = useThemeStore((s) => s.applyTheme);
 
@@ -101,7 +109,14 @@ export default function App() {
           <Route path="transfers" element={<TransferListPage />} />
           <Route path="returns" element={<ReturnListPage />} />
           <Route path="reports" element={<ReportsPage />} />
-          <Route path="audit-logs" element={<AuditLogPage />} />
+          <Route
+            path="audit-logs"
+            element={
+              <AuditLogRoute>
+                <AuditLogPage />
+              </AuditLogRoute>
+            }
+          />
           <Route path="users" element={<EmployeeListPage />} />
           <Route path="employees/create" element={<CreateEmployeePage />} />
           <Route path="employees/edit/:id" element={<EditEmployeePage />} />

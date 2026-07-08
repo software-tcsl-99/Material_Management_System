@@ -29,7 +29,8 @@ const PendingTransactionsPage = () => {
   const [filterDueToday, setFilterDueToday] = useState(false);
   const [filterEscalated, setFilterEscalated] = useState(false);
   const [filterCrossDept, setFilterCrossDept] = useState(false);
-  const [statusTab, setStatusTab] = useState('pending'); // 'pending' | 'approved' | 'rejected'
+  const [statusTab, setStatusTab] = useState('pending'); // 'pending' | 'history'
+  const [filterRequestType, setFilterRequestType] = useState('all'); // 'all' | 'material' | 'transfer' | 'split' | 'return' | 'conversion'
 
   // Selection for bulk actions (transactions only)
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -241,7 +242,21 @@ const PendingTransactionsPage = () => {
       setTxns(allTxns);
       setPendingTransfers(allTransfers);
       setPendingSplits(allSplits);
-      setPendingReturns(allReturns);
+      // Group returns by transactionId, status, and returnHandler for single-card workflow view
+      const groupedReturnsMap = {};
+      allReturns.forEach(r => {
+        const handlerKey = r.returnHandler?._id || r.returnHandler || 'none';
+        const key = `${r.transactionId}_${r.status}_${handlerKey}`;
+        if (!groupedReturnsMap[key]) {
+          groupedReturnsMap[key] = {
+            ...r,
+            isGroup: true,
+            items: []
+          };
+        }
+        groupedReturnsMap[key].items.push(r);
+      });
+      setPendingReturns(Object.values(groupedReturnsMap));
       setPendingCloseRequests(allCloses);
 
       // Determine default list based on user role to auto-select first item
@@ -354,33 +369,23 @@ const PendingTransactionsPage = () => {
             return false;
           }
         } else if (activeRole.role === 'super_admin') {
-          if (['completed', 'received', 'closed', 'rejected'].includes(t.status)) return false;
+          if (['completed', 'received', 'closed', 'rejected', 'active', 'partially_returned'].includes(t.status)) return false;
         }
       }
-    } else if (statusTab === 'approved') {
-      if (isHandlerDeliveryPending) {
-        return false;
-      }
-      let allowedStatuses = ['ready_for_dispatch', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'closed'];
-      if (activeRole.role === 'team_lead') {
-        allowedStatuses.push('tl_approved', 'mgt_approved');
-      } else if (activeRole.role === 'department_admin' && activeRole.adminType === 'management') {
-        allowedStatuses.push('mgt_approved');
-      } else if (activeRole.role === 'super_admin') {
-        allowedStatuses.push('tl_approved', 'mgt_approved');
-      }
-      if (!allowedStatuses.includes(t.status)) return false;
-    } else if (statusTab === 'rejected') {
-      if (t.status !== 'rejected') return false;
+    } else if (statusTab === 'history') {
+      const isHistoryStatus = ['completed', 'received', 'closed', 'rejected', 'active', 'partially_returned'].includes(t.status);
+      if (!isHistoryStatus) return false;
     }
+
+    if (filterRequestType !== 'all' && filterRequestType !== 'material') return false;
 
     // 2. Search query
     if (search) {
       const q = search.toLowerCase();
       const matchId = t.transactionId.toLowerCase().includes(q);
-      const matchDesc = t.description?.toLowerCase().includes(q);
-      const matchSender = t.sender?.fullName?.toLowerCase().includes(q);
-      if (!matchId && !matchDesc && !matchSender) return false;
+      const matchRequester = t.requester?.fullName?.toLowerCase().includes(q) || t.sender?.fullName?.toLowerCase().includes(q);
+      const matchMaterial = t.items?.some(it => it.materialName?.toLowerCase().includes(q)) || t.description?.toLowerCase().includes(q);
+      if (!matchId && !matchRequester && !matchMaterial) return false;
     }
 
     // 4. Department filter
@@ -405,14 +410,58 @@ const PendingTransactionsPage = () => {
   // Filter pending transfers
   const filteredTransfers = pendingTransfers.filter(tr => {
     if (statusTab !== 'pending') return false; // Transfers are only shown in pending tab
+    if (filterRequestType !== 'all' && filterRequestType !== 'transfer') return false;
 
     if (search) {
       const q = search.toLowerCase();
       const matchBarcode = tr.barcode.toLowerCase().includes(q);
-      const matchFrom = tr.fromUser?.fullName?.toLowerCase().includes(q);
-      if (!matchBarcode && !matchFrom) return false;
+      const matchRequester = tr.fromUser?.fullName?.toLowerCase().includes(q) || tr.toUser?.fullName?.toLowerCase().includes(q);
+      const matchMaterial = tr.materialName?.toLowerCase().includes(q);
+      if (!matchBarcode && !matchRequester && !matchMaterial) return false;
     }
 
+    return true;
+  });
+
+  // Filter pending splits
+  const filteredSplits = pendingSplits.filter(s => {
+    if (statusTab !== 'pending') return false;
+    if (filterRequestType !== 'all' && filterRequestType !== 'split') return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const matchId = s.transactionId?.toLowerCase().includes(q) || s.barcode?.toLowerCase().includes(q);
+      const matchRequester = s.requester?.fullName?.toLowerCase().includes(q);
+      const matchMaterial = s.materialName?.toLowerCase().includes(q);
+      if (!matchId && !matchRequester && !matchMaterial) return false;
+    }
+    return true;
+  });
+
+  // Filter pending returns
+  const filteredReturns = pendingReturns.filter(r => {
+    if (statusTab !== 'pending') return false;
+    if (filterRequestType !== 'all' && filterRequestType !== 'return') return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const matchId = r.transactionId?.toLowerCase().includes(q) || r.barcode?.toLowerCase().includes(q) || r.items?.some(it => it.barcode?.toLowerCase().includes(q));
+      const matchRequester = r.fromUser?.fullName?.toLowerCase().includes(q);
+      const matchMaterial = r.materialName?.toLowerCase().includes(q) || r.items?.some(it => it.materialName?.toLowerCase().includes(q));
+      if (!matchId && !matchRequester && !matchMaterial) return false;
+    }
+    return true;
+  });
+
+  // Filter pending close requests
+  const filteredCloseRequests = pendingCloseRequests.filter(cr => {
+    if (statusTab !== 'pending') return false;
+    if (filterRequestType !== 'all' && filterRequestType !== 'conversion') return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const matchId = cr.barcode?.toLowerCase().includes(q) || cr.documentNumber?.toLowerCase().includes(q);
+      const matchRequester = cr.requester?.fullName?.toLowerCase().includes(q);
+      const matchMaterial = cr.materialName?.toLowerCase().includes(q);
+      if (!matchId && !matchRequester && !matchMaterial) return false;
+    }
     return true;
   });
 
@@ -643,7 +692,13 @@ const PendingTransactionsPage = () => {
     setActionError('');
     setSubmitting(true);
     try {
-      await api.put(`/barcodes/return/${selectedItem._id}/accept`);
+      if (selectedItem.items && selectedItem.items.length > 0) {
+        for (const item of selectedItem.items) {
+          await api.put(`/barcodes/return/${item._id}/accept`);
+        }
+      } else {
+        await api.put(`/barcodes/return/${selectedItem._id}/accept`);
+      }
       alert('Return request accepted successfully!');
       const targetTxnId = selectedItem?.transactionId;
       setSelectedItem(null);
@@ -734,10 +789,19 @@ const PendingTransactionsPage = () => {
     setActionError('');
     setSubmitting(true);
     try {
-      await api.put(`/barcodes/return/${selectedItem._id}/handler-action`, {
-        actionType,
-        remarks: actionRemarks || `Return marked as ${actionType}ed`
-      });
+      if (selectedItem.items && selectedItem.items.length > 0) {
+        for (const item of selectedItem.items) {
+          await api.put(`/barcodes/return/${item._id}/handler-action`, {
+            actionType,
+            remarks: actionRemarks || `Return marked as ${actionType}ed`
+          });
+        }
+      } else {
+        await api.put(`/barcodes/return/${selectedItem._id}/handler-action`, {
+          actionType,
+          remarks: actionRemarks || `Return marked as ${actionType}ed`
+        });
+      }
       alert(`Return request marked as ${actionType}ed successfully!`);
       const targetTxnId = selectedItem?.transactionId;
       setActionRemarks('');
@@ -763,6 +827,23 @@ const PendingTransactionsPage = () => {
           remarks: storeRemarks
         });
         alert('Transaction accepted by store successfully.');
+      } else if (storeActionType === 'assign_return_handler') {
+        const activeReturns = selectedItem.items || [selectedItem];
+        for (const r of activeReturns) {
+          await api.put(`/barcodes/return/${r._id}/assign-handler`, {
+            handlerId,
+            remarks: storeRemarks
+          });
+        }
+        alert('Return handler assigned successfully.');
+        const targetTxnId = selectedItem.transactionId;
+        setStoreModal(false);
+        setStoreRemarks('');
+        setHandlerId('');
+        setSelectedItem(null);
+        fetchApprovals();
+        navigate(`/transactions/${targetTxnId}`);
+        return;
       } else {
         await api.put(`/transactions/${selectedItem._id}/assign-handler`, {
           handlerId,
@@ -991,41 +1072,43 @@ const PendingTransactionsPage = () => {
           <p className="text-xs text-slate-500 mt-1">Active Role Profile: <span className="font-extrabold text-blue-650 dark:text-blue-400">{activeRole.label}</span></p>
         </div>
 
-        {/* Search bar on the right side of title */}
-        <div className="w-full sm:w-80 relative">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            type="search"
-            placeholder="Search ID, barcode, sender..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg focus:outline-none focus:border-blue-500"
-          />
+        {/* Filter and Search controls */}
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+          {/* Request Type Selector */}
+          <select
+            value={filterRequestType}
+            onChange={(e) => setFilterRequestType(e.target.value)}
+            className="w-full sm:w-44 px-3 py-2 text-xs bg-white border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg focus:outline-none focus:border-blue-500 text-slate-700 dark:text-slate-200 font-extrabold"
+          >
+            <option value="all">All Request Types</option>
+            <option value="material">Material Requests</option>
+            <option value="transfer">Barcode Transfers</option>
+            <option value="split">Split Requests</option>
+            <option value="return">Return Requests</option>
+            <option value="conversion">Conversion Requests</option>
+          </select>
+
+          {/* Search bar */}
+          <div className="w-full sm:w-80 relative">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <input
+              type="search"
+              placeholder="Search ID, requester, material name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg focus:outline-none focus:border-blue-500 text-slate-700 dark:text-slate-200"
+            />
+          </div>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6 shrink-0">
         <button onClick={() => setStatusTab('pending')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'pending' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-          Pending Requests ({filteredTxns.length})
+          Pending Requests ({filteredTxns.length + filteredTransfers.length + filteredSplits.length + filteredReturns.length + filteredCloseRequests.length})
         </button>
-        {(activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) && (
-          <button onClick={() => setStatusTab('split_requests')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'split_requests' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-            Split Requests ({pendingSplits.length})
-          </button>
-        )}
-        {(activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store') || pendingReturns.length > 0) && (
-          <button onClick={() => setStatusTab('return_requests')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'return_requests' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-            Return Requests ({pendingReturns.length})
-          </button>
-        )}
-        {(activeRole.role === 'super_admin' || activeRole.role === 'team_lead' || activeRole.role === 'department_admin') && (
-          <button onClick={() => setStatusTab('close_requests')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'close_requests' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-            {activeRole.role === 'department_admin' && activeRole.adminType === 'accounts' ? "Invoice Conversion" : "DC Conversion"} ({pendingCloseRequests.length})
-          </button>
-        )}
-        <button onClick={() => setStatusTab('approved')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'approved' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-          Approved History
+        <button onClick={() => setStatusTab('history')} className={`pb-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'history' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
+          Request History
         </button>
       </div>
 
@@ -1037,11 +1120,8 @@ const PendingTransactionsPage = () => {
         {!selectedItem ? (
           /* Left Side: Cards Queue list taking full width */
           <div className="w-full flex flex-col gap-3 overflow-y-auto pr-1">
-            {((statusTab === 'pending' && filteredTxns.length === 0 && filteredTransfers.length === 0) ||
-              (statusTab === 'split_requests' && pendingSplits.length === 0) ||
-              (statusTab === 'return_requests' && pendingReturns.length === 0) ||
-              (statusTab === 'close_requests' && pendingCloseRequests.length === 0) ||
-              ((statusTab === 'approved' || statusTab === 'rejected') && filteredTxns.length === 0)) ? (
+            {((statusTab === 'pending' && filteredTxns.length === 0 && filteredTransfers.length === 0 && filteredSplits.length === 0 && filteredReturns.length === 0 && filteredCloseRequests.length === 0) ||
+              (statusTab === 'history' && filteredTxns.length === 0)) ? (
               <div className="text-center py-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl">
                 <Clock className="w-10 h-10 text-slate-355 mx-auto mb-2.5 animate-pulse" />
                 <p className="text-sm font-bold text-slate-500">Queue is empty</p>
@@ -1049,12 +1129,11 @@ const PendingTransactionsPage = () => {
             ) : (
               <>
                 {/* Split Requests List */}
-                {statusTab === 'split_requests' && pendingSplits.length > 0 && (
+                {statusTab === 'pending' && filteredSplits.length > 0 && (
                   <div className="flex flex-col gap-2">
                     <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Split Requests</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                      <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Split Requests</span>
-                      {pendingSplits.map(s => {
+                      {filteredSplits.map(s => {
                         const isActive = selectedItem?._id === s._id && s.barcode && !s.fromUser;
                         return (
                           <div
@@ -1063,13 +1142,15 @@ const PendingTransactionsPage = () => {
                               setSelectedItem(s);
                               setApproveMaterialName(s.materialName);
                             }}
-                            className={`p-4 bg-white dark:bg-slate-900 border rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2
-                          ${isActive ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-slate-200/80 dark:border-slate-800'}
+                            className={`p-4 rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2 border
+                          ${isActive 
+                            ? 'border-purple-500 ring-1 ring-purple-500/20 bg-purple-50/20 dark:bg-purple-950/10' 
+                            : 'border-purple-200 dark:border-purple-900/40 bg-purple-50/10 dark:bg-purple-950/5 hover:border-purple-300 dark:hover:border-purple-800'}
                         `}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] font-black uppercase text-orange-600 dark:text-orange-400 tracking-wider">Split Request</span>
+                                <span className="text-[10px] font-black uppercase text-purple-600 dark:text-purple-400 tracking-wider font-extrabold">Split Request</span>
                                 <span className="text-xs font-extrabold text-slate-655 dark:text-slate-400 font-mono">{s.transactionId}</span>
                               </div>
                               <Badge variant="primary">PENDING</Badge>
@@ -1090,23 +1171,25 @@ const PendingTransactionsPage = () => {
                     </div>
                   </div>
                 )}                {/* Return Requests List */}
-                {statusTab === 'return_requests' && pendingReturns.length > 0 && (
+                {statusTab === 'pending' && filteredReturns.length > 0 && (
                   <div className="flex flex-col gap-2">
                     <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Return Requests</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                      {pendingReturns.map(r => {
-                        const isActive = selectedItem?._id === r._id && r.barcode && r.condition;
+                      {filteredReturns.map(r => {
+                        const isActive = selectedItem?._id === r._id;
                         return (
                           <div
                             key={r._id}
                             onClick={() => setSelectedItem(r)}
-                            className={`p-4 bg-white dark:bg-slate-900 border rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2
-                          ${isActive ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-slate-200/80 dark:border-slate-800'}
+                            className={`p-4 rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2 border
+                          ${isActive 
+                            ? 'border-amber-500 ring-1 ring-amber-500/20 bg-amber-50/20 dark:bg-amber-950/10' 
+                            : 'border-amber-200 dark:border-amber-900/40 bg-amber-50/10 dark:bg-amber-950/5 hover:border-amber-300 dark:hover:border-amber-800'}
                         `}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] font-black uppercase text-amber-600 dark:text-amber-450 tracking-wider">Return Request</span>
+                                <span className="text-[10px] font-black uppercase text-amber-600 dark:text-amber-400 tracking-wider font-extrabold">Return Request</span>
                                 <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{r.transactionId}</span>
                               </div>
                               <Badge variant={r.status === 'completed' ? 'success' : 'warning'}>
@@ -1114,9 +1197,18 @@ const PendingTransactionsPage = () => {
                               </Badge>
                             </div>
                             <div>
-                              <p className="text-xs font-extrabold text-slate-800 dark:text-slate-100">Barcode: <span className="font-mono text-blue-650 font-black">{r.barcode}</span></p>
+                              <p className="text-xs font-extrabold text-slate-800 dark:text-slate-100">
+                                {r.items && r.items.length > 1 ? 'Barcodes: ' : 'Barcode: '}
+                                <span className="font-mono text-blue-650 font-black">
+                                  {r.items && r.items.length > 1 ? r.items.map(it => it.barcode).join(', ') : r.barcode}
+                                </span>
+                              </p>
                               <p className="text-[10px] text-slate-555 font-semibold mt-0.5">From: <span className="font-extrabold">{r.fromUser?.fullName}</span></p>
-                              <p className="text-[10px] text-slate-555 font-semibold">Condition: <span className="font-extrabold text-amber-700 uppercase">{r.condition}</span></p>
+                              <p className="text-[10px] text-slate-555 font-semibold">
+                                Condition: <span className="font-extrabold text-amber-700 uppercase">
+                                  {r.items && r.items.length > 1 ? [...new Set(r.items.map(it => it.condition))].join(', ') : r.condition}
+                                </span>
+                              </p>
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
                               <span className="text-rose-600 dark:text-rose-400 font-extrabold">
@@ -1133,24 +1225,26 @@ const PendingTransactionsPage = () => {
                     </div>
                   </div>
                 )}                {/* DC/Invoice Conversion Requests List */}
-                {statusTab === 'close_requests' && pendingCloseRequests.length > 0 && (
+                {statusTab === 'pending' && filteredCloseRequests.length > 0 && (
                   <div className="flex flex-col gap-2">
                     <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Conversion Requests</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                      {pendingCloseRequests.map(r => {
+                      {filteredCloseRequests.map(r => {
                         const isActive = selectedItem?._id === r._id && !!r.documentType;
                         const isInvoice = r.documentType === 'Invoice';
                         return (
                           <div
                             key={r._id}
                             onClick={() => setSelectedItem(r)}
-                            className={`p-4 bg-white dark:bg-slate-900 border rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2
-                          ${isActive ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-slate-200/80 dark:border-slate-800'}
+                            className={`p-4 rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2 border
+                          ${isActive 
+                            ? 'border-emerald-500 ring-1 ring-emerald-500/20 bg-emerald-50/20 dark:bg-emerald-950/10' 
+                            : 'border-emerald-200 dark:border-emerald-900/40 bg-emerald-50/10 dark:bg-emerald-950/5 hover:border-emerald-300 dark:hover:border-emerald-800'}
                         `}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex flex-col gap-0.5">
-                                <span className={`text-[10px] font-black uppercase tracking-wider font-extrabold ${isInvoice ? 'text-indigo-600 dark:text-indigo-400' : 'text-emerald-600 dark:text-emerald-450'}`}>
+                                <span className="text-[10px] font-black uppercase tracking-wider font-extrabold text-emerald-600 dark:text-emerald-400">
                                   {isInvoice ? 'Invoice Conversion' : 'DC Conversion'}
                                 </span>
                                 <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{r.barcode}</span>
@@ -1182,15 +1276,12 @@ const PendingTransactionsPage = () => {
                       })}
                     </div>
                   </div>
-                )}
-
-                {/* Transactions List */}
-                {statusTab !== 'split_requests' && statusTab !== 'return_requests' && statusTab !== 'close_requests' && filteredTxns.length > 0 && (
+                )}                {/* Transactions List */}
+                {(statusTab === 'pending' || statusTab === 'history') && filteredTxns.length > 0 && (
                   <div className="flex flex-col gap-2">
-                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Material Requests</span>
-
-
-
+                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">
+                      {statusTab === 'history' ? 'Request History' : 'Material Requests'}
+                    </span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                       {filteredTxns.map(t => {
                         const isSelected = selectedIds.has(t._id);
@@ -1199,14 +1290,16 @@ const PendingTransactionsPage = () => {
                           <div
                             key={t._id}
                             onClick={() => setSelectedItem(t)}
-                            className={`p-4 bg-white dark:bg-slate-900 border rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2
-                          ${isActive ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-slate-200/80 dark:border-slate-800'}
+                            className={`p-4 rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2 border
+                          ${isActive 
+                            ? 'border-blue-500 ring-1 ring-blue-500/20 bg-blue-50/20 dark:bg-blue-950/10' 
+                            : 'border-blue-200 dark:border-blue-900/40 bg-blue-50/10 dark:bg-blue-950/5 hover:border-blue-300 dark:hover:border-blue-800'}
                         `}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-center gap-2">
                                 <div className="flex flex-col gap-0.5">
-                                  <span className="text-[10px] font-black uppercase text-blue-655 dark:text-blue-450 tracking-wider">
+                                  <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400 tracking-wider font-extrabold">
                                     {t.status === 'submitted' ? 'Material Request (Team Lead Approval)' :
                                       t.status === 'tl_approved' ? 'Material Request (Management Approval)' :
                                         ['mgt_approved', 'ready_for_dispatch'].includes(t.status) ? 'Store Sourcing Request' :
@@ -1250,7 +1343,7 @@ const PendingTransactionsPage = () => {
                 )}
 
                 {/* Barcode Transfers List */}
-                {filteredTransfers.length > 0 && (
+                {statusTab === 'pending' && filteredTransfers.length > 0 && (
                   <div className="flex flex-col gap-2 mt-4">
                     <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest pl-1 mb-1 block">Barcode Transfers</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1260,13 +1353,15 @@ const PendingTransactionsPage = () => {
                           <div
                             key={tr._id}
                             onClick={() => setSelectedItem(tr)}
-                            className={`p-4 bg-white dark:bg-slate-900 border rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2
-                          ${isActive ? 'border-indigo-500 ring-1 ring-indigo-500/20' : 'border-slate-200/80 dark:border-slate-800'}
+                            className={`p-4 rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2 border
+                          ${isActive 
+                            ? 'border-indigo-500 ring-1 ring-indigo-500/20 bg-indigo-50/20 dark:bg-indigo-950/10' 
+                            : 'border-indigo-200 dark:border-indigo-900/40 bg-indigo-50/10 dark:bg-indigo-950/5 hover:border-indigo-300 dark:hover:border-indigo-800'}
                         `}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider">Transfer Request</span>
+                                <span className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider font-extrabold">Transfer Request</span>
                                 <span className="text-xs font-extrabold text-indigo-655 dark:text-indigo-400 font-mono">{tr.barcode}</span>
                               </div>
                               <Badge variant="warning">TRANSFER</Badge>
@@ -1317,8 +1412,13 @@ const PendingTransactionsPage = () => {
                         {selectedItem.status.toUpperCase().replace('_', ' ')}
                       </Badge>
                     </div>
-                    <h3 className="text-base font-extrabold text-slate-855 mt-1">Return of {selectedItem.barcode}</h3>
+                    <h3 className="text-base font-extrabold text-slate-855 mt-1">
+                      {selectedItem.items && selectedItem.items.length > 1 ? `Return of ${selectedItem.items.length} items` : `Return of ${selectedItem.barcode}`}
+                    </h3>
                   </div>
+                  <Button size="sm" variant="outline" onClick={() => navigate(`/transactions/${selectedItem.transactionId}`)}>
+                    Open full transaction view
+                  </Button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5 text-xs font-semibold text-slate-600">
@@ -1330,7 +1430,9 @@ const PendingTransactionsPage = () => {
                     </div>
                     <div>
                       <span className="text-[9px] text-slate-400 font-bold block mb-0.5">ITEM CONDITION</span>
-                      <span className="font-bold text-amber-700 uppercase font-mono">{selectedItem.condition}</span>
+                      <span className="font-bold text-amber-700 uppercase font-mono">
+                        {selectedItem.items && selectedItem.items.length > 1 ? [...new Set(selectedItem.items.map(it => it.condition))].join(', ') : selectedItem.condition}
+                      </span>
                     </div>
                     <div>
                       <span className="text-[9px] text-slate-400 font-bold block mb-0.5">EXPECTED RETURN</span>
@@ -1341,6 +1443,20 @@ const PendingTransactionsPage = () => {
                       </span>
                     </div>
                   </div>
+
+                  {selectedItem.items && selectedItem.items.length > 1 && (
+                    <div className="bg-slate-50 dark:bg-slate-95/40 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex flex-col gap-2">
+                      <span className="text-[9px] text-slate-400 font-bold uppercase block mb-1">Returned Items ({selectedItem.items.length})</span>
+                      <div className="flex flex-col gap-1.5">
+                        {selectedItem.items.map((it, idx) => (
+                          <div key={idx} className="flex justify-between items-center text-xs font-bold text-slate-750 dark:text-slate-205 border-b border-slate-100 dark:border-slate-800 pb-1.5 last:border-b-0 last:pb-0 font-mono">
+                            <span className="text-blue-650">{it.barcode}</span>
+                            <span className="text-[10px] text-amber-700 uppercase bg-amber-50 px-2 py-0.5 rounded-md">{it.condition}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {selectedItem.returnHandler && (
                     <div className="grid grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-950/40 p-4 rounded-xl border border-slate-100 dark:border-slate-800">
@@ -1427,7 +1543,7 @@ const PendingTransactionsPage = () => {
                         </>
                       )}
 
-                      {/* Handler Deliver Button */}
+                      {/* Handler Deliver & Change Handler Buttons */}
                       {selectedItem.status === 'collected' && (
                         activeRole.role === 'super_admin' ||
                         activeRole.role === 'team_lead' ||
@@ -1435,9 +1551,21 @@ const PendingTransactionsPage = () => {
                         selectedItem.returnHandler?._id === user?._id ||
                         selectedItem.returnHandler === user?._id
                       ) && (
-                        <Button variant="success" onClick={() => handleReturnHandlerAction('deliver')} disabled={submitting}>
-                          Deliver to Store
-                        </Button>
+                        <>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setStoreActionType('assign_return_handler');
+                              setStoreModal(true);
+                            }}
+                            disabled={submitting}
+                          >
+                            Change Handler
+                          </Button>
+                          <Button variant="success" onClick={() => handleReturnHandlerAction('deliver')} disabled={submitting}>
+                            Deliver to Store
+                          </Button>
+                        </>
                       )}
 
                       {/* Store Confirm Receipt Button */}
@@ -2157,9 +2285,11 @@ const PendingTransactionsPage = () => {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
             <h3 className="text-lg font-black text-slate-900 dark:text-white">
-              Store dispatch / Sourcing Manager
+              {storeActionType === 'assign_return_handler' ? 'Assign Return Handler' : 'Store dispatch / Sourcing Manager'}
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">Assign handler or complete DC sourcing check.</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {storeActionType === 'assign_return_handler' ? 'Assign a return handler for the materials.' : 'Assign handler or complete DC sourcing check.'}
+            </p>
 
             <form onSubmit={handleStoreActionSubmit} className="mt-4 flex flex-col gap-4 text-xs font-semibold text-slate-650 dark:text-slate-400">
               <div>

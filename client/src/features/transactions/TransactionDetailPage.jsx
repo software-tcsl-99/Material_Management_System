@@ -340,10 +340,17 @@ const TransactionDetailPage = () => {
           alert('No active return request found to assign handler to.');
           return;
         }
-        await api.put(`/barcodes/return/${activeReturn._id}/assign-handler`, {
-          handlerId,
-          remarks: storeRemarks
-        });
+        const activeReturns = returnsList?.filter(r =>
+          r.status === activeReturn.status &&
+          (r.returnHandler?._id || r.returnHandler) === (activeReturn.returnHandler?._id || activeReturn.returnHandler)
+        ) || [activeReturn];
+
+        for (const r of activeReturns) {
+          await api.put(`/barcodes/return/${r._id}/assign-handler`, {
+            handlerId,
+            remarks: storeRemarks
+          });
+        }
         alert('Return handler assigned successfully.');
       } else {
         const res = await api.put(`/transactions/${id}/assign-handler`, {
@@ -713,6 +720,12 @@ const TransactionDetailPage = () => {
     return ['Returned', 'Closed', 'Split', 'Cancelled'].includes(b.status);
   });
 
+  const mgtApproved = txn.approvalChain?.some(a => a.role === 'management' && a.action === 'approved');
+  const isRequesterRejected = txn.requesterRejected || 
+    txn.timeline?.some(t => t.action === 'Receipt Rejected' || t.action?.toLowerCase()?.includes('receipt rejected')) ||
+    (txn.status === 'rejected' && mgtApproved) ||
+    txn.timeline?.some(t => t.action === 'Request Rejected' && (t.description?.toLowerCase()?.includes('requester') || t.description?.toLowerCase()?.includes('receipt')));
+
   // Construct unified transaction timeline events from approvals, transactions logs, and barcode histories
   const unifiedTimelineRaw = [];
   let isTerminated = false;
@@ -798,7 +811,7 @@ const TransactionDetailPage = () => {
   // 4. Store Sourcing Check
   if (!isTerminated) {
     const storeTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('store accepted') || t.action?.toLowerCase()?.includes('ready (store accept)'));
-    const storeDone = ['store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || !!storeTimeline;
+    const storeDone = ['store_accepted', 'handler_assigned', 'dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || !!storeTimeline || isRequesterRejected;
 
     unifiedTimelineRaw.push({
       timestamp: storeTimeline ? new Date(storeTimeline.timestamp || storeTimeline.createdAt) : (storeDone ? new Date(txn.createdAt) : null),
@@ -815,7 +828,7 @@ const TransactionDetailPage = () => {
   if (!isTerminated) {
     if (!txn.handler) {
       const dispatchTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('dispatched'));
-      const dispatchDone = ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || !!dispatchTimeline;
+      const dispatchDone = ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || !!dispatchTimeline || isRequesterRejected;
 
       unifiedTimelineRaw.push({
         timestamp: dispatchTimeline ? new Date(dispatchTimeline.timestamp || dispatchTimeline.createdAt) : null,
@@ -831,7 +844,7 @@ const TransactionDetailPage = () => {
       const handlerAcceptedTimeline = txn.timeline?.find(t => t.action === 'Handler Accepted' || t.action === 'Handler Transfer Accepted');
 
       if (allHandlerAssignedTimeline.length === 0) {
-        const handlerDone = !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
+        const handlerDone = !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || isRequesterRejected;
         unifiedTimelineRaw.push({
           timestamp: txn.createdAt ? new Date(txn.createdAt) : null,
           action: `Handler Assigned: ${txn.handler?.fullName || 'Handler'}`,
@@ -844,7 +857,7 @@ const TransactionDetailPage = () => {
       } else {
         allHandlerAssignedTimeline.forEach((tEntry, index) => {
           const isLastAssignment = index === allHandlerAssignedTimeline.length - 1;
-          const handlerDone = !isLastAssignment || !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
+          const handlerDone = !isLastAssignment || !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || isRequesterRejected;
 
           let handlerName = txn.handler?.fullName || 'Handler';
           const match = tEntry.description?.match(/Handler Assigned:\s*([^.]+)/i);
@@ -878,10 +891,10 @@ const TransactionDetailPage = () => {
       }
 
       let dispatchDone = false;
-      const handlerDone = !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status);
+      const handlerDone = !!handlerAcceptedTimeline || ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || isRequesterRejected;
       if (handlerDone) {
         const dispatchTimeline = txn.timeline?.find(t => t.action?.toLowerCase()?.includes('dispatched'));
-        dispatchDone = ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || !!dispatchTimeline;
+        dispatchDone = ['dispatched', 'received', 'completed', 'active', 'partially_returned', 'closed'].includes(txn.status) || !!dispatchTimeline || isRequesterRejected;
 
         unifiedTimelineRaw.push({
           timestamp: dispatchTimeline ? new Date(dispatchTimeline.timestamp || dispatchTimeline.createdAt) : null,
@@ -1006,6 +1019,42 @@ const TransactionDetailPage = () => {
         h.action.toLowerCase().includes('closed') ||
         h.action.toLowerCase().includes('approval');
       if (!isPostDelivery) return;
+      if (h.action === 'Return Assignment Declined by Handler' || h.action === 'Return Reassignment Declined by Handler') {
+        return;
+      }
+      let hasLaterCollected = false;
+      if (h.action.toLowerCase().includes('return requested')) {
+        for (let i = hIdx + 1; i < historyToRender.length; i++) {
+          const act = historyToRender[i].action.toLowerCase();
+          if (act.includes('return requested')) {
+            break;
+          }
+          if (act.includes('return collected') || act.includes('returned to store')) {
+            hasLaterCollected = true;
+            break;
+          }
+        }
+      }
+      if (h.action.toLowerCase().includes('return requested') && hasLaterCollected) {
+        return;
+      }
+
+      let hasLaterSplitDecision = false;
+      if (h.action.toLowerCase().includes('split requested')) {
+        for (let i = hIdx + 1; i < historyToRender.length; i++) {
+          const act = historyToRender[i].action.toLowerCase();
+          if (act.includes('split requested')) {
+            break;
+          }
+          if (act.includes('split approved') || act.includes('split rejected')) {
+            hasLaterSplitDecision = true;
+            break;
+          }
+        }
+      }
+      if (h.action.toLowerCase().includes('split requested') && hasLaterSplitDecision) {
+        return;
+      }
 
       const ts = h.timestamp || h.createdAt;
       if (ts) {
@@ -1014,17 +1063,14 @@ const TransactionDetailPage = () => {
         let badgeChar = 'B';
 
         // Check if there is a later completion event in history for this barcode
-        const hasLaterCompletion = historyToRender.slice(hIdx + 1).some(laterH => {
-          const latAct = laterH.action.toLowerCase();
-          return latAct.includes('accepted') ||
-            latAct.includes('completed') ||
-            latAct.includes('approved') ||
-            latAct.includes('rejected') ||
-            latAct.includes('closed') ||
-            latAct.includes('returned') ||
-            latAct.includes('first approval') ||
-            latAct.includes('approval');
-        });
+        const laterEvents = historyToRender.slice(hIdx + 1);
+        const hasLaterCompletion = laterEvents.length > 0;
+        const nextEvent = historyToRender[hIdx + 1];
+        const isLaterRejected = nextEvent && (
+          nextEvent.action.toLowerCase().includes('reject') ||
+          nextEvent.action.toLowerCase().includes('decline') ||
+          nextEvent.action.toLowerCase().includes('cancel')
+        );
 
         let byLabel = h.user?.fullName || 'Operator';
 
@@ -1037,7 +1083,7 @@ const TransactionDetailPage = () => {
             statusLabel = 'REJECTED';
             byLabel = `Rejected by: ${h.user?.fullName || 'Operator'}`;
           } else {
-            statusLabel = hasLaterCompletion ? 'ACCEPTED' : 'PENDING';
+            statusLabel = isLaterRejected ? 'REJECTED' : (hasLaterCompletion ? 'ACCEPTED' : 'PENDING');
             if (statusLabel === 'PENDING') {
               if (h.action.toLowerCase().includes('pending acceptance')) {
                 byLabel = `Pending Acceptance by: ${h.user?.fullName || 'Recipient'}`;
@@ -1051,14 +1097,17 @@ const TransactionDetailPage = () => {
           badgeChar = 'T';
         } else if (h.action.toLowerCase().includes('split')) {
           actionLabel = `${h.action} for ${bc.barcode}`;
-          if (h.action.toLowerCase().includes('accepted') || h.action.toLowerCase().includes('approved') || h.action.toLowerCase().includes('completed')) {
+          if (h.action === 'Split Child Created') {
+            statusLabel = 'ACCEPTED';
+            byLabel = `Created by: ${h.user?.fullName || 'Store Admin'}`;
+          } else if (h.action.toLowerCase().includes('accepted') || h.action.toLowerCase().includes('approved') || h.action.toLowerCase().includes('completed')) {
             statusLabel = 'ACCEPTED';
             byLabel = `Accepted by: ${h.user?.fullName || 'Operator'}`;
           } else if (h.action.toLowerCase().includes('rejected')) {
             statusLabel = 'REJECTED';
             byLabel = `Rejected by: ${h.user?.fullName || 'Operator'}`;
           } else {
-            statusLabel = hasLaterCompletion ? 'ACCEPTED' : 'PENDING';
+            statusLabel = isLaterRejected ? 'REJECTED' : (hasLaterCompletion ? 'ACCEPTED' : 'PENDING');
             if (statusLabel === 'PENDING') {
               byLabel = 'Pending Store Approval';
             } else {
@@ -1068,15 +1117,16 @@ const TransactionDetailPage = () => {
           badgeChar = 'S';
         } else if (h.action.toLowerCase().includes('return')) {
           actionLabel = `${h.action} for ${bc.barcode}`;
-          if (h.action.toLowerCase().includes('accepted') || h.action.toLowerCase().includes('completed') || h.action.toLowerCase().includes('returned')) {
+          const hAct = h.action.toLowerCase();
+          if (hAct.includes('accepted') || hAct.includes('completed') || hAct.includes('returned')) {
             statusLabel = 'ACCEPTED';
             byLabel = `Accepted by: ${h.user?.fullName || 'Operator'}`;
-          } else if (h.action.toLowerCase().includes('rejected')) {
+          } else if (hAct.includes('rejected') || hAct.includes('declined') || hAct.includes('reject') || hAct.includes('decline')) {
             statusLabel = 'REJECTED';
-            byLabel = `Rejected by: ${h.user?.fullName || 'Operator'}`;
+            byLabel = `Rejected/Declined by: ${h.user?.fullName || 'Operator'}`;
           } else {
             // intermediate return actions (requested, collected, handed over) are PENDING until final acceptance
-            statusLabel = hasLaterCompletion ? 'ACCEPTED' : 'PENDING';
+            statusLabel = isLaterRejected ? 'REJECTED' : (hasLaterCompletion ? 'ACCEPTED' : 'PENDING');
             if (statusLabel === 'PENDING') {
               if (h.action.toLowerCase().includes('requested')) {
                 byLabel = `Pending Return Collection by Handler`;
@@ -1096,6 +1146,56 @@ const TransactionDetailPage = () => {
                 byLabel = `Initiated by: ${h.user?.fullName || 'Operator'}`;
               }
             }
+
+            if (h.action.toLowerCase().includes('requested')) {
+              if (h.action.includes('Via Handler')) {
+                let handlerName = h.metadata?.handlerName;
+                if (!handlerName) {
+                  const nextAssigned = historyToRender.slice(hIdx + 1).find(laterH =>
+                    laterH.action === 'Handler Assigned' ||
+                    laterH.action === 'Return Handler Reassigned' ||
+                    laterH.action.includes('Collected')
+                  );
+                  if (nextAssigned) {
+                    if (nextAssigned.action === 'Return Handler Reassigned') {
+                      handlerName = nextAssigned.metadata?.handlerName;
+                      if (!handlerName && nextAssigned.remarks?.startsWith('Reassigned return handler to ')) {
+                        handlerName = nextAssigned.remarks.replace('Reassigned return handler to ', '');
+                      }
+                    } else if (nextAssigned.action === 'Handler Assigned') {
+                      handlerName = nextAssigned.user?.fullName;
+                    } else {
+                      handlerName = nextAssigned.user?.fullName;
+                    }
+                  }
+                }
+                if (!handlerName) {
+                  handlerName = 'Handler';
+                }
+                if (statusLabel === 'PENDING') {
+                  byLabel = `Pending Return Collection by Handler: ${handlerName}`;
+                } else {
+                  byLabel = `Initiated by: ${h.user?.fullName || 'Operator'} (Handler: ${handlerName})`;
+                }
+              } else {
+                if (statusLabel === 'PENDING') {
+                  byLabel = `Pending Return Collection by Store`;
+                } else {
+                  byLabel = `Initiated by: ${h.user?.fullName || 'Operator'}`;
+                }
+              }
+            }
+          }
+          if (h.action === 'Return Handler Reassigned') {
+            let handlerName = h.metadata?.handlerName;
+            if (!handlerName && h.remarks?.startsWith('Reassigned return handler to ')) {
+              handlerName = h.remarks.replace('Reassigned return handler to ', '');
+            }
+            if (!handlerName) {
+              handlerName = 'Handler';
+            }
+            const decision = statusLabel === 'ACCEPTED' ? 'Accepted' : (statusLabel === 'REJECTED' ? 'Rejected' : 'Pending');
+            byLabel = `Reassigned to: ${handlerName} (${decision})`;
           }
           badgeChar = 'R';
         } else if (h.action.toLowerCase().includes('close') || h.action.toLowerCase().includes('closed') || h.action.toLowerCase().includes('approval') || h.action.toLowerCase().includes('upload') || h.action.toLowerCase().includes('conversion')) {
@@ -1134,7 +1234,7 @@ const TransactionDetailPage = () => {
             statusLabel = 'PENDING';
             byLabel = h.user?.fullName || 'Pending Action';
           } else {
-            statusLabel = hasLaterCompletion ? 'APPROVED' : 'PENDING';
+            statusLabel = isLaterRejected ? 'REJECTED' : (hasLaterCompletion ? 'APPROVED' : 'PENDING');
             if (statusLabel === 'PENDING') {
               if (bc.closeRequest?.status === 'pending_accounts_approval') {
                 byLabel = 'Pending Accounts Approval';
@@ -1421,25 +1521,35 @@ const TransactionDetailPage = () => {
 
             {/* Return Handler Actions Panel */}
             {(() => {
-              const activeReturn = returnsList?.find(r =>
-                ['handler_assigned', 'collected'].includes(r.status)
+              let activeReturn = returnsList?.find(r =>
+                ['handler_assigned', 'collected'].includes(r.status) &&
+                (r.returnHandler?._id === user?._id || r.returnHandler === user?._id)
               );
+              if (!activeReturn) {
+                activeReturn = returnsList?.find(r =>
+                  ['handler_assigned', 'collected'].includes(r.status)
+                );
+              }
               if (!activeReturn) return null;
 
               const isAssignedReturnHandler = activeReturn.returnHandler?._id === user?._id || activeReturn.returnHandler === user?._id;
               const isStoreAdmin = activeRole.role === 'department_admin' && activeRole.adminType === 'store';
               const isSuper = activeRole.role === 'super_admin';
-              const isEligibleRole = ['team_lead', 'employee'].includes(activeRole.role);
 
-              if (!isAssignedReturnHandler && !isStoreAdmin && !isSuper && !isEligibleRole) return null;
+              if (!isAssignedReturnHandler && !isStoreAdmin && !isSuper) return null;
+
+              const activeReturns = returnsList?.filter(r =>
+                r.status === activeReturn.status &&
+                (r.returnHandler?._id || r.returnHandler) === (activeReturn.returnHandler?._id || activeReturn.returnHandler)
+              ) || [activeReturn];
 
               return (
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-amber-600 bg-amber-50 dark:bg-amber-955/20 px-2.5 py-1.5 rounded-xl border border-amber-200 dark:border-amber-900 uppercase">
-                    Return of {activeReturn.barcode} ({activeReturn.status.replace('_', ' ')})
+                    Return of {activeReturns.length > 1 ? activeReturns.map(r => r.barcode).join(', ') : activeReturn.barcode} ({activeReturn.status.replace('_', ' ')})
                   </span>
 
-                  {activeReturn.status === 'handler_assigned' && (
+                  {activeReturn.status === 'handler_assigned' && (isAssignedReturnHandler || isSuper) && (
                     <>
                       <Button
                         size="sm"
@@ -1448,11 +1558,13 @@ const TransactionDetailPage = () => {
                         onClick={async () => {
                           if (confirm('Decline this return assignment?')) {
                             try {
-                              await api.put(`/barcodes/return/${activeReturn._id}/handler-action`, {
-                                actionType: 'reject',
-                                remarks: 'Handler declined return request assignment'
-                              });
-                              alert('Return request rejected successfully!');
+                              for (const r of activeReturns) {
+                                await api.put(`/barcodes/return/${r._id}/handler-action`, {
+                                  actionType: 'reject',
+                                  remarks: 'Handler declined return request assignment'
+                                });
+                              }
+                              alert('Return requests rejected successfully!');
                               fetchData();
                             } catch (err) {
                               alert(err.response?.data?.message || 'Failed to decline return request.');
@@ -1467,11 +1579,13 @@ const TransactionDetailPage = () => {
                         variant="success"
                         onClick={async () => {
                           try {
-                            await api.put(`/barcodes/return/${activeReturn._id}/handler-action`, {
-                              actionType: 'collect',
-                              remarks: 'Handler collected returning items from requester'
-                            });
-                            alert('Return collected from requester successfully!');
+                            for (const r of activeReturns) {
+                              await api.put(`/barcodes/return/${r._id}/handler-action`, {
+                                actionType: 'collect',
+                                remarks: 'Handler collected returning items from requester'
+                              });
+                            }
+                            alert('Returns collected from requester successfully!');
                             fetchData();
                           } catch (err) {
                             alert(err.response?.data?.message || 'Failed to collect return.');
@@ -1485,34 +1599,40 @@ const TransactionDetailPage = () => {
 
                   {activeReturn.status === 'collected' && (
                     <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setStoreActionType('assign_return_handler');
-                          setStoreModal(true);
-                        }}
-                      >
-                        Change Handler
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="success"
-                        onClick={async () => {
-                          try {
-                            await api.put(`/barcodes/return/${activeReturn._id}/handler-action`, {
-                              actionType: 'deliver',
-                              remarks: 'Handler delivered returning items to store'
-                            });
-                            alert('Return delivered to store successfully!');
-                            fetchData();
-                          } catch (err) {
-                            alert(err.response?.data?.message || 'Failed to deliver to store.');
-                          }
-                        }}
-                      >
-                        Deliver to Store
-                      </Button>
+                      {(isStoreAdmin || isSuper || isAssignedReturnHandler) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setStoreActionType('assign_return_handler');
+                            setStoreModal(true);
+                          }}
+                        >
+                          Change Handler
+                        </Button>
+                      )}
+                      {(isAssignedReturnHandler || isSuper) && (
+                        <Button
+                          size="sm"
+                          variant="success"
+                          onClick={async () => {
+                            try {
+                              for (const r of activeReturns) {
+                                await api.put(`/barcodes/return/${r._id}/handler-action`, {
+                                  actionType: 'deliver',
+                                  remarks: 'Handler delivered returning items to store'
+                                });
+                              }
+                              alert('Returns delivered to store successfully!');
+                              fetchData();
+                            } catch (err) {
+                              alert(err.response?.data?.message || 'Failed to deliver to store.');
+                            }
+                          }}
+                        >
+                          Deliver to Store
+                        </Button>
+                      )}
                     </>
                   )}
                 </div>
@@ -1521,8 +1641,8 @@ const TransactionDetailPage = () => {
 
 
 
-            {/* Return Multiple Button (only shown when transaction is in active status) */}
-            {txn.status === 'active' && (
+            {/* Return Multiple Button (only shown when transaction is in active status, user is the requester, not the handler, and no active return is on handler) */}
+            {txn.status === 'active' && (txn.requester?._id === user?._id || txn.requester === user?._id) && (txn.handler?._id !== user?._id && txn.handler !== user?._id) && !returnsList?.some(r => (r.fromUser?._id === user?._id || r.fromUser === user?._id) && ['handler_assigned', 'collected'].includes(r.status)) && (
               <Button size="sm" variant="outline" onClick={() => navigate(`/transactions/${txn._id}/return-multiple`)}>
                 Return Multiple
               </Button>

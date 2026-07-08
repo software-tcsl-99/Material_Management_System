@@ -1,11 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import { ArrowRight, Calendar, ChevronDown, Download, Filter, Plus, Search } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, Calendar, Download, Edit2, Eye, Plus, Trash2, Search, ArrowLeftRight, CheckCircle, Clock } from 'lucide-react';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import DataTable from '../../components/ui/DataTable';
-import Input from '../../components/ui/Input';
-import Select from '../../components/ui/Select';
 import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
 
@@ -22,8 +20,9 @@ const TransactionListPage = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
-  // Tab Filtering (All, In Progress, Pending, Completed, Closed)
+  // Tab Filtering (All, Pending, In Progress, Received, Partially Returned, Closed, Rejected)
   const [activeTab, setActiveTab] = useState('All');
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
 
   // Filters state
   const [search, setSearch] = useState('');
@@ -38,9 +37,11 @@ const TransactionListPage = () => {
     try {
       let statusFilter = '';
       if (activeTab === 'Pending') statusFilter = 'submitted';
-      else if (activeTab === 'In Progress') statusFilter = 'in_progress'; // Or multiple progress states
-      else if (activeTab === 'Completed') statusFilter = 'completed';
-      else if (activeTab === 'Closed') statusFilter = 'rejected';
+      else if (activeTab === 'In Progress') statusFilter = 'in_progress';
+      else if (activeTab === 'Received') statusFilter = 'received';
+      else if (activeTab === 'Partially Returned') statusFilter = 'partially_returned';
+      else if (activeTab === 'Closed') statusFilter = 'closed';
+      else if (activeTab === 'Rejected') statusFilter = 'rejected';
 
       const params = {
         page: currentPage,
@@ -105,21 +106,11 @@ const TransactionListPage = () => {
     fetchTransactions();
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this transaction permanently?')) return;
-    try {
-      await api.delete(`/transactions/${id}`);
-      fetchTransactions();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Failed to delete transaction');
-    }
-  };
-
   const columns = [
     {
       header: 'Transaction ID',
       cell: (row) => (
-        <span className="font-bold text-blue-600 dark:text-blue-400 font-mono text-xs">
+        <span className="font-bold text-blue-600 dark:text-blue-400 text-md">
           {row.transactionId}
         </span>
       ),
@@ -128,15 +119,15 @@ const TransactionListPage = () => {
       header: 'Requester',
       cell: (row) => (
         <div className="flex flex-col">
-          <span className="font-extrabold text-slate-800 dark:text-slate-200">{row.sender?.fullName}</span>
-          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{row.sender?.employeeId}</span>
+          <span className="font-extrabold text-slate-800 dark:text-slate-200">{row.requester?.fullName || row.sender?.fullName}</span>
+          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{row.requester?.employeeId || row.sender?.employeeId}</span>
         </div>
       ),
     },
     {
       header: 'Date',
       cell: (row) => (
-        <span className="text-[11px] text-slate-500 font-semibold font-mono">
+        <span className="text-[11px] text-slate-500 font-semibold">
           {new Date(row.createdAt).toLocaleDateString()}
         </span>
       ),
@@ -144,18 +135,38 @@ const TransactionListPage = () => {
     {
       header: 'Expected Return Date',
       cell: (row) => (
-        <span className="text-[11px] text-slate-500 font-semibold font-mono">
+        <span className="block text-[11px] text-slate-500 font-semibold text-center">
           {row.dueDate ? new Date(row.dueDate).toLocaleDateString() : 'N/A'}
         </span>
       ),
     },
     {
       header: 'Status',
-      cell: (row) => (
-        <Badge variant={row.status === 'rejected' ? 'danger' : row.status === 'completed' ? 'success' : 'primary'}>
-          {row.status.toUpperCase()}
-        </Badge>
-      ),
+      cell: (row) => {
+        const getVariant = (status) => {
+          switch (status) {
+            case 'closed':
+            case 'completed':
+              return 'success';
+            case 'rejected':
+            case 'cancelled':
+              return 'danger';
+            case 'partially_returned':
+              return 'warning';
+            case 'received':
+              return 'info';
+            case 'active':
+              return 'info';
+            default:
+              return 'default';
+          }
+        };
+        return (
+          <Badge variant={getVariant(row.status)}>
+            {row.status.replace('_', ' ').toUpperCase()}
+          </Badge>
+        );
+      },
     },
     {
       header: 'Progress',
@@ -168,15 +179,17 @@ const TransactionListPage = () => {
         else if (row.status === 'handler_assigned') progress = 70;
         else if (row.status === 'dispatched') progress = 85;
         else if (row.status === 'received') progress = 95;
-        else if (row.status === 'completed') progress = 100;
+        else if (row.status === 'completed' || row.status === 'closed') progress = 100;
         else if (row.status === 'rejected') progress = 100;
+        else if (row.status === 'partially_returned') progress = 90;
+        else if (row.status === 'active') progress = 95;
 
         return (
           <div className="flex items-center gap-2 w-28">
             <div className="flex-1 bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-              <div 
-                className={`h-full rounded-full ${row.status === 'rejected' ? 'bg-red-500' : 'bg-blue-600'}`} 
-                style={{ width: `${progress}%` }} 
+              <div
+                className={`h-full rounded-full ${row.status === 'rejected' ? 'bg-red-500' : 'bg-blue-600'}`}
+                style={{ width: `${progress}%` }}
               />
             </div>
             <span className="text-[9px] font-black text-slate-650 dark:text-slate-400 shrink-0">
@@ -187,46 +200,14 @@ const TransactionListPage = () => {
       },
     },
     {
-      header: 'Actions',
-      cell: (row) => {
-        const isOwner = row.sender?._id === user?._id || row.sender === user?._id;
-        const canModify = isOwner && ['draft', 'submitted'].includes(row.status);
-        return (
-          <div className="flex items-center gap-1.5">
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={() => navigate(`/transactions/${row._id}`)}
-              className="p-1 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400"
-              title="Open Detail dossier"
-            >
-              <Eye className="w-4 h-4" />
-            </Button>
-            {canModify && (
-              <>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => navigate(`/transactions/edit/${row._id}`)}
-                  className="p-1 text-slate-500 hover:text-amber-500"
-                  title="Modify Challan"
-                >
-                  <Edit2 className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => handleDelete(row._id)}
-                  className="p-1 text-slate-500 hover:text-red-500"
-                  title="Delete"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </>
-            )}
+      header: '',
+      cell: () => (
+        <div className="flex justify-end items-center">
+          <div className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+            <ArrowRight className="w-4 h-4" />
           </div>
-        );
-      },
+        </div>
+      ),
     },
   ];
 
@@ -236,7 +217,7 @@ const TransactionListPage = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
           <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white m-0">
-            {allParam ? 'Enterprise Sourcing Directory' : 'My Transactions dossier'}
+            {allParam ? 'Enterprise Sourcing Directory' : 'My Transactions'}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             Browse and monitor full material logistics loop transactions
@@ -263,26 +244,7 @@ const TransactionListPage = () => {
         </div>
       </div>
 
-      {/* Tabs list matching mockup Panel 2 */}
-      <div className="flex border-b border-slate-200 dark:border-slate-850 gap-6 select-none">
-        {['All', 'In Progress', 'Pending', 'Completed', 'Closed'].map(tab => (
-          <button
-            key={tab}
-            onClick={() => {
-              setActiveTab(tab);
-              setCurrentPage(1);
-            }}
-            className={`pb-2.5 text-[10px] font-extrabold uppercase tracking-widest border-b-2 transition-all cursor-pointer
-              ${activeTab === tab
-                ? 'border-blue-600 text-blue-600 font-black'
-                : 'border-transparent text-slate-400 hover:text-slate-650 dark:hover:text-slate-200'
-              }
-            `}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
+
 
       {/* Advanced Filter Form */}
       <form onSubmit={handleSearchSubmit} className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col gap-4">
@@ -298,25 +260,81 @@ const TransactionListPage = () => {
             />
           </div>
 
-          <Select
-            id="doctype-filter"
-            placeholder="All Document Types"
-            options={[
-              { label: 'Delivery Challan (DC)', value: 'DC' },
-              { label: 'Returnable DC (RDC)', value: 'RDC' },
-              { label: 'Invoice Challan', value: 'Invoice' },
-              { label: 'Emergency Send', value: 'Emergency Send' },
-            ]}
-            value={docType}
-            onChange={(e) => {
-              setDocType(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="[&_select]:py-2 [&_select]:text-xs"
-          />
+          {/* Status Filter Dropdown Button */}
+          <div className="relative inline-block text-left select-none">
+            <div>
+              <button
+                type="button"
+                onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                className="inline-flex items-center justify-between gap-2 w-full px-3 h-[36px] text-xs font-extrabold text-slate-750 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900 focus:outline-none transition-all cursor-pointer shadow-xs"
+              >
+                <div className="flex items-center gap-2">
+                  <Filter className="w-3.5 h-3.5 text-slate-450" />
+                  <span>
+                    Status: <strong className="text-blue-600 dark:text-blue-400">{
+                      (() => {
+                        const statusOptions = [
+                          { label: 'All Statuses', value: 'All' },
+                          { label: 'Pending', value: 'Pending' },
+                          { label: 'In Progress', value: 'In Progress' },
+                          { label: 'Received', value: 'Received' },
+                          { label: 'Partially Returned', value: 'Partially Returned' },
+                          { label: 'Closed', value: 'Closed' },
+                          { label: 'Rejected', value: 'Rejected' }
+                        ];
+                        return statusOptions.find(opt => opt.value === activeTab)?.label || 'All Statuses';
+                      })()
+                    }</strong>
+                  </span>
+                </div>
+                <ChevronDown className={`w-3.5 h-3.5 ml-1 transition-transform duration-200 ${statusDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+
+            {statusDropdownOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setStatusDropdownOpen(false)}
+                />
+
+                <div className="absolute left-0 mt-2 w-full min-w-[200px] rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-lg focus:outline-none z-20 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                  <div className="py-1">
+                    {[
+                      { label: 'All Statuses', value: 'All' },
+                      { label: 'Pending', value: 'Pending' },
+                      { label: 'In Progress', value: 'In Progress' },
+                      { label: 'Received', value: 'Received' },
+                      { label: 'Partially Returned', value: 'Partially Returned' },
+                      { label: 'Closed', value: 'Closed' },
+                      { label: 'Rejected', value: 'Rejected' }
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          setActiveTab(option.value);
+                          setCurrentPage(1);
+                          setStatusDropdownOpen(false);
+                        }}
+                        className={`flex items-center w-full px-4 py-2.5 text-left text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-850 cursor-pointer
+                          ${activeTab === option.value
+                            ? 'text-blue-600 bg-blue-50/50 dark:text-blue-400 dark:bg-blue-950/30 font-bold'
+                            : 'text-slate-750 dark:text-slate-300'
+                          }
+                        `}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
 
           <Button type="submit" size="sm" className="h-[36px] mt-auto">
-            Search dossier
+            Search
           </Button>
         </div>
 
@@ -373,6 +391,7 @@ const TransactionListPage = () => {
         currentPage={currentPage}
         totalPages={totalPages}
         onPageChange={(page) => setCurrentPage(page)}
+        onRowClick={(row) => navigate(`/transactions/${row._id}`)}
         emptyMessage="No material movements match your selection."
       />
     </div>

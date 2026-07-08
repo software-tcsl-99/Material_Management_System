@@ -376,11 +376,21 @@ exports.returnBarcode = async (req, res) => {
       photos: photos || [],
     });
 
+    let handlerUser = null;
+    if (returnHandler) {
+      const User = require('../models/User');
+      handlerUser = await User.findById(returnHandler);
+    }
+
     bc.history.push({
       action: returnHandler ? 'Return Requested (Via Handler)' : 'Return Requested (Direct)',
       user: req.user._id,
       remarks: reason || 'Return to store requested',
       gps,
+      metadata: returnHandler ? {
+        handlerId: returnHandler,
+        handlerName: handlerUser ? handlerUser.fullName : 'Handler'
+      } : undefined
     });
     await bc.save();
 
@@ -403,6 +413,25 @@ exports.returnBarcode = async (req, res) => {
         bc.transactionId,
         barcode
       );
+
+      if (bc.transactionId) {
+        const parentTxn = await Transaction.findOne({ transactionId: bc.transactionId });
+        if (parentTxn) {
+          parentTxn.handler = returnHandler;
+          if (!parentTxn.chatMembers.includes(returnHandler)) {
+            parentTxn.chatMembers.push(returnHandler);
+          }
+          const User = require('../models/User');
+          const handlerUser = await User.findById(returnHandler);
+          const handlerName = handlerUser ? handlerUser.fullName : 'Handler';
+          parentTxn.timeline.push({
+            action: 'Handler Assigned',
+            remarks: remarks || `Assigned return handler: ${handlerName}`,
+            user: req.user._id,
+          });
+          await parentTxn.save();
+        }
+      }
     }
 
     res.json({ message: 'Return request submitted.', return: returnDoc });
@@ -461,15 +490,15 @@ exports.acceptReturn = async (req, res) => {
       transaction.returnedItems = (transaction.returnedItems || 0) + 1;
       transaction.activeItems = Math.max(0, (transaction.activeItems || 0) - 1);
 
-      // Check if all items returned
-      if (transaction.returnedItems >= transaction.totalItems) {
+      // Check if all items returned or closed
+      if ((transaction.returnedItems || 0) + (transaction.closedItems || 0) >= transaction.totalItems) {
         transaction.status = 'closed';
         transaction.closedAt = new Date();
         transaction.closedBy = req.user._id;
         transaction.chatLocked = true;
         transaction.timeline.push({
           action: 'Transaction Closed',
-          description: 'All items returned to store',
+          description: 'All items returned or closed/converted',
           user: req.user._id,
         });
       } else {
@@ -516,6 +545,7 @@ exports.handleReturnHandlerAction = async (req, res) => {
       returnDoc.status = 'collected';
       returnDoc.collectedAt = new Date();
       returnDoc.returnHandler = req.user._id; // Set current user who collected it as the handler
+      returnDoc.previousHandler = null; // Clear previous handler on collection
       
       const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
       if (bc) {
@@ -540,27 +570,68 @@ exports.handleReturnHandlerAction = async (req, res) => {
         await bc.save();
       }
     } else if (actionType === 'reject' || actionType === 'decline') {
-      returnDoc.status = 'rejected';
-      returnDoc.returnHandler = null;
+      const isReverted = !!returnDoc.previousHandler;
+      let prevHandlerId = returnDoc.previousHandler;
+
+      if (isReverted) {
+        returnDoc.status = 'collected';
+        returnDoc.returnHandler = prevHandlerId;
+        returnDoc.previousHandler = null;
+      } else {
+        returnDoc.status = 'rejected';
+        returnDoc.returnHandler = null;
+      }
       
       const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
       if (bc) {
         bc.history.push({
-          action: 'Return Assignment Declined by Handler',
+          action: isReverted ? 'Return Reassignment Declined by Handler' : 'Return Assignment Declined by Handler',
           user: req.user._id,
-          remarks: remarks || 'Handler declined return request assignment',
+          remarks: remarks || (isReverted ? 'Handler declined return request reassignment' : 'Handler declined return request assignment'),
         });
         await bc.save();
       }
 
-      await createNotification(
-        returnDoc.fromUser,
-        'return_rejected',
-        'Return Request Rejected',
-        `Return request for ${returnDoc.barcode} was rejected by handler. Reason: ${remarks || 'No reason provided'}.`,
-        returnDoc.transactionId,
-        returnDoc.barcode
-      );
+      // Also update parent transaction handler!
+      if (returnDoc.transactionId) {
+        const parentTxn = await Transaction.findOne({ transactionId: returnDoc.transactionId });
+        if (parentTxn) {
+          parentTxn.handler = isReverted ? prevHandlerId : null;
+          
+          if (isReverted) {
+            const User = require('../models/User');
+            const prevHandlerUser = await User.findById(prevHandlerId);
+            const prevHandlerName = prevHandlerUser ? prevHandlerUser.fullName : 'Handler';
+            parentTxn.timeline.push({
+              action: 'Handler Assigned',
+              remarks: `Reassignment declined; reverted back to previous handler: ${prevHandlerName}`,
+              user: req.user._id,
+            });
+          }
+
+          await parentTxn.save();
+        }
+      }
+
+      if (!isReverted) {
+        await createNotification(
+          returnDoc.fromUser,
+          'return_rejected',
+          'Return Request Rejected',
+          `Return request for ${returnDoc.barcode} was rejected by handler. Reason: ${remarks || 'No reason provided'}.`,
+          returnDoc.transactionId,
+          returnDoc.barcode
+        );
+      } else {
+        await createNotification(
+          prevHandlerId,
+          'handler_assigned',
+          'Return Reassignment Declined',
+          `Next handler declined the return transfer. The return has been reverted back to you.`,
+          returnDoc.transactionId,
+          returnDoc.barcode
+        );
+      }
     } else {
       return res.status(400).json({ message: 'Invalid handler action type.' });
     }
@@ -994,16 +1065,16 @@ exports.getPendingReturns = async (req, res) => {
       // Store only sees returns that are pending (direct) or store_received (delivered by handler)
       filter = { status: { $in: ['pending', 'store_received'] } };
     } else if (req.user.role === 'employee') {
-      // Handler sees returns assigned to them OR returns created by them
+      // Handler sees returns assigned to them OR returns created by them once handler is assigned
       filter = {
         $or: [
           { returnHandler: req.user._id, status: { $in: ['handler_assigned', 'collected', 'store_received'] } },
-          { fromUser: req.user._id, status: { $ne: 'completed' } }
+          { fromUser: req.user._id, status: { $in: ['handler_assigned', 'collected', 'store_received'] } }
         ]
       };
     } else {
-      // Others see nothing or their department returns, let's keep it simple
-      filter = { status: { $ne: 'completed' } };
+      // Others see returns that have handler assigned/collected/store_received
+      filter = { status: { $in: ['handler_assigned', 'collected', 'store_received'] } };
     }
 
     const Return = require('../models/Return');
@@ -1091,20 +1162,47 @@ exports.assignReturnHandler = async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to change return handler.' });
     }
 
+    if (returnDoc.returnHandler) {
+      returnDoc.previousHandler = returnDoc.returnHandler;
+    }
     returnDoc.returnHandler = handlerId;
     returnDoc.status = 'handler_assigned';
     // Update barcode history
     const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
     if (bc) {
+      const User = require('../models/User');
+      const handlerUser = await User.findById(handlerId);
+      const newHandlerName = handlerUser ? handlerUser.fullName : 'Handler';
       bc.history.push({
         action: 'Return Handler Reassigned',
         user: req.user._id,
-        remarks: remarks || `Reassigned return handler`,
+        remarks: remarks || `Reassigned return handler to ${newHandlerName}`,
+        metadata: { handlerId, handlerName: newHandlerName }
       });
       await bc.save();
     }
 
     await returnDoc.save();
+
+    // Also update parent transaction handler!
+    if (returnDoc.transactionId) {
+      const parentTxn = await Transaction.findOne({ transactionId: returnDoc.transactionId });
+      if (parentTxn) {
+        parentTxn.handler = handlerId;
+        if (!parentTxn.chatMembers.includes(handlerId)) {
+          parentTxn.chatMembers.push(handlerId);
+        }
+        const User = require('../models/User');
+        const handlerUser = await User.findById(handlerId);
+        const handlerName = handlerUser ? handlerUser.fullName : 'Handler';
+        parentTxn.timeline.push({
+          action: 'Handler Assigned',
+          remarks: remarks || `Reassigned return handler to ${handlerName}`,
+          user: req.user._id,
+        });
+        await parentTxn.save();
+      }
+    }
 
     res.json({ message: 'Return handler updated successfully.', returnDoc });
   } catch (error) {

@@ -20,6 +20,7 @@ const historySchema = new mongoose.Schema({
     address: String,
   },
   photo: { type: String, default: '' },
+  metadata: { type: mongoose.Schema.Types.Mixed },
 });
 
 const barcodeSchema = new mongoose.Schema(

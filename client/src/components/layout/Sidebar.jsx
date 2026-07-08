@@ -23,7 +23,7 @@ import api from '../../lib/axios';
 
 export default function Sidebar() {
   const { user } = useAuthStore();
-  const { sidebarOpen } = useUIStore();
+  const { sidebarOpen, closeMobileMenu } = useUIStore();
   const [txnDropdown, setTxnDropdown] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
@@ -33,12 +33,14 @@ export default function Sidebar() {
     const fetchSidebarData = async () => {
       try {
         const isStore = user.role === 'super_admin' || (user.role === 'department_admin' && user.departmentAdminType === 'store');
+        const isCloseReqEligible = ['super_admin', 'team_lead', 'department_admin'].includes(user.role);
         
-        const [txnRes, transferRes, splitRes, returnRes, notifRes] = await Promise.all([
+        const [txnRes, transferRes, splitRes, returnRes, closeRes, notifRes] = await Promise.all([
           api.get('/transactions'),
           api.get('/barcodes/pending/transfers'),
           isStore ? api.get('/barcodes/split-requests/pending') : Promise.resolve({ data: { data: [] } }),
           api.get('/barcodes/returns/pending'),
+          isCloseReqEligible ? api.get('/barcodes/close-requests/pending') : Promise.resolve({ data: { data: [] } }),
           api.get('/notifications?unreadOnly=true')
         ]);
         
@@ -46,40 +48,72 @@ export default function Sidebar() {
         const transfers = transferRes.data.transfers || [];
         const splits = splitRes.data.data || [];
         const returns = returnRes.data.returns || returnRes.data.data || [];
+        const closes = closeRes.data.data || [];
         const unreadCount = notifRes.data.notifications?.length || 0;
 
         setUnreadNotifCount(unreadCount);
 
         let filteredTxnsCount = 0;
-        
-        if (user.role === 'employee') {
-          filteredTxnsCount = txns.filter(t => 
-            ((t.handler?._id === user._id || t.handler === user._id) && ['store_accepted', 'handler_assigned'].includes(t.status)) ||
-            ((t.requester?._id === user._id || t.requester === user._id) && t.status === 'dispatched')
-          ).length;
-        } else if (user.role === 'team_lead') {
-          filteredTxnsCount = txns.filter(t => t.status === 'submitted').length;
-        } else if (user.role === 'department_admin') {
-          if (user.departmentAdminType === 'management') {
-            filteredTxnsCount = txns.filter(t => 
-              t.status === 'tl_approved' && 
-              (t.managementApprover?._id || t.managementApprover)?.toString() === user._id.toString()
-            ).length;
-          } else if (user.departmentAdminType === 'store') {
-            filteredTxnsCount = txns.filter(t => ['mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status)).length;
+        txns.forEach(t => {
+          if (user.role === 'department_admin' && user.departmentAdminType === 'management') {
+            const isMyMgtApprover = (t.managementApprover?._id || t.managementApprover)?.toString() === user._id?.toString();
+            if (!isMyMgtApprover) return;
           }
-        } else if (user.role === 'super_admin') {
-          filteredTxnsCount = txns.filter(t => ['submitted', 'tl_approved', 'mgt_approved'].includes(t.status)).length;
-        }
 
-        const activeReturnsCount = isStore 
-          ? returns.length 
-          : returns.filter(r => 
-              (r.returnHandler?._id === user._id || r.returnHandler === user._id) &&
-              ['handler_assigned', 'collected'].includes(r.status)
-            ).length;
+          const isHandlerDeliveryPending = t.handler && ['store_accepted', 'handler_assigned', 'dispatched'].includes(t.status);
+          let isPending = false;
 
-        const total = filteredTxnsCount + transfers.length + splits.length + activeReturnsCount;
+          if (isHandlerDeliveryPending) {
+            if (t.status === 'handler_assigned') {
+              const isMyHandler = t.handler && (t.handler?._id === user._id || t.handler === user._id);
+              const isPendingTarget = t.pendingHandlerTransfer?.status === 'pending' && (t.pendingHandlerTransfer?.toHandler?._id === user._id || t.pendingHandlerTransfer?.toHandler === user._id);
+              if (isMyHandler || isPendingTarget) isPending = true;
+            } else if (t.status === 'store_accepted') {
+              if (isStore) isPending = true;
+            } else if (t.status === 'dispatched') {
+              if (t.rejectedDeliveryStatus === 'rejected_by_requester') {
+                const isMyHandler = t.handler && (t.handler?._id === user._id || t.handler === user._id);
+                const isPendingTarget = t.pendingHandlerTransfer?.status === 'pending' && (t.pendingHandlerTransfer?.toHandler?._id === user._id || t.pendingHandlerTransfer?.toHandler === user._id);
+                if (isMyHandler || isPendingTarget) isPending = true;
+              } else if (t.rejectedDeliveryStatus === 'sent_to_store') {
+                if (isStore) isPending = true;
+              } else {
+                const isMyRequester = t.requester && (t.requester?._id === user._id || t.requester === user._id);
+                if (isMyRequester) isPending = true;
+              }
+            }
+          } else {
+            if (user.role === 'employee') {
+              const isRequesterPending = (t.requester?._id === user._id || t.requester === user._id) && t.status === 'dispatched';
+              if (isRequesterPending) isPending = true;
+            } else if (user.role === 'team_lead') {
+              if (t.status === 'submitted') isPending = true;
+            } else if (user.role === 'department_admin') {
+              if (user.departmentAdminType === 'management') {
+                if (t.status === 'tl_approved') isPending = true;
+              } else if (user.departmentAdminType === 'store') {
+                const isSentToStore = t.status === 'dispatched' && t.rejectedDeliveryStatus === 'sent_to_store';
+                if (isSentToStore || ['mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status)) isPending = true;
+              }
+            } else if (user.role === 'super_admin') {
+              if (!['completed', 'received', 'closed', 'rejected', 'active', 'partially_returned'].includes(t.status)) isPending = true;
+            }
+          }
+
+          if (isPending) filteredTxnsCount++;
+        });
+
+        const groupedReturnsMap = {};
+        returns.forEach(r => {
+          const handlerKey = r.returnHandler?._id || r.returnHandler || 'none';
+          const key = `${r.transactionId}_${r.status}_${handlerKey}`;
+          if (!groupedReturnsMap[key]) {
+            groupedReturnsMap[key] = true;
+          }
+        });
+        const returnsCount = Object.keys(groupedReturnsMap).length;
+
+        const total = filteredTxnsCount + transfers.length + splits.length + returnsCount + closes.length;
         setPendingCount(total);
       } catch (err) {
         console.error('Error fetching sidebar count data:', err);
@@ -113,6 +147,7 @@ export default function Sidebar() {
         {/* Dashboard */}
         <NavLink
           to="/"
+          onClick={closeMobileMenu}
           className={({ isActive }) =>
             `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
               isActive
@@ -127,6 +162,7 @@ export default function Sidebar() {
         {/* Pending Requests */}
         <NavLink
           to="/pending"
+          onClick={closeMobileMenu}
           className={({ isActive }) =>
             `flex items-center justify-between px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
               isActive
@@ -163,6 +199,7 @@ export default function Sidebar() {
               <NavLink
                 to="/transactions"
                 end
+                onClick={closeMobileMenu}
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 px-4 py-2 rounded-xl text-[11px] font-medium transition ${
                     isActive ? 'text-white bg-slate-800' : 'hover:text-white'
@@ -173,6 +210,7 @@ export default function Sidebar() {
               </NavLink>
               <NavLink
                 to="/transactions/create"
+                onClick={closeMobileMenu}
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 px-4 py-2 rounded-xl text-[11px] font-medium transition ${
                     isActive ? 'text-white bg-slate-800' : 'hover:text-white'
@@ -188,6 +226,7 @@ export default function Sidebar() {
         {/* Materials */}
         <NavLink
           to="/materials"
+          onClick={closeMobileMenu}
           className={({ isActive }) =>
             `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
               isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
@@ -201,6 +240,7 @@ export default function Sidebar() {
         {(user?.role === 'super_admin' || (user?.role === 'department_admin' && user?.departmentAdminType === 'store')) && (
           <NavLink
             to="/store"
+            onClick={closeMobileMenu}
             className={({ isActive }) =>
               `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
                 isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
@@ -214,6 +254,7 @@ export default function Sidebar() {
         {/* Transfers */}
         <NavLink
           to="/transfers"
+          onClick={closeMobileMenu}
           className={({ isActive }) =>
             `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
               isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
@@ -226,6 +267,7 @@ export default function Sidebar() {
         {/* Returns */}
         <NavLink
           to="/returns"
+          onClick={closeMobileMenu}
           className={({ isActive }) =>
             `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
               isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
@@ -236,9 +278,12 @@ export default function Sidebar() {
         </NavLink>
 
         {/* Audit Logs */}
-        {(user?.role === 'super_admin' || user?.role === 'department_admin') && (
+        {(user?.role === 'super_admin' || 
+          (user?.role === 'department_admin' && (user?.departmentAdminType === 'management' || user?.departmentAdminType === 'store'))
+        ) && (
           <NavLink
             to="/audit-logs"
+            onClick={closeMobileMenu}
             className={({ isActive }) =>
               `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
                 isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
@@ -252,6 +297,7 @@ export default function Sidebar() {
         {/* Reports */}
         <NavLink
           to="/reports"
+          onClick={closeMobileMenu}
           className={({ isActive }) =>
             `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
               isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
@@ -266,6 +312,7 @@ export default function Sidebar() {
         {/* Notifications Page Link */}
         <NavLink
           to="/notifications"
+          onClick={closeMobileMenu}
           className={({ isActive }) =>
             `flex items-center justify-between px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
               isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
@@ -288,6 +335,7 @@ export default function Sidebar() {
           <>
             <NavLink
               to="/users"
+              onClick={closeMobileMenu}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
                   isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'
@@ -298,6 +346,7 @@ export default function Sidebar() {
             </NavLink>
             <NavLink
               to="/masters"
+              onClick={closeMobileMenu}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
                   isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-800 hover:text-white'

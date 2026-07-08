@@ -217,15 +217,6 @@ const ReportsPage = () => {
           ),
         },
         {
-          header: 'Return Handler',
-          cell: (row) => (
-            <div className="flex flex-col">
-              <span className="font-semibold text-slate-905 dark:text-slate-100">{row.returnHandler?.fullName || 'N/A'}</span>
-              {row.returnHandler && <span className="text-[10px] text-slate-400 font-medium">ID: {row.returnHandler.employeeId}</span>}
-            </div>
-          ),
-        },
-        {
           header: 'Condition',
           cell: (row) => (
             <Badge variant={row.condition === 'good' ? 'success' : 'warning'}>
@@ -306,7 +297,9 @@ const ReportsPage = () => {
           cell: (row) => <Badge>{row.status}</Badge>,
         },
       ];
-    }    return [
+    }
+
+    return [
       {
         header: 'Transaction ID',
         cell: (row) => <span className="font-bold text-indigo-600 dark:text-indigo-400">{row.transactionId}</span>,
@@ -325,34 +318,29 @@ const ReportsPage = () => {
       {
         header: 'Date',
         cell: (row) => (
-          <span className="text-xs text-slate-505 dark:text-slate-450 font-medium">
+          <span className="text-xs text-slate-550 dark:text-slate-450 font-medium">
             {new Date(row.createdAt).toLocaleDateString()}
           </span>
         ),
       },
       {
         header: 'Expected Return',
-        cell: (row) => (
-          <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-            {row.expectedReturnDate 
-              ? new Date(row.expectedReturnDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) 
-              : 'N/A'}
-          </span>
-        ),
+        cell: (row) => {
+          const rDate = row.expectedReturnDate || row.dueDate;
+          return (
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+              {rDate 
+                ? new Date(rDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) 
+                : 'N/A'}
+            </span>
+          );
+        },
       },
       {
         header: 'Requester',
         cell: (row) => (
           <span className="font-semibold text-slate-900 dark:text-slate-100">
             {row.requester?.fullName}
-          </span>
-        ),
-      },
-      {
-        header: 'Handler',
-        cell: (row) => (
-          <span className="text-xs text-slate-600 dark:text-slate-450 font-medium">
-            {row.handler?.fullName || 'N/A'}
           </span>
         ),
       },

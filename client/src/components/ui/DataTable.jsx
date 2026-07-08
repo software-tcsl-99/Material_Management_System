@@ -50,7 +50,7 @@ const DataTable = ({
               data.map((row, rowIdx) => (
                 <tr
                   key={row._id || rowIdx}
-                  className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors text-slate-700 dark:text-slate-200 ${onRowClick ? 'cursor-pointer' : ''}`}
+                  className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-all duration-150 text-slate-700 dark:text-slate-200 ${onRowClick ? 'cursor-pointer hover:scale-[0.998] active:scale-[0.995]' : ''}`}
                   onClick={() => onRowClick && onRowClick(row)}
                 >
                   {columns.map((col, colIdx) => (
@@ -84,7 +84,7 @@ const DataTable = ({
           data.map((row, rowIdx) => (
             <div
               key={row._id || rowIdx}
-              className={`bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl p-4 flex flex-col gap-3 shadow-sm ${onRowClick ? 'cursor-pointer' : ''}`}
+              className={`bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl p-4 flex flex-col gap-3 shadow-sm transition-all duration-150 ${onRowClick ? 'cursor-pointer hover:scale-[0.995] active:scale-[0.99]' : ''}`}
               onClick={() => onRowClick && onRowClick(row)}
             >
               {columns.map((col, colIdx) => (

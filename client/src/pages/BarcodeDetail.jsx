@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import {
   AlertCircle,
   ArrowLeft,
-  Check,
   ChevronDown,
   ChevronRight,
   X
@@ -11,7 +10,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
-import Card from '../components/ui/Card';
 import api from '../lib/api';
 
 export default function BarcodeDetail() {
@@ -117,7 +115,7 @@ export default function BarcodeDetail() {
     );
   }
 
-  const { barcode: bc, transfers, returns } = data;
+  const { barcode: bc, transfers, returns, splits } = data;
 
   const isOwner = userData && (bc.owner?._id || bc.owner)?.toString() === userData._id?.toString();
 
@@ -153,7 +151,7 @@ export default function BarcodeDetail() {
     const rejectUser = rejectTimeline?.user || bc.transaction?.requester;
     const rejectTime = rejectTimeline?.timestamp || bc.transaction?.updatedAt;
     const rejectRemarks = rejectTimeline?.remarks || bc.transaction?.rejectionReason;
-    
+
     timelineHistory.push({
       action: 'Transaction Rejected / Barcode Cancelled',
       user: rejectUser,
@@ -209,7 +207,7 @@ export default function BarcodeDetail() {
     }
   };
 
-  const material = bc.transaction?.materials?.find(m => 
+  const material = bc.transaction?.materials?.find(m =>
     m.barcodes?.some(b => b.barcode === bc.barcode || b === bc.barcode)
   );
   const price = material?.price || 0;
@@ -249,48 +247,51 @@ export default function BarcodeDetail() {
         <div className="flex items-center gap-2 flex-wrap">
           {bc.status?.toUpperCase() === 'ACTIVE' && (
             (userData?.role === 'super_admin' || (userData?.role === 'department_admin' && userData?.departmentAdminType === 'store')) ||
-              (bc.owner?._id || bc.owner)?.toString() === userData?._id?.toString()
+            (bc.owner?._id || bc.owner)?.toString() === userData?._id?.toString()
           ) && (
-            !bc.transaction || 
-            ['received', 'active', 'partially_returned', 'closed'].includes(bc.transaction.status)
-          ) && (
-            !returns || 
-            !returns.some(r => ['pending', 'handler_assigned', 'collected', 'store_received'].includes(r.status))
-          ) && (
-            !transfers || 
-            !transfers.some(t => ['pending', 'approved'].includes(t.status))
-          ) && (
-            !bc.closeRequest || 
-            !['pending_accounts_approval', 'pending_store_acceptance'].includes(bc.closeRequest.status)
-          ) && (
-            <>
-              <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${bc.barcode}/split`)}>
-                Split Serial
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${bc.barcode}/return`)}>
-                Return Request
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => {
-                setBarcodeCloseDocType('DC Internal');
-                setBarcodeCloseDocNumber('');
-                setBarcodeCloseRemarks('');
-                setBarcodeCloseModal(true);
-              }}>
-                Convert to DC
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => {
-                setBarcodeCloseDocType('Invoice');
-                setBarcodeCloseDocNumber('');
-                setBarcodeCloseRemarks('');
-                setBarcodeCloseModal(true);
-              }}>
-                Convert to Invoice
-              </Button>
-              <Button size="sm" onClick={() => navigate(`/barcodes/${bc.barcode}/transfer`)}>
-                Transfer Barcode
-              </Button>
-            </>
-          )}
+              !bc.transaction ||
+              ['received', 'active', 'partially_returned', 'closed'].includes(bc.transaction.status)
+            ) && (
+              !returns ||
+              !returns.some(r => ['pending', 'handler_assigned', 'collected', 'store_received'].includes(r.status))
+            ) && (
+              !transfers ||
+              !transfers.some(t => ['pending', 'approved'].includes(t.status))
+            ) && (
+              !bc.closeRequest ||
+              !['pending_accounts_approval', 'pending_store_acceptance'].includes(bc.closeRequest.status)
+            ) && (
+              !splits ||
+              !splits.some(s => s.status === 'pending')
+            ) && (
+              <>
+                <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${bc.barcode}/split`)}>
+                  Split Serial
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${bc.barcode}/return`)}>
+                  Return Request
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => {
+                  setBarcodeCloseDocType('DC Internal');
+                  setBarcodeCloseDocNumber('');
+                  setBarcodeCloseRemarks('');
+                  setBarcodeCloseModal(true);
+                }}>
+                  Convert to DC
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => {
+                  setBarcodeCloseDocType('Invoice');
+                  setBarcodeCloseDocNumber('');
+                  setBarcodeCloseRemarks('');
+                  setBarcodeCloseModal(true);
+                }}>
+                  Convert to Invoice
+                </Button>
+                <Button size="sm" onClick={() => navigate(`/barcodes/${bc.barcode}/transfer`)}>
+                  Transfer Barcode
+                </Button>
+              </>
+            )}
           <Button variant="outline" size="sm" className="font-extrabold text-xs uppercase">
             Export <ChevronDown className="w-3.5 h-3.5 ml-1 inline-block" />
           </Button>
@@ -348,10 +349,10 @@ export default function BarcodeDetail() {
               {bc.status?.toUpperCase() === 'ACTIVE' ? 'Active (Transferred)' : bc.status?.toUpperCase()}
             </Badge>
           </div>
+        </div>
       </div>
-    </div>
 
-    {/* Main Details Panel Content */}
+      {/* Main Details Panel Content */}
       <div className="w-full">
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
@@ -374,27 +375,41 @@ export default function BarcodeDetail() {
                       </div>
                       <div className="flex flex-col gap-1 text-xs">
                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Photo #{i + 1} Location (GPS)</span>
-                        {p.lat && p.lng ? (
-                          <>
-                            <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                              {p.lat.toFixed(4)}° N, {p.lng.toFixed(4)}° E
-                            </p>
-                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
-                              {p.address}
-                            </p>
-                          </>
-                        ) : bc.gps ? (
-                          <>
-                            <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                              {bc.gps.lat.toFixed(4)}° N, {bc.gps.lng.toFixed(4)}° E
-                            </p>
-                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
-                              {bc.gps.address}
-                            </p>
-                          </>
-                        ) : (
-                          <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>
-                        )}
+                        {(() => {
+                          const pLat = p ? parseFloat(p.lat) : NaN;
+                          const pLng = p ? parseFloat(p.lng) : NaN;
+                          const hasPCoords = !isNaN(pLat) && !isNaN(pLng);
+
+                          const bcLat = bc?.gps ? parseFloat(bc.gps.lat) : NaN;
+                          const bcLng = bc?.gps ? parseFloat(bc.gps.lng) : NaN;
+                          const hasBcCoords = !isNaN(bcLat) && !isNaN(bcLng);
+
+                          if (hasPCoords) {
+                            return (
+                              <>
+                                <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                                  {pLat.toFixed(4)}° N, {pLng.toFixed(4)}° E
+                                </p>
+                                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
+                                  {p.address || 'Captured Location'}
+                                </p>
+                              </>
+                            );
+                          } else if (hasBcCoords) {
+                            return (
+                              <>
+                                <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                                  {bcLat.toFixed(4)}° N, {bcLng.toFixed(4)}° E
+                                </p>
+                                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
+                                  {bc.gps.address || 'Recorded GPS Location'}
+                                </p>
+                              </>
+                            );
+                          } else {
+                            return <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>;
+                          }
+                        })()}
                       </div>
                     </div>
                   ))
@@ -435,6 +450,41 @@ export default function BarcodeDetail() {
 
               <div className="flex flex-col gap-8">
                 {timelineHistory.map((log, idx) => {
+                  if (log.action === 'Return Assignment Declined by Handler' || log.action === 'Return Reassignment Declined by Handler') {
+                    return null;
+                  }
+                  let hasLaterCollected = false;
+                  if (log.action.toLowerCase().includes('return requested')) {
+                    for (let i = idx + 1; i < timelineHistory.length; i++) {
+                      const act = timelineHistory[i].action.toLowerCase();
+                      if (act.includes('return requested')) {
+                        break;
+                      }
+                      if (act.includes('return collected') || act.includes('returned to store')) {
+                        hasLaterCollected = true;
+                        break;
+                      }
+                    }
+                  }
+                  if (log.action.toLowerCase().includes('return requested') && hasLaterCollected) {
+                    return null;
+                  }
+                  let hasLaterSplitDecision = false;
+                  if (log.action.toLowerCase().includes('split requested')) {
+                    for (let i = idx + 1; i < timelineHistory.length; i++) {
+                      const act = timelineHistory[i].action.toLowerCase();
+                      if (act.includes('split requested')) {
+                        break;
+                      }
+                      if (act.includes('split approved') || act.includes('split rejected')) {
+                        hasLaterSplitDecision = true;
+                        break;
+                      }
+                    }
+                  }
+                  if (log.action.toLowerCase().includes('split requested') && hasLaterSplitDecision) {
+                    return null;
+                  }
                   const logDate = new Date(log.timestamp);
                   const actionLower = log.action.toLowerCase();
                   const isTransfer = actionLower.includes('transfer');
@@ -443,17 +493,14 @@ export default function BarcodeDetail() {
                   const isClose = actionLower.includes('close') || actionLower.includes('closed') || actionLower.includes('approval') || actionLower.includes('upload') || actionLower.includes('conversion');
                   const isRejectedLog = actionLower.includes('reject') || actionLower.includes('cancel');
 
-                  const hasLaterCompletion = timelineHistory.slice(idx + 1).some(laterH => {
-                    const latAct = laterH.action.toLowerCase();
-                    return latAct.includes('accepted') || 
-                           latAct.includes('completed') || 
-                           latAct.includes('approved') || 
-                           latAct.includes('rejected') || 
-                           latAct.includes('closed') ||
-                           latAct.includes('returned') ||
-                           latAct.includes('first approval') ||
-                           latAct.includes('approval');
-                  });
+                  const laterEvents = timelineHistory.slice(idx + 1);
+                  const hasLaterCompletion = laterEvents.length > 0;
+                  const nextEvent = timelineHistory[idx + 1];
+                  const isLaterRejected = nextEvent && (
+                    nextEvent.action.toLowerCase().includes('reject') ||
+                    nextEvent.action.toLowerCase().includes('decline') ||
+                    nextEvent.action.toLowerCase().includes('cancel')
+                  );
 
                   let actionLabel = log.action;
                   let statusLabel = 'COMPLETED';
@@ -468,7 +515,7 @@ export default function BarcodeDetail() {
                       statusLabel = 'REJECTED';
                       byLabel = `Rejected by: ${log.user?.fullName || 'Operator'}`;
                     } else {
-                      statusLabel = hasLaterCompletion ? 'ACCEPTED' : 'PENDING';
+                      statusLabel = isLaterRejected ? 'REJECTED' : (hasLaterCompletion ? 'ACCEPTED' : 'PENDING');
                       if (statusLabel === 'PENDING') {
                         if (actionLower.includes('pending acceptance')) {
                           byLabel = `Pending Acceptance by: ${log.user?.fullName || 'Recipient'}`;
@@ -481,14 +528,17 @@ export default function BarcodeDetail() {
                     }
                   } else if (isSplit) {
                     actionLabel = `${log.action} for ${bc.barcode}`;
-                    if (actionLower.includes('accepted') || actionLower.includes('approved') || actionLower.includes('completed')) {
+                    if (log.action === 'Split Child Created') {
+                      statusLabel = 'ACCEPTED';
+                      byLabel = `Created by: ${log.user?.fullName || 'Store Admin'}`;
+                    } else if (actionLower.includes('accepted') || actionLower.includes('approved') || actionLower.includes('completed')) {
                       statusLabel = 'ACCEPTED';
                       byLabel = `Accepted by: ${log.user?.fullName || 'Operator'}`;
                     } else if (actionLower.includes('rejected')) {
                       statusLabel = 'REJECTED';
                       byLabel = `Rejected by: ${log.user?.fullName || 'Operator'}`;
                     } else {
-                      statusLabel = hasLaterCompletion ? 'ACCEPTED' : 'PENDING';
+                      statusLabel = isLaterRejected ? 'REJECTED' : (hasLaterCompletion ? 'ACCEPTED' : 'PENDING');
                       if (statusLabel === 'PENDING') {
                         byLabel = 'Pending Store Approval';
                       } else {
@@ -500,11 +550,11 @@ export default function BarcodeDetail() {
                     if (actionLower.includes('accepted') || actionLower.includes('completed') || actionLower.includes('returned')) {
                       statusLabel = 'ACCEPTED';
                       byLabel = `Accepted by: ${log.user?.fullName || 'Operator'}`;
-                    } else if (actionLower.includes('rejected')) {
+                    } else if (actionLower.includes('rejected') || actionLower.includes('declined') || actionLower.includes('reject') || actionLower.includes('decline')) {
                       statusLabel = 'REJECTED';
-                      byLabel = `Rejected by: ${log.user?.fullName || 'Operator'}`;
+                      byLabel = `Rejected/Declined by: ${log.user?.fullName || 'Operator'}`;
                     } else {
-                      statusLabel = hasLaterCompletion ? 'ACCEPTED' : 'PENDING';
+                      statusLabel = isLaterRejected ? 'REJECTED' : (hasLaterCompletion ? 'ACCEPTED' : 'PENDING');
                       if (statusLabel === 'PENDING') {
                         if (actionLower.includes('requested')) {
                           byLabel = `Pending Return Collection by Handler`;
@@ -524,6 +574,56 @@ export default function BarcodeDetail() {
                           byLabel = `Initiated by: ${log.user?.fullName || 'Operator'}`;
                         }
                       }
+
+                      if (actionLower.includes('requested')) {
+                        if (log.action.includes('Via Handler')) {
+                          let handlerName = log.metadata?.handlerName;
+                          if (!handlerName) {
+                            const nextAssigned = timelineHistory.slice(idx + 1).find(laterH =>
+                              laterH.action === 'Handler Assigned' ||
+                              laterH.action === 'Return Handler Reassigned' ||
+                              laterH.action.includes('Collected')
+                            );
+                            if (nextAssigned) {
+                              if (nextAssigned.action === 'Return Handler Reassigned') {
+                                handlerName = nextAssigned.metadata?.handlerName;
+                                if (!handlerName && nextAssigned.remarks?.startsWith('Reassigned return handler to ')) {
+                                  handlerName = nextAssigned.remarks.replace('Reassigned return handler to ', '');
+                                }
+                              } else if (nextAssigned.action === 'Handler Assigned') {
+                                handlerName = nextAssigned.user?.fullName;
+                              } else {
+                                handlerName = nextAssigned.user?.fullName;
+                              }
+                            }
+                          }
+                          if (!handlerName) {
+                            handlerName = 'Handler';
+                          }
+                          if (statusLabel === 'PENDING') {
+                            byLabel = `Pending Return Collection by Handler: ${handlerName}`;
+                          } else {
+                            byLabel = `Initiated by: ${log.user?.fullName || 'Operator'} (Handler: ${handlerName})`;
+                          }
+                        } else {
+                          if (statusLabel === 'PENDING') {
+                            byLabel = `Pending Return Collection by Store`;
+                          } else {
+                            byLabel = `Initiated by: ${log.user?.fullName || 'Operator'}`;
+                          }
+                        }
+                      }
+                    }
+                    if (log.action === 'Return Handler Reassigned') {
+                      let handlerName = log.metadata?.handlerName;
+                      if (!handlerName && log.remarks?.startsWith('Reassigned return handler to ')) {
+                        handlerName = log.remarks.replace('Reassigned return handler to ', '');
+                      }
+                      if (!handlerName) {
+                        handlerName = 'Handler';
+                      }
+                      const decision = statusLabel === 'ACCEPTED' ? 'Accepted' : (statusLabel === 'REJECTED' ? 'Rejected' : 'Pending');
+                      byLabel = `Reassigned to: ${handlerName} (${decision})`;
                     }
                   } else if (isClose) {
                     actionLabel = `${log.action} for ${bc.barcode}`;
@@ -561,7 +661,7 @@ export default function BarcodeDetail() {
                       statusLabel = 'PENDING';
                       byLabel = log.user?.fullName || 'Pending Action';
                     } else {
-                      statusLabel = hasLaterCompletion ? 'APPROVED' : 'PENDING';
+                      statusLabel = isLaterRejected ? 'REJECTED' : (hasLaterCompletion ? 'APPROVED' : 'PENDING');
                       if (statusLabel === 'PENDING') {
                         if (bc.closeRequest?.status === 'pending_accounts_approval') {
                           byLabel = 'Pending Accounts Approval';

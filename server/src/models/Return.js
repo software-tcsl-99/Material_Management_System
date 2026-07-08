@@ -6,6 +6,7 @@ const returnSchema = new mongoose.Schema(
     barcode: { type: String, required: true, index: true },
     fromUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     returnHandler: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    previousHandler: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     store: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     status: {
       type: String,

@@ -276,10 +276,32 @@ exports.getTransactionReport = async (req, res) => {
       delete filter.$or;
       delete filter.$and;
 
-      if (req.user.role === 'employee') {
-        filter.handler = req.user._id;
-      } else if (handler) {
-        filter.handler = handler;
+      const targetHandlerId = req.user.role === 'employee' ? req.user._id : handler;
+
+      if (targetHandlerId) {
+        const ReturnModel = require('../models/Return');
+        const returnDocs = await ReturnModel.find({ returnHandler: targetHandlerId });
+        const returnTxnIds = returnDocs.map(r => r.transactionId);
+
+        filter.$or = [
+          { handler: targetHandlerId },
+          { 'pendingHandlerTransfer.toHandler': targetHandlerId },
+          { 'pendingHandlerTransfer.fromHandler': targetHandlerId },
+          { transactionId: { $in: returnTxnIds } },
+          { 'timeline': { 
+              $elemMatch: { 
+                $or: [
+                  { 'metadata.handlerId': targetHandlerId },
+                  { 'metadata.toHandlerId': targetHandlerId },
+                  { 'metadata.fromHandlerId': targetHandlerId },
+                  { 'metadata.fromHandler': targetHandlerId },
+                  { 'metadata.toHandler': targetHandlerId },
+                  { user: targetHandlerId, action: { $in: ['Handler Assigned', 'Handler Accepted', 'Handler Transfer Accepted', 'Handler Picked Up', 'Handler Delivered', 'Return Handler Reassigned'] } }
+                ] 
+              } 
+            } 
+          }
+        ];
       } else {
         filter.handler = { $ne: null };
       }
@@ -481,10 +503,32 @@ exports.exportTransactionReport = async (req, res) => {
       delete filter.$or;
       delete filter.$and;
 
-      if (req.user.role === 'employee') {
-        filter.handler = req.user._id;
-      } else if (handler) {
-        filter.handler = handler;
+      const targetHandlerId = req.user.role === 'employee' ? req.user._id : handler;
+
+      if (targetHandlerId) {
+        const ReturnModel = require('../models/Return');
+        const returnDocs = await ReturnModel.find({ returnHandler: targetHandlerId });
+        const returnTxnIds = returnDocs.map(r => r.transactionId);
+
+        filter.$or = [
+          { handler: targetHandlerId },
+          { 'pendingHandlerTransfer.toHandler': targetHandlerId },
+          { 'pendingHandlerTransfer.fromHandler': targetHandlerId },
+          { transactionId: { $in: returnTxnIds } },
+          { 'timeline': { 
+              $elemMatch: { 
+                $or: [
+                  { 'metadata.handlerId': targetHandlerId },
+                  { 'metadata.toHandlerId': targetHandlerId },
+                  { 'metadata.fromHandlerId': targetHandlerId },
+                  { 'metadata.fromHandler': targetHandlerId },
+                  { 'metadata.toHandler': targetHandlerId },
+                  { user: targetHandlerId, action: { $in: ['Handler Assigned', 'Handler Accepted', 'Handler Transfer Accepted', 'Handler Picked Up', 'Handler Delivered', 'Return Handler Reassigned'] } }
+                ] 
+              } 
+            } 
+          }
+        ];
       } else {
         filter.handler = { $ne: null };
       }

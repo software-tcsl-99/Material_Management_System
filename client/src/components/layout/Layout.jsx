@@ -37,7 +37,7 @@ export default function Layout() {
       </div>
 
       {/* Main Content Workspace */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden pb-16 md:pb-0">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top Header */}
         <Header />
 
@@ -51,55 +51,6 @@ export default function Layout() {
 
       {/* Global Right Chat Drawer */}
       <ChatDrawer />
-
-      {/* Mobile Bottom Navigation Bar (as per layout specs) */}
-      <div className="md:hidden bottom-nav flex justify-around items-center h-16 shadow-inner">
-        <NavLink
-          to="/"
-          className={({ isActive }) =>
-            `flex flex-col items-center gap-1 text-[10px] font-semibold transition ${isActive ? 'text-primary' : 'text-slate-400 hover:text-slate-700'
-            }`
-          }
-        >
-          <LayoutDashboard className="w-5 h-5" />
-          <span>Dashboard</span>
-        </NavLink>
-
-        <NavLink
-          to="/transactions"
-          className={({ isActive }) =>
-            `flex flex-col items-center gap-1 text-[10px] font-semibold transition ${isActive ? 'text-primary' : 'text-slate-400 hover:text-slate-700'
-            }`
-          }
-        >
-          <ArrowRightLeft className="w-5 h-5" />
-          <span>Transactions</span>
-        </NavLink>
-
-        <NavLink
-          to="/notifications"
-          className={({ isActive }) =>
-            `flex flex-col items-center gap-1 text-[10px] font-semibold transition ${isActive ? 'text-primary' : 'text-slate-400 hover:text-slate-700'
-            }`
-          }
-        >
-          <Bell className="w-5 h-5" />
-          <span>Notifications</span>
-        </NavLink>
-
-
-
-        <NavLink
-          to="/profile"
-          className={({ isActive }) =>
-            `flex flex-col items-center gap-1 text-[10px] font-semibold transition ${isActive ? 'text-primary' : 'text-slate-400 hover:text-slate-700'
-            }`
-          }
-        >
-          <UserIcon className="w-5 h-5" />
-          <span>Profile</span>
-        </NavLink>
-      </div>
     </div>
   );
 }
