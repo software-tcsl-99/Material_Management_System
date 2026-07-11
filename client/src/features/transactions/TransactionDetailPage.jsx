@@ -1858,11 +1858,26 @@ const TransactionDetailPage = () => {
               </div>
               <div className="min-w-0">
                 <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block mb-0.5">Expected Return Date</span>
-                <p className="font-bold text-slate-850 dark:text-slate-200 text-xs truncate">
+                <p className="font-bold text-slate-855 dark:text-slate-200 text-xs truncate">
                   {txn.dueDate ? new Date(txn.dueDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'}
                 </p>
               </div>
             </div>
+
+            {/* Store Dispatch Remarks / Purpose */}
+            {txn.remarks && (
+              <div className="flex items-start gap-3.5 md:col-span-2 border-t border-slate-100 dark:border-slate-800 pt-4">
+                <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 rounded-xl shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block mb-0.5">Store Dispatch Remarks / Purpose</span>
+                  <p className="font-semibold text-slate-800 dark:text-slate-200 text-xs italic">
+                    "{txn.remarks}"
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2489,6 +2504,12 @@ const TransactionDetailPage = () => {
             </div>
 
             <form onSubmit={handleReceiveSubmit} className="mt-4 flex flex-col gap-4 text-xs">
+              {txn.remarks && (
+                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800/80 rounded-xl space-y-1">
+                  <span className="block text-[9px] text-slate-400 font-black uppercase tracking-wider">Store Dispatch Remarks / Purpose</span>
+                  <p className="text-xs text-slate-700 dark:text-slate-350 font-medium italic">"{txn.remarks}"</p>
+                </div>
+              )}
               <div>
                 <label className="block text-slate-500 font-bold uppercase tracking-wider mb-1.5">Material Condition *</label>
                 <select

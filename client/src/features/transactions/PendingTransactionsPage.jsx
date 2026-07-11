@@ -2117,6 +2117,15 @@ const PendingTransactionsPage = () => {
                         </div>
                       </div>
 
+                      {selectedItem.remarks && (
+                        <div className="p-4 bg-slate-50 dark:bg-slate-950/40 border border-slate-150 dark:border-slate-800 rounded-xl space-y-1.5 text-xs">
+                          <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block mb-0.5">Store Dispatch Remarks / Purpose</span>
+                          <p className="font-semibold text-slate-700 dark:text-slate-350 italic">
+                            "{selectedItem.remarks}"
+                          </p>
+                        </div>
+                      )}
+
                       {/* Materials Table */}
                       <div>
                         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Item Breakdown & Barcode Maps</h4>

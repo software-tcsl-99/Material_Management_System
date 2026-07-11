@@ -42,6 +42,10 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
+    // Increment session version and clear old refresh tokens to logout other devices
+    user.sessionVersion = (user.sessionVersion || 0) + 1;
+    user.refreshTokens = [];
+
     const { accessToken, refreshToken } = generateTokens(user);
 
     // Store refresh token
@@ -63,19 +67,29 @@ exports.login = async (req, res) => {
       os: 'unknown',
     });
 
-    await user.save();
-
-    // Audit log
-    await AuditLog.create({
-      action: 'LOGIN',
-      entity: 'User',
-      entityId: user._id.toString(),
-      user: user._id,
-      userName: user.fullName,
-      description: `${user.fullName} logged in`,
-      ip: req.ip,
-      device: req.headers['user-agent'],
-    });
+    // Perform db operations in parallel and bypass document save hooks
+    await Promise.all([
+      User.updateOne(
+        { _id: user._id },
+        { 
+          $set: { 
+            sessionVersion: user.sessionVersion,
+            refreshTokens: user.refreshTokens,
+            loginHistory: user.loginHistory 
+          } 
+        }
+      ),
+      AuditLog.create({
+        action: 'LOGIN',
+        entity: 'User',
+        entityId: user._id.toString(),
+        user: user._id,
+        userName: user.fullName,
+        description: `${user.fullName} logged in`,
+        ip: req.ip,
+        device: req.headers['user-agent'],
+      })
+    ]);
 
     const userResponse = user.toJSON();
 

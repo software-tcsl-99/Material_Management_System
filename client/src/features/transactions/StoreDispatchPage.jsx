@@ -21,6 +21,7 @@ const StoreDispatchPage = () => {
   const [expectedReturnDate, setExpectedReturnDate] = useState('');
   const [dispatchMethod, setDispatchMethod] = useState('handler');
   const [handlerId, setHandlerId] = useState('');
+  const [remarks, setRemarks] = useState('');
 
   // Dropdowns Lists
   const [employees, setEmployees] = useState([]);
@@ -361,6 +362,7 @@ const StoreDispatchPage = () => {
         dcType: 'DC-Internal',
         dispatchMethod,
         handlerId: dispatchMethod === 'handler' ? handlerId : undefined,
+        remarks: remarks.trim(),
         materials: materialRows.map(row => ({
           name: row.name,
           quantity: row.quantity,
@@ -473,6 +475,19 @@ const StoreDispatchPage = () => {
                 disabled
                 required
                 className="w-full text-xs bg-slate-100 border border-slate-200 dark:bg-slate-800 dark:border-slate-800 rounded-lg px-3 py-2 font-bold cursor-not-allowed text-slate-800"
+              />
+            </div>
+
+            <div className="md:col-span-3">
+              <label className="block text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mb-1.5 text-[10px]">
+                Dispatch Remarks / Purpose
+              </label>
+              <textarea
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                placeholder="Enter remarks or purpose for this dispatch..."
+                rows="2"
+                className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3.5 py-2.5 font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 transition text-slate-800 dark:text-slate-200"
               />
             </div>
           </div>

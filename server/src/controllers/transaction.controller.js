@@ -1385,7 +1385,8 @@ exports.storeDispatchTransaction = async (req, res) => {
       dcType,
       materials,
       dispatchMethod,
-      handlerId
+      handlerId,
+      remarks
     } = req.body;
 
     const transaction = await Transaction.findOne(getQueryByIdOrTxnId(transactionId));
@@ -1422,6 +1423,7 @@ exports.storeDispatchTransaction = async (req, res) => {
     transaction.priority = priority || 'medium';
     transaction.costCenter = costCenter || '';
     transaction.dcType = dcType || 'DC-Internal';
+    transaction.remarks = remarks || '';
     if (req.body.photos) {
       transaction.photos = req.body.photos;
     }
