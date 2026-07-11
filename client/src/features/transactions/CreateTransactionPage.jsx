@@ -5,12 +5,20 @@ import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import Input from '../../components/ui/Input';
 import Select from '../../components/ui/Select';
+import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
 import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
+
 
 const CreateTransactionPage = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
+
+  useEffect(() => {
+    if (user?.role === 'super_admin') {
+      navigate('/transactions');
+    }
+  }, [user, navigate]);
 
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -195,12 +203,15 @@ const CreateTransactionPage = () => {
                 <div key={idx} className="flex items-end gap-3 bg-slate-50/50 dark:bg-slate-900/30 p-3.5 rounded-xl border border-slate-200/60 dark:border-slate-800 relative">
                   <div className="flex-1 grid grid-cols-3 gap-3">
                     <div className="col-span-2">
-                      <Input
+                      <TallyMaterialAutocomplete
                         label={`${idx + 1}. Material Name`}
-                        placeholder="e.g. Torque Wrench"
+                        placeholder="Search Tally inventory..."
                         value={mat.name}
-                        onChange={(e) => handleMaterialChange(idx, 'name', e.target.value)}
+                        onChange={(nameVal, unitVal) => {
+                          handleMaterialChange(idx, 'name', nameVal);
+                        }}
                         required
+                        className="block w-full rounded-lg border text-sm transition-all focus:outline-none focus:ring-2 pl-3.5 pr-10 py-2.5 bg-white text-slate-900 border-slate-300 focus:ring-primary focus:border-primary dark:bg-slate-900 dark:text-white dark:border-slate-700 dark:focus:ring-primary"
                       />
                     </div>
                     <div>

@@ -29,6 +29,9 @@ const addTimeline = (transaction, action, description, userId, metadata = {}) =>
  * Create a new material request
  */
 exports.createTransaction = async (req, res) => {
+  if (req.user?.role === 'super_admin') {
+    return res.status(403).json({ message: 'Super Admin is not authorized to create material requests.' });
+  }
   try {
     const {
       materials,
@@ -1774,3 +1777,49 @@ exports.exportTransactionToPDF = async (req, res) => {
     res.status(500).json({ message: 'Failed to export transaction to PDF.', error: error.message });
   }
 };
+
+exports.deleteTransaction = async (req, res) => {
+  try {
+    // Helper function to query by ID or transactionId
+    const query = mongoose.Types.ObjectId.isValid(req.params.id)
+      ? { _id: req.params.id }
+      : { transactionId: req.params.id };
+
+    const transaction = await Transaction.findOne(query);
+
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction request not found.' });
+    }
+
+    // Only allow deletion if the request status is "submitted" (before Team Lead approval)
+    if (transaction.status !== 'submitted' && transaction.status !== 'draft') {
+      return res.status(400).json({
+        message: `Cannot delete request. Current status is "${transaction.status.toUpperCase()}", which means it is already processed or approved.`,
+      });
+    }
+
+    // Check if the current user is the owner (requester) of the transaction, or a super admin
+    const isOwner = transaction.requester.toString() === req.user._id.toString();
+    const isSuperAdmin = req.user.role === 'super_admin';
+
+    if (!isOwner && !isSuperAdmin) {
+      return res.status(430).json({ message: 'You are not authorized to delete this transaction request.' });
+    }
+
+    // Perform deletion
+    await Transaction.deleteOne({ _id: transaction._id });
+
+    // Clean up associated barcodes (if any are linked to this transaction)
+    const Barcode = require('../models/Barcode');
+    await Barcode.deleteMany({ transaction: transaction._id });
+
+    res.json({
+      success: true,
+      message: 'Transaction request deleted successfully.',
+    });
+  } catch (error) {
+    console.error('Delete transaction error:', error);
+    res.status(500).json({ message: 'Failed to delete transaction request.', error: error.message });
+  }
+};
+

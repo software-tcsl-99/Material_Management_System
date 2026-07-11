@@ -19,6 +19,7 @@ const reportRoutes = require('./routes/report.routes');
 const uploadRoutes = require('./routes/upload.routes');
 const receivingRoutes = require('./routes/receiving.routes');
 const searchRoutes = require('./routes/search.routes');
+const tallyRoutes = require('./routes/tally.routes');
 
 const app = express();
 
@@ -76,6 +77,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/receiving', receivingRoutes);
 app.use('/api/search', searchRoutes);
+app.use('/api/tally', tallyRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

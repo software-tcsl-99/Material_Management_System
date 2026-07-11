@@ -2,6 +2,7 @@ import { ArrowLeft, Camera, CheckCircle, FileText, Layers, MapPin, Shield, Trash
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Button from '../../components/ui/Button';
+import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
 import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
 
@@ -627,18 +628,29 @@ const StoreDispatchPage = () => {
                     <span className="text-[9px] bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded font-bold tracking-wider">
                       Material Specification
                     </span>
-                    <input
-                      type="text"
-                      value={row.name}
-                      onChange={(e) => handleMaterialNameChange(matIndex, e.target.value)}
-                      placeholder="Enter Material Name..."
-                      required
-                      disabled={row.isPreExisting}
-                      className={`w-full text-xs border rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 mt-1 ${row.isPreExisting
-                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 cursor-not-allowed'
-                        : 'bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800 text-slate-800 dark:text-slate-200'
-                        }`}
-                    />
+                    {row.isPreExisting ? (
+                      <input
+                        type="text"
+                        value={row.name}
+                        disabled
+                        className="w-full text-xs border rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 mt-1 bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 cursor-not-allowed"
+                      />
+                    ) : (
+                      <TallyMaterialAutocomplete
+                        value={row.name}
+                        onChange={(nameVal, unitVal) => {
+                          handleMaterialNameChange(matIndex, nameVal);
+                          if (unitVal) {
+                            const updated = [...materialRows];
+                            updated[matIndex].unit = unitVal;
+                            setMaterialRows(updated);
+                          }
+                        }}
+                        placeholder="Search Tally inventory..."
+                        required
+                        className="w-full text-xs border rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 mt-1 bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800 text-slate-800 dark:text-slate-200"
+                      />
+                    )}
                   </div>
 
                   {/* Quantity */}

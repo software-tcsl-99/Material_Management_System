@@ -280,6 +280,18 @@ const TransactionDetailPage = () => {
     }
   };
 
+  const handleDeleteRequest = async () => {
+    if (window.confirm('Are you sure you want to delete this material request? This action is permanent.')) {
+      try {
+        await api.delete(`/transactions/${id}`);
+        alert('Material request deleted successfully.');
+        navigate('/transactions');
+      } catch (err) {
+        alert(err.response?.data?.message || 'Failed to delete transaction request.');
+      }
+    }
+  };
+
   const submitRejection = async (e) => {
     e.preventDefault();
     setRejectSubmitting(true);
@@ -1422,9 +1434,14 @@ const TransactionDetailPage = () => {
 
             {/* Edit request for requester before team lead approval */}
             {txn.status === 'submitted' && isSender && !isRequesterTLOrAdmin && (
-              <Button size="sm" variant="outline" onClick={() => navigate(`/transactions/${id}/edit`)}>
-                Edit Request
-              </Button>
+              <>
+                <Button size="sm" variant="outline" onClick={() => navigate(`/transactions/${id}/edit`)}>
+                  Edit Request
+                </Button>
+                <Button size="sm" variant="danger" onClick={handleDeleteRequest}>
+                  Delete Request
+                </Button>
+              </>
             )}
 
             {/* Assign Management Approver for requester when TL approved */}
