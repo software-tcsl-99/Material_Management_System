@@ -156,6 +156,73 @@ const buildReportFilter = async (req) => {
 exports.getTransactionReport = async (req, res) => {
   try {
     const { reportType = 'transaction' } = req.query;
+    if (reportType === 'exchange') {
+      const ExchangeRequest = require('../models/ExchangeRequest');
+      const { barcode: bcQuery, startDate, endDate, sender, documentType } = req.query;
+
+      const exchangeFilter = { status: 'approved' };
+
+      if (documentType && documentType !== 'all' && documentType !== '') {
+        exchangeFilter.newDocumentType = documentType;
+      }
+
+      if (bcQuery && bcQuery.trim()) {
+        const queryUpper = bcQuery.trim().toUpperCase();
+        exchangeFilter.$or = [
+          { oldBarcode: { $regex: queryUpper, $options: 'i' } },
+          { newBarcode: { $regex: queryUpper, $options: 'i' } }
+        ];
+      }
+
+      if (sender) {
+        exchangeFilter.requester = sender;
+      }
+
+      if (startDate && endDate) {
+        exchangeFilter.approvedAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+      }
+
+      if (req.user.role === 'employee') {
+        exchangeFilter.requester = req.user._id;
+      } else if (req.user.role === 'team_lead') {
+        const User = require('../models/User');
+        const deptUsers = await User.find({ department: req.user.department }).select('_id');
+        const deptUserIds = deptUsers.map(u => u._id);
+        exchangeFilter.requester = { $in: deptUserIds };
+      } else if (req.user.role === 'department_admin') {
+        if (req.user.departmentAdminType !== 'store' && req.user.departmentAdminType !== 'management' && req.user.departmentAdminType !== 'accounts') {
+          const User = require('../models/User');
+          const deptUsers = await User.find({ department: req.user.department }).select('_id');
+          const deptUserIds = deptUsers.map(u => u._id);
+          exchangeFilter.requester = { $in: deptUserIds };
+        }
+      }
+
+      const exchangesRaw = await ExchangeRequest.find(exchangeFilter)
+        .populate('requester', 'fullName employeeId department')
+        .populate('approvedBy', 'fullName employeeId')
+        .sort({ approvedAt: -1 });
+
+      const Transaction = require('../models/Transaction');
+      const exchanges = await Promise.all(exchangesRaw.map(async (ex) => {
+        const txnObj = await Transaction.findOne({ transactionId: ex.transactionId }).select('_id').lean();
+        const obj = ex.toObject();
+        obj.transactionDbId = txnObj ? txnObj._id : null;
+        return obj;
+      }));
+
+      return res.json({
+        data: exchanges,
+        report: exchanges,
+        summary: {
+          totalTransactions: exchanges.length,
+          totalValue: exchanges.filter(e => e.newDocumentType === 'Invoice').length,
+          avgValue: exchanges.filter(e => e.newDocumentType !== 'Invoice').length
+        },
+        total: exchanges.length
+      });
+    }
+
     if (reportType === 'conversions') {
       const CloseRequest = require('../models/CloseRequest');
       const Barcode = require('../models/Barcode');
@@ -359,7 +426,83 @@ exports.exportTransactionReport = async (req, res) => {
     const { reportType = 'transaction' } = req.query;
     const workbook = new ExcelJS.Workbook();
 
-    if (reportType === 'conversions') {
+    if (reportType === 'exchange') {
+      const ExchangeRequest = require('../models/ExchangeRequest');
+      const { barcode: bcQuery, startDate, endDate, sender, documentType } = req.query;
+
+      const exchangeFilter = { status: 'approved' };
+
+      if (documentType && documentType !== 'all' && documentType !== '') {
+        exchangeFilter.newDocumentType = documentType;
+      }
+
+      if (bcQuery && bcQuery.trim()) {
+        const queryUpper = bcQuery.trim().toUpperCase();
+        exchangeFilter.$or = [
+          { oldBarcode: { $regex: queryUpper, $options: 'i' } },
+          { newBarcode: { $regex: queryUpper, $options: 'i' } }
+        ];
+      }
+
+      if (sender) {
+        exchangeFilter.requester = sender;
+      }
+
+      if (startDate && endDate) {
+        exchangeFilter.approvedAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+      }
+
+      if (req.user.role === 'employee') {
+        exchangeFilter.requester = req.user._id;
+      } else if (req.user.role === 'team_lead') {
+        const User = require('../models/User');
+        const deptUsers = await User.find({ department: req.user.department }).select('_id');
+        const deptUserIds = deptUsers.map(u => u._id);
+        exchangeFilter.requester = { $in: deptUserIds };
+      } else if (req.user.role === 'department_admin') {
+        if (req.user.departmentAdminType !== 'store' && req.user.departmentAdminType !== 'management' && req.user.departmentAdminType !== 'accounts') {
+          const User = require('../models/User');
+          const deptUsers = await User.find({ department: req.user.department }).select('_id');
+          const deptUserIds = deptUsers.map(u => u._id);
+          exchangeFilter.requester = { $in: deptUserIds };
+        }
+      }
+
+      const exchanges = await ExchangeRequest.find(exchangeFilter)
+        .populate('requester', 'fullName employeeId department')
+        .populate('approvedBy', 'fullName employeeId')
+        .sort({ approvedAt: -1 });
+
+      const sheet = workbook.addWorksheet('Barcode Exchanges');
+      sheet.columns = [
+        { header: 'Transaction ID', key: 'transactionId', width: 20 },
+        { header: 'Old Barcode', key: 'oldBarcode', width: 15 },
+        { header: 'New Barcode', key: 'newBarcode', width: 15 },
+        { header: 'Material Name', key: 'materialName', width: 25 },
+        { header: 'New Doc Type', key: 'newDocumentType', width: 15 },
+        { header: 'Requester Name', key: 'requesterName', width: 25 },
+        { header: 'Employee ID', key: 'employeeId', width: 15 },
+        { header: 'Warranty Reason', key: 'warrantyReason', width: 35 },
+        { header: 'Approved By', key: 'approvedBy', width: 25 },
+        { header: 'Approved Date', key: 'approvedDate', width: 20 }
+      ];
+
+      for (const e of exchanges) {
+        sheet.addRow({
+          transactionId: e.transactionId,
+          oldBarcode: e.oldBarcode,
+          newBarcode: e.newBarcode || 'Pending',
+          materialName: e.materialName,
+          newDocumentType: e.newDocumentType,
+          requesterName: e.requester?.fullName || 'N/A',
+          employeeId: e.requester?.employeeId || 'N/A',
+          warrantyReason: e.warrantyReason || '',
+          approvedBy: e.approvedBy?.fullName || 'N/A',
+          approvedDate: e.approvedAt ? e.approvedAt.toLocaleDateString() : 'N/A'
+        });
+      }
+      sheet.getRow(1).font = { bold: true };
+    } else if (reportType === 'conversions') {
       const CloseRequest = require('../models/CloseRequest');
       const Barcode = require('../models/Barcode');
       const { barcode: bcQuery, startDate, endDate, sender, documentType, department } = req.query;

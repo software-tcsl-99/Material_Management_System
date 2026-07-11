@@ -1,4 +1,4 @@
-import { ArrowRight, Calendar, DollarSign, FileSpreadsheet, FileText, Filter, RefreshCw, Tag } from 'lucide-react';
+import { DollarSign, FileSpreadsheet, FileText, Filter, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Badge from '../../components/ui/Badge';
@@ -87,17 +87,17 @@ const ReportsPage = () => {
   useEffect(() => {
     fetchReports();
   }, [
-    currentPage, 
-    status, 
-    docType, 
-    startDate, 
-    endDate, 
-    senderName, 
-    receiverName, 
+    currentPage,
+    status,
+    docType,
+    startDate,
+    endDate,
+    senderName,
+    receiverName,
     handlerName,
     barcodeQuery,
     expectedReturnDate,
-    flow, 
+    flow,
     scope,
     reportType
   ]);
@@ -119,7 +119,7 @@ const ReportsPage = () => {
         scope,
         reportType,
       };
-      
+
       const response = await api.get('/reports/export', {
         responseType: 'blob',
         params,
@@ -142,6 +142,43 @@ const ReportsPage = () => {
   const isAdmin = ['super_admin', 'admin'].includes(user?.role);
 
   const getColumns = () => {
+    if (reportType === 'exchange') {
+      return [
+        {
+          header: 'Transaction ID',
+          cell: (row) => <span className="font-bold text-indigo-600 dark:text-indigo-400">{row.transactionId}</span>,
+        },
+        {
+          header: 'Old Barcode',
+          cell: (row) => <span className="font-mono font-bold text-rose-600 dark:text-rose-400">{row.oldBarcode}</span>,
+        },
+        {
+          header: 'New Barcode',
+          cell: (row) => <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{row.newBarcode || 'Pending'}</span>,
+        },
+        {
+          header: 'Material Name',
+          cell: (row) => <span className="font-semibold text-slate-800 dark:text-slate-200">{row.materialName}</span>,
+        },
+        {
+          header: 'Requester',
+          cell: (row) => (
+            <div className="flex flex-col">
+              <span className="font-semibold text-slate-900 dark:text-slate-100">{row.requester?.fullName}</span>
+              <span className="text-[10px] text-slate-400 font-medium">ID: {row.requester?.employeeId}</span>
+            </div>
+          ),
+        },
+        {
+          header: 'Warranty Reason',
+          cell: (row) => <span className="text-xs text-slate-650 dark:text-slate-400 font-medium line-clamp-1" title={row.warrantyReason}>{row.warrantyReason}</span>,
+        },
+        {
+          header: 'Approved Date',
+          cell: (row) => <span className="text-xs text-slate-500 font-medium">{row.approvedAt ? new Date(row.approvedAt).toLocaleDateString() : 'N/A'}</span>,
+        }
+      ];
+    }
     if (reportType === 'conversions') {
       return [
         {
@@ -329,8 +366,8 @@ const ReportsPage = () => {
           const rDate = row.expectedReturnDate || row.dueDate;
           return (
             <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-              {rDate 
-                ? new Date(rDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) 
+              {rDate
+                ? new Date(rDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
                 : 'N/A'}
             </span>
           );
@@ -388,6 +425,16 @@ const ReportsPage = () => {
   };
 
   const getKpiLabels = () => {
+    if (reportType === 'exchange') {
+      return {
+        title1: 'Total Exchanged Barcodes',
+        value1: `${summary.totalTransactions} items`,
+        title2: 'Invoice Exchange Types',
+        value2: `${summary.totalValue} items`,
+        title3: 'DC Exchange Types',
+        value3: `${summary.avgValue} items`,
+      };
+    }
     if (reportType === 'conversions') {
       return {
         title1: 'Total Closed/Converted Barcodes',
@@ -463,43 +510,48 @@ const ReportsPage = () => {
       <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6">
         <button
           onClick={() => { setReportType('transaction'); setCurrentPage(1); }}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
-            reportType === 'transaction'
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'transaction'
               ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
               : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
+            }`}
         >
           Transactions Report
         </button>
         <button
           onClick={() => { setReportType('handler'); setCurrentPage(1); }}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
-            reportType === 'handler'
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'handler'
               ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
               : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
+            }`}
         >
           Handlers Report
         </button>
         <button
           onClick={() => { setReportType('returns'); setCurrentPage(1); }}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
-            reportType === 'returns'
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'returns'
               ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
               : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
+            }`}
         >
           Returns Report
         </button>
         <button
           onClick={() => { setReportType('conversions'); setCurrentPage(1); }}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
-            reportType === 'conversions'
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'conversions'
               ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
               : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
+            }`}
         >
           DC & Invoice Conversions
+        </button>
+        <button
+          onClick={() => { setReportType('exchange'); setCurrentPage(1); }}
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'exchange'
+              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+        >
+          Exchange Barcodes Report
         </button>
       </div>
 
@@ -555,12 +607,12 @@ const ReportsPage = () => {
       </div>
 
       {/* Filter and Criteria Card */}
-      <Card 
-        title="Filter & Query Criteria" 
+      <Card
+        title="Filter & Query Criteria"
         headerAction={
-          <Button 
-            size="sm" 
-            variant="ghost" 
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={() => setShowMobileFilters(!showMobileFilters)}
             className="md:hidden flex items-center gap-1.5 px-3 py-1.5 h-8 text-xs text-indigo-600 dark:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
@@ -571,7 +623,7 @@ const ReportsPage = () => {
         className="border border-slate-100 dark:border-slate-800 shadow-sm rounded-xl p-3.5 bg-white dark:bg-slate-900 animate-in fade-in duration-300"
       >
         <div className={`${showMobileFilters ? 'grid' : 'hidden md:grid'} grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 items-end`}>
-          
+
           {reportType !== 'conversions' && (
             <div>
               <Select
@@ -605,16 +657,16 @@ const ReportsPage = () => {
               options={
                 reportType === 'conversions'
                   ? [
-                      { label: 'DC Internal', value: 'DC Internal' },
-                      { label: 'DC FOC', value: 'DC FOC' },
-                      { label: 'Invoice', value: 'Invoice' }
-                    ]
+                    { label: 'DC Internal', value: 'DC Internal' },
+                    { label: 'DC FOC', value: 'DC FOC' },
+                    { label: 'Invoice', value: 'Invoice' }
+                  ]
                   : [
-                      { label: 'Delivery Challan (DC)', value: 'DC' },
-                      { label: 'Returnable DC (RDC)', value: 'RDC' },
-                      { label: 'Invoice', value: 'Invoice' },
-                      { label: 'Emergency Send', value: 'Emergency Send' }
-                    ]
+                    { label: 'Delivery Challan (DC)', value: 'DC' },
+                    { label: 'Returnable DC (RDC)', value: 'RDC' },
+                    { label: 'Invoice', value: 'Invoice' },
+                    { label: 'Emergency Send', value: 'Emergency Send' }
+                  ]
               }
               value={docType}
               onChange={(e) => { setDocType(e.target.value); setCurrentPage(1); }}
@@ -788,12 +840,18 @@ const ReportsPage = () => {
         currentPage={currentPage}
         totalPages={totalPages}
         onPageChange={(page) => setCurrentPage(page)}
-        emptyMessage="No material movement dossiers found matching the query rules."
+        emptyMessage="No material movement transaction found matching the query rules."
         onRowClick={(row) => {
           if (reportType === 'conversions') {
             navigate(`/barcodes/${row.barcode}`);
           } else if (reportType === 'returns') {
             navigate(`/transactions/${row.transactionId}`);
+          } else if (reportType === 'exchange') {
+            if (row.transactionDbId) {
+              navigate(`/transactions/${row.transactionDbId}`);
+            } else {
+              alert('Parent transaction not found.');
+            }
           } else {
             navigate(row.isExternal ? `/receiving/${row._id}` : `/transactions/${row._id}`);
           }

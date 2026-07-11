@@ -62,7 +62,13 @@ exports.getBarcodeDetail = async (req, res) => {
       .populate('requester', 'fullName employeeId')
       .sort({ createdAt: -1 });
 
-    res.json({ barcode: bc, transfers, returns, splits, closeRequests });
+    const ExchangeRequest = require('../models/ExchangeRequest');
+    const exchanges = await ExchangeRequest.find({ $or: [{ oldBarcode: normalizedBarcode }, { newBarcode: normalizedBarcode }] })
+      .populate('requester', 'fullName employeeId')
+      .populate('approvedBy', 'fullName employeeId')
+      .sort({ createdAt: -1 });
+
+    res.json({ barcode: bc, transfers, returns, splits, closeRequests, exchanges });
   } catch (error) {
     res.status(500).json({ message: 'Server error.' });
   }
@@ -171,6 +177,26 @@ exports.transferBarcode = async (req, res) => {
       bc.transactionId,
       barcode
     );
+
+    // Notify all store admins about this transfer
+    try {
+      const storeAdmins = await User.find({
+        role: 'department_admin',
+        departmentAdminType: 'store'
+      });
+      for (const admin of storeAdmins) {
+        await createNotification(
+          admin._id,
+          'transfer_initiated_store',
+          'Material Transfer Initiated',
+          `Material ${barcode} is being transferred from ${req.user.fullName} to ${toUser.fullName} for transaction ${bc.transactionId || 'N/A'}`,
+          bc.transactionId,
+          barcode
+        );
+      }
+    } catch (err) {
+      console.error('Error notifying store admins about transfer:', err);
+    }
 
     await AuditLog.create({
       action: 'TRANSFER',
@@ -296,11 +322,26 @@ exports.handleTransfer = async (req, res) => {
         { arrayFilters: [{ 'bc.barcode': transfer.barcode }] }
       );
 
+      const User = require('../models/User');
+      const fromUserObj = await User.findById(transfer.fromUser);
+      const toUserObj = await User.findById(transfer.toUser);
+
+      // Notify the sender (who transferred)
       await createNotification(
         transfer.fromUser,
-        'transfer_accepted',
-        'Transfer Accepted',
-        `Transfer of ${transfer.barcode} was accepted`,
+        'transfer_success_sender',
+        'Material Transferred Successfully',
+        `Material ${bc ? bc.materialName : 'Material'} (Barcode: ${transfer.barcode}) transferred successfully from you to ${toUserObj?.fullName || 'Recipient'}.`,
+        transfer.transactionId,
+        transfer.barcode
+      );
+
+      // Notify the recipient (who currently holds it)
+      await createNotification(
+        transfer.toUser,
+        'transfer_success_recipient',
+        'Material Transferred Successfully',
+        `Material ${bc ? bc.materialName : 'Material'} (Barcode: ${transfer.barcode}) transferred successfully to you from ${fromUserObj?.fullName || 'Sender'}.`,
         transfer.transactionId,
         transfer.barcode
       );
@@ -327,6 +368,34 @@ exports.handleTransfer = async (req, res) => {
       );
     }
 
+    // Notify all store admins about this transfer update
+    try {
+      const User = require('../models/User');
+      const fromUserObj = await User.findById(transfer.fromUser);
+      const toUserObj = await User.findById(transfer.toUser);
+      const storeAdmins = await User.find({
+        role: 'department_admin',
+        departmentAdminType: 'store'
+      });
+      const bc = await Barcode.findOne({ barcode: transfer.barcode });
+      for (const admin of storeAdmins) {
+        let msg = `Transfer of barcode ${transfer.barcode} from ${fromUserObj?.fullName || 'Requester'} to ${toUserObj?.fullName || 'Recipient'} was ${action}ed. New Status: ${transfer.status.toUpperCase()}`;
+        if (action === 'accept' && bc) {
+          msg = `Material ${bc.materialName} (Barcode: ${transfer.barcode}) was transferred from ${fromUserObj?.fullName || 'Sender'} to ${toUserObj?.fullName || 'Recipient'}.`;
+        }
+        await createNotification(
+          admin._id,
+          'transfer_status_update_store',
+          'Material Transferred',
+          msg,
+          transfer.transactionId,
+          transfer.barcode
+        );
+      }
+    } catch (err) {
+      console.error('Error notifying store admins about transfer update:', err);
+    }
+
     await transfer.save();
     res.json({ message: `Transfer ${action}ed.`, transfer });
   } catch (error) {
@@ -345,7 +414,9 @@ exports.returnBarcode = async (req, res) => {
 
     const bc = await Barcode.findOne({ barcode: normalizedBarcode });
     if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
-    if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+    if (bc.status !== 'Active' && bc.status !== 'Exchanged') {
+      return res.status(400).json({ message: 'Barcode is not active or eligible for return.' });
+    }
 
     // Validate that the parent transaction is fully delivered and received by the requester
     if (bc.transactionId) {
@@ -457,55 +528,119 @@ exports.acceptReturn = async (req, res) => {
 
     // Update barcode
     const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
-    bc.status = 'Returned';
-    bc.owner = req.user._id; // Store user
-    bc.history.push({
-      action: 'Returned to Store',
-      user: req.user._id,
-      remarks: 'Store received and confirmed return',
-    });
-    bc.ownershipHistory.push({
-      user: req.user._id,
-      action: 'returned',
-      remarks: 'Returned to store',
-    });
-    await bc.save();
-
-    // Update transaction counts
-    const transaction = await Transaction.findOne({ transactionId: bc.transactionId });
-    if (transaction) {
-      // Update barcode status inside transaction materials loop
-      transaction.materials = transaction.materials.map(m => {
-        if (m.barcodes) {
-          m.barcodes = m.barcodes.map(b => {
-            const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
-            if (bStr === bc.barcode) {
-              b.status = 'Returned';
-            }
-            return b;
-          });
-        }
-        return m;
+    if (bc.status === 'Exchanged') {
+      bc.status = 'Returned';
+      bc.owner = req.user._id; // Store user
+      bc.history.push({
+        action: 'Returned to Store (Exchange Completed)',
+        user: req.user._id,
+        remarks: 'Store received and confirmed warranty return of old barcode',
+        timestamp: new Date()
       });
-      transaction.returnedItems = (transaction.returnedItems || 0) + 1;
-      transaction.activeItems = Math.max(0, (transaction.activeItems || 0) - 1);
+      bc.ownershipHistory.push({
+        user: req.user._id,
+        action: 'returned',
+        remarks: 'Returned to store (exchanged barcode)',
+      });
+      await bc.save();
 
-      // Check if all items returned or closed
-      if ((transaction.returnedItems || 0) + (transaction.closedItems || 0) >= transaction.totalItems) {
-        transaction.status = 'closed';
-        transaction.closedAt = new Date();
-        transaction.closedBy = req.user._id;
-        transaction.chatLocked = true;
-        transaction.timeline.push({
-          action: 'Transaction Closed',
-          description: 'All items returned or closed/converted',
-          user: req.user._id,
+      const ExchangeRequest = require('../models/ExchangeRequest');
+      await ExchangeRequest.findOneAndUpdate(
+        { oldBarcode: bc.barcode, status: 'approved' },
+        { returnStatus: 'accepted_by_store' }
+      );
+
+      // Update transaction status & counts for the exchanged barcode
+      const transaction = await Transaction.findOne({ transactionId: bc.transactionId });
+      if (transaction) {
+        transaction.materials = transaction.materials.map(m => {
+          if (m.barcodes) {
+            m.barcodes = m.barcodes.map(b => {
+              const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+              if (bStr === bc.barcode) {
+                b.status = 'Returned';
+              }
+              return b;
+            });
+          }
+          return m;
         });
-      } else {
-        transaction.status = 'partially_returned';
-      }
+        transaction.returnedItems = (transaction.returnedItems || 0) + 1;
 
-      await transaction.save();
+        // If there is still an active barcode in this transaction, it must remain active (not closed!)
+        const hasActive = await Barcode.findOne({ transactionId: transaction.transactionId, status: 'Active' });
+        if (hasActive) {
+          transaction.status = 'active';
+          transaction.chatLocked = false;
+          transaction.closedAt = undefined;
+          transaction.closedBy = undefined;
+        } else {
+          // Check if all items returned or closed
+          if ((transaction.returnedItems || 0) + (transaction.closedItems || 0) >= transaction.totalItems) {
+            transaction.status = 'closed';
+            transaction.closedAt = new Date();
+            transaction.closedBy = req.user._id;
+            transaction.chatLocked = true;
+            transaction.timeline.push({
+              action: 'Transaction Closed',
+              description: 'All items returned or closed/converted',
+              user: req.user._id,
+            });
+          }
+        }
+        await transaction.save();
+      }
+    } else {
+      bc.status = 'Returned';
+      bc.owner = req.user._id; // Store user
+      bc.history.push({
+        action: 'Returned to Store',
+        user: req.user._id,
+        remarks: 'Store received and confirmed return',
+      });
+      bc.ownershipHistory.push({
+        user: req.user._id,
+        action: 'returned',
+        remarks: 'Returned to store',
+      });
+      await bc.save();
+
+      // Update transaction counts
+      const transaction = await Transaction.findOne({ transactionId: bc.transactionId });
+      if (transaction) {
+        // Update barcode status inside transaction materials loop
+        transaction.materials = transaction.materials.map(m => {
+          if (m.barcodes) {
+            m.barcodes = m.barcodes.map(b => {
+              const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+              if (bStr === bc.barcode) {
+                b.status = 'Returned';
+              }
+              return b;
+            });
+          }
+          return m;
+        });
+        transaction.returnedItems = (transaction.returnedItems || 0) + 1;
+        transaction.activeItems = Math.max(0, (transaction.activeItems || 0) - 1);
+
+        // Check if all items returned or closed
+        if ((transaction.returnedItems || 0) + (transaction.closedItems || 0) >= transaction.totalItems) {
+          transaction.status = 'closed';
+          transaction.closedAt = new Date();
+          transaction.closedBy = req.user._id;
+          transaction.chatLocked = true;
+          transaction.timeline.push({
+            action: 'Transaction Closed',
+            description: 'All items returned or closed/converted',
+            user: req.user._id,
+          });
+        } else {
+          transaction.status = 'partially_returned';
+        }
+
+        await transaction.save();
+      }
     }
 
     await createNotification(
@@ -663,7 +798,8 @@ exports.handleReturnHandlerAction = async (req, res) => {
  */
 exports.createSplitRequest = async (req, res) => {
   try {
-    const { barcode, reason } = req.body;
+    const SplitRequest = require('../models/SplitRequest');
+    const { barcode, reason, requestedMaterialName } = req.body;
 
     if (!barcode || !reason) {
       return res.status(400).json({ message: 'Barcode and reason are required.' });
@@ -684,13 +820,6 @@ exports.createSplitRequest = async (req, res) => {
 
 
 
-    // Validate that no split request is currently active for this barcode
-    const SplitRequest = require('../models/SplitRequest');
-    const activeSplit = await SplitRequest.findOne({ barcode: normalizedBarcode, status: 'pending' });
-    if (activeSplit) {
-      return res.status(400).json({ message: 'Cannot split barcode while another split request is pending.' });
-    }
-
     // Check ownership
     if (bc.owner.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'You do not own this barcode.' });
@@ -700,6 +829,7 @@ exports.createSplitRequest = async (req, res) => {
       transactionId: bc.transactionId,
       barcode,
       materialName: bc.materialName,
+      requestedMaterialName,
       requester: req.user._id,
       reason,
       status: 'pending',
@@ -845,31 +975,25 @@ exports.approveSplitRequest = async (req, res) => {
     const Transaction = require('../models/Transaction');
     const transaction = await Transaction.findOne({ transactionId: parentBc.transactionId });
     if (transaction) {
-      // Find the matching material entry by name
-      const material = transaction.materials.find(
+      // Find the parent material entry to copy properties
+      const parentMaterial = transaction.materials.find(
         m => m.name.toLowerCase() === parentBc.materialName.toLowerCase()
       );
-      if (material) {
-        // Push the new barcode into the barcodes list of this material
-        material.barcodes.push({
+
+      // Always create a NEW material entry for the split barcode child
+      transaction.materials.push({
+        name: materialName || splitReq.requestedMaterialName || parentBc.materialName,
+        description: `Split child of ${parentBc.barcode}`,
+        quantity: 1,
+        unit: parentMaterial?.unit || 'pcs',
+        price: 0,
+        barcodes: [{
           barcode: newBarcode,
           status: 'Active',
           owner: splitReq.requester,
-        });
-        material.quantity = (material.quantity || 0) + 1;
-      } else {
-        // If not found (shouldn't happen), create a new material entry
-        transaction.materials.push({
-          name: materialName || parentBc.materialName,
-          quantity: 1,
-          unit: 'pcs',
-          barcodes: [{
-            barcode: newBarcode,
-            status: 'Active',
-            owner: splitReq.requester,
-          }]
-        });
-      }
+        }]
+      });
+
       transaction.totalItems = (transaction.totalItems || 0) + 1;
       transaction.activeItems = (transaction.activeItems || 0) + 1;
       
@@ -881,15 +1005,25 @@ exports.approveSplitRequest = async (req, res) => {
       await transaction.save();
     }
 
-    // Notify requester to accept the split material
-    await createNotification(
-      splitReq.requester,
-      'split_approved',
-      'Split Request Approved',
-      `Store approved your split request. The new material ${newBarcode} is now active.`,
-      splitReq.transactionId,
-      newBarcode
-    );
+    // Notify all store admins about this split creation/transfer
+    try {
+      const storeAdmins = await User.find({
+        role: 'department_admin',
+        departmentAdminType: 'store'
+      });
+      for (const admin of storeAdmins) {
+        await createNotification(
+          admin._id,
+          'split_approved_store',
+          'Material Split Created/Transferred',
+          `New split child barcode ${newBarcode} has been created and active from parent barcode ${parentBc.barcode} for transaction ${parentBc.transactionId || 'N/A'}.`,
+          splitReq.transactionId,
+          newBarcode
+        );
+      }
+    } catch (err) {
+      console.error('Error notifying store admins about split approval:', err);
+    }
 
     res.json({ message: 'Split approved and new material created.', data: newBcDoc });
   } catch (error) {
@@ -1483,23 +1617,26 @@ exports.handleCloseRequest = async (req, res) => {
           await txn.save();
         }
       } else if (action === 'approve') {
-        const { invoiceUrl } = req.body;
-        if (!invoiceUrl) {
-          return res.status(400).json({ message: 'Invoice URL is required for approval.' });
+        const { invoiceUrl, invoiceNumber } = req.body;
+        if (!invoiceUrl && !invoiceNumber) {
+          return res.status(400).json({ message: 'Invoice number or URL is required for approval.' });
         }
 
+        const resolvedInvoiceNumber = invoiceNumber || closeReq.documentNumber;
+
         closeReq.status = 'approved';
-        closeReq.invoiceUrl = invoiceUrl;
+        if (invoiceUrl) closeReq.invoiceUrl = invoiceUrl;
+        if (invoiceNumber) closeReq.documentNumber = invoiceNumber;
         closeReq.approvedBy = req.user._id;
         closeReq.approvedAt = new Date();
 
         bc.status = 'Closed';
         bc.closeRequest.status = 'approved';
 
-        const docName = `Invoice-${closeReq.documentNumber}`;
+        const docName = `Invoice-${resolvedInvoiceNumber}`;
         bc.documents.push({
           name: docName,
-          url: invoiceUrl,
+          url: invoiceUrl || 'N/A',
           type: 'Invoice',
           size: 0
         });
@@ -1507,7 +1644,7 @@ exports.handleCloseRequest = async (req, res) => {
         bc.history.push({
           action: 'Closed',
           user: req.user._id,
-          remarks: `Accounts uploaded invoice and closed RDC, converting to Invoice (${closeReq.documentNumber})`
+          remarks: `Accounts registered invoice and closed RDC, converting to Invoice (${resolvedInvoiceNumber})`
         });
         await bc.save();
 
@@ -1531,7 +1668,7 @@ exports.handleCloseRequest = async (req, res) => {
           // Add to transaction documents
           txn.documents.push({
             name: docName,
-            url: invoiceUrl,
+            url: invoiceUrl || 'N/A',
             type: 'Invoice',
             size: 0,
             uploadedBy: req.user._id,
@@ -1557,7 +1694,7 @@ exports.handleCloseRequest = async (req, res) => {
 
           txn.timeline.push({
             action: 'Closed',
-            remarks: `Barcode ${bc.barcode} closed via Accounts approval for Invoice (${closeReq.documentNumber})`,
+            remarks: `Barcode ${bc.barcode} closed via Accounts approval for Invoice (${resolvedInvoiceNumber})`,
             user: req.user._id,
             timestamp: new Date()
           });
@@ -1634,6 +1771,267 @@ exports.handleCloseRequest = async (req, res) => {
     res.json({ message: `Close request successfully processed.`, data: closeReq });
   } catch (error) {
     console.error('Handle close request error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Create Exchange Request
+ */
+exports.createExchangeRequest = async (req, res) => {
+  try {
+    const { oldBarcode, warrantyReason } = req.body;
+    const normalizedOld = oldBarcode ? oldBarcode.trim().toUpperCase() : '';
+
+    if (!normalizedOld || !warrantyReason) {
+      return res.status(400).json({ message: 'All fields (oldBarcode, warrantyReason) are required.' });
+    }
+
+    const oldBc = await Barcode.findOne({ barcode: normalizedOld });
+    if (!oldBc) return res.status(404).json({ message: 'Old barcode not found.' });
+    if (oldBc.status !== 'Active') return res.status(400).json({ message: 'Only active barcodes can be exchanged.' });
+
+    // Verify ownership
+    if (oldBc.owner?.toString() !== req.user._id.toString() && req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'You are not the owner of this barcode.' });
+    }
+
+    const ExchangeRequest = require('../models/ExchangeRequest');
+    // Check if there is already a pending exchange request for this old barcode
+    const activeExchange = await ExchangeRequest.findOne({ oldBarcode: normalizedOld, status: 'pending' });
+    if (activeExchange) {
+      return res.status(400).json({ message: 'An exchange request is already pending for this barcode.' });
+    }
+
+    const exchangeReq = await ExchangeRequest.create({
+      transactionId: oldBc.transactionId,
+      oldBarcode: normalizedOld,
+      materialName: oldBc.materialName,
+      requester: req.user._id,
+      warrantyReason,
+      status: 'pending',
+    });
+
+    oldBc.history.push({
+      action: 'Exchange Requested',
+      user: req.user._id,
+      remarks: `Exchange requested. Warranty reason: ${warrantyReason}`,
+    });
+    await oldBc.save();
+
+    res.json({ message: 'Exchange request submitted successfully.', data: exchangeReq });
+  } catch (error) {
+    console.error('Create exchange request error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Get Pending Exchange Requests
+ */
+exports.getPendingExchangeRequests = async (req, res) => {
+  try {
+    const ExchangeRequest = require('../models/ExchangeRequest');
+    const requests = await ExchangeRequest.find({ status: 'pending' }).populate('requester');
+    res.json({ data: requests });
+  } catch (error) {
+    console.error('Get pending exchange requests error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
+ * Handle Exchange Request response
+ */
+exports.handleExchangeRequest = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { action, reason } = req.body; // 'accept' or 'reject'
+
+    const ExchangeRequest = require('../models/ExchangeRequest');
+    const exchangeReq = await ExchangeRequest.findById(requestId);
+    if (!exchangeReq) return res.status(404).json({ message: 'Exchange request not found.' });
+    if (exchangeReq.status !== 'pending') return res.status(400).json({ message: 'Request is already processed.' });
+
+    const oldBc = await Barcode.findOne({ barcode: exchangeReq.oldBarcode });
+    if (!oldBc) return res.status(404).json({ message: 'Old barcode not found.' });
+
+    const User = require('../models/User');
+    const requesterUser = await User.findById(exchangeReq.requester);
+    if (!requesterUser) return res.status(404).json({ message: 'Requester user not found.' });
+
+    if (action === 'accept') {
+      const { newBarcode } = req.body;
+      if (!newBarcode || !newBarcode.trim()) {
+        return res.status(400).json({ message: 'New barcode ID is required for exchange completion.' });
+      }
+      const normalizedNew = newBarcode.trim().toUpperCase();
+      const existingNew = await Barcode.findOne({ barcode: normalizedNew });
+      if (existingNew) {
+        return res.status(400).json({ message: 'New barcode ID is already registered in the system.' });
+      }
+
+      exchangeReq.status = 'approved';
+      exchangeReq.newBarcode = normalizedNew;
+      exchangeReq.approvedBy = req.user._id;
+      exchangeReq.approvedAt = new Date();
+
+      // 1. Mark old barcode status to 'Exchanged'
+      oldBc.status = 'Exchanged';
+      oldBc.history.push({
+        action: 'Exchanged',
+        user: req.user._id,
+        remarks: `Exchanged for new barcode ${normalizedNew}. Warranty reason accepted.`,
+        timestamp: new Date()
+      });
+      oldBc.history.push({
+        action: 'Barcode Exchanged',
+        remarks: `Barcode ${exchangeReq.oldBarcode} exchanged with new barcode ${normalizedNew} under warranty.`,
+        user: req.user._id,
+        timestamp: new Date()
+      });
+      await oldBc.save();
+
+      // Keep old barcode and add new barcode in original transaction materials
+      const Transaction = require('../models/Transaction');
+      const originalTxn = await Transaction.findOne({ transactionId: exchangeReq.transactionId });
+      if (originalTxn) {
+        const docTypeUpper = (originalTxn.documentType || '').toUpperCase();
+        if (docTypeUpper.includes('INVOICE')) {
+          exchangeReq.newDocumentType = 'Invoice';
+        } else {
+          exchangeReq.newDocumentType = 'DC';
+        }
+
+        originalTxn.materials = originalTxn.materials.map(mat => {
+          if (mat.barcodes) {
+            const containsOld = mat.barcodes.some(b => {
+              const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+              return bStr === exchangeReq.oldBarcode;
+            });
+
+            if (containsOld) {
+              // Mark old entry status as Exchanged
+              mat.barcodes = mat.barcodes.map(b => {
+                const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+                if (bStr === exchangeReq.oldBarcode) {
+                  if (typeof b === 'object') {
+                    b.status = 'Exchanged';
+                  }
+                }
+                return b;
+              });
+
+              // Add new barcode entry
+              mat.barcodes.push({
+                barcode: normalizedNew,
+                status: 'Active',
+                owner: exchangeReq.requester
+              });
+
+              // Increment material quantity and transaction totalItems
+              mat.quantity = (mat.quantity || 0) + 1;
+              originalTxn.totalItems = (originalTxn.totalItems || 0) + 1;
+            }
+          }
+          return mat;
+        });
+
+        // Add timeline entry to original transaction
+        originalTxn.timeline.push({
+          action: 'Barcode Exchanged',
+          description: `Barcode ${exchangeReq.oldBarcode} exchanged with new barcode ${normalizedNew} under warranty.`,
+          user: req.user._id,
+          timestamp: new Date()
+        });
+        await originalTxn.save();
+      }
+
+      // 2. Create the new barcode document as Active in Barcode collection
+      await Barcode.create({
+        barcode: normalizedNew,
+        transactionId: exchangeReq.transactionId,
+        transaction: oldBc.transaction,
+        materialName: oldBc.materialName,
+        status: 'Active',
+        owner: exchangeReq.requester,
+        ownerDepartment: oldBc.ownerDepartment || requesterUser.department,
+        isSplit: false,
+        ownershipHistory: [{
+          user: exchangeReq.requester,
+          department: oldBc.ownerDepartment || requesterUser.department,
+          action: 'received',
+          remarks: `Ownership activated via exchange replacement under transaction ${exchangeReq.transactionId}`
+        }],
+        history: [{
+          action: 'Exchange Child Created',
+          user: req.user._id,
+          remarks: `Created from exchange approval. Replaced old barcode ${exchangeReq.oldBarcode}`,
+          timestamp: new Date()
+        }, {
+          action: 'Barcode Exchanged',
+          remarks: `Barcode ${exchangeReq.oldBarcode} exchanged with new barcode ${normalizedNew} under warranty.`,
+          user: req.user._id,
+          timestamp: new Date()
+        }]
+      });
+
+      // Notify requester
+      await createNotification(
+        exchangeReq.requester,
+        'exchange_approved',
+        'Exchange Request Approved',
+        `Store approved exchange for ${exchangeReq.oldBarcode}. New barcode ${normalizedNew} is now active.`,
+        exchangeReq.transactionId,
+        normalizedNew
+      );
+    } else if (action === 'reject') {
+      exchangeReq.status = 'rejected';
+      
+      oldBc.history.push({
+        action: 'Exchange Rejected',
+        user: req.user._id,
+        remarks: `Exchange request rejected by store. Reason: ${reason || 'No reason specified'}`,
+      });
+      await oldBc.save();
+
+      // Notify requester
+      await createNotification(
+        exchangeReq.requester,
+        'exchange_rejected',
+        'Exchange Request Rejected',
+        `Store rejected exchange for ${exchangeReq.oldBarcode}. Reason: ${reason || 'No reason specified'}`,
+        exchangeReq.transactionId,
+        exchangeReq.oldBarcode
+      );
+    } else {
+      return res.status(400).json({ message: 'Invalid action.' });
+    }
+
+    await exchangeReq.save();
+    const Transaction = require('../models/Transaction');
+    const originalTxn = await Transaction.findOne({ transactionId: exchangeReq.transactionId });
+    res.json({ 
+      message: `Exchange request successfully processed.`, 
+      data: exchangeReq,
+      transactionDbId: originalTxn ? originalTxn._id : null
+    });
+  } catch (error) {
+    console.error('Handle exchange request error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+exports.getExchangeRequestsByTransaction = async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    const ExchangeRequest = require('../models/ExchangeRequest');
+    const requests = await ExchangeRequest.find({ transactionId })
+      .populate('requester', 'fullName employeeId department')
+      .populate('approvedBy', 'fullName employeeId');
+    res.json({ success: true, data: requests });
+  } catch (error) {
+    console.error('Error fetching transaction exchange requests:', error);
     res.status(500).json({ message: 'Server error.' });
   }
 };

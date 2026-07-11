@@ -35,12 +35,13 @@ export default function Sidebar() {
         const isStore = user.role === 'super_admin' || (user.role === 'department_admin' && user.departmentAdminType === 'store');
         const isCloseReqEligible = ['super_admin', 'team_lead', 'department_admin'].includes(user.role);
         
-        const [txnRes, transferRes, splitRes, returnRes, closeRes, notifRes] = await Promise.all([
+        const [txnRes, transferRes, splitRes, returnRes, closeRes, exchangeRes, notifRes] = await Promise.all([
           api.get('/transactions'),
           api.get('/barcodes/pending/transfers'),
           isStore ? api.get('/barcodes/split-requests/pending') : Promise.resolve({ data: { data: [] } }),
           api.get('/barcodes/returns/pending'),
           isCloseReqEligible ? api.get('/barcodes/close-requests/pending') : Promise.resolve({ data: { data: [] } }),
+          isStore ? api.get('/barcodes/exchange-requests/pending') : Promise.resolve({ data: { data: [] } }),
           api.get('/notifications?unreadOnly=true')
         ]);
         
@@ -49,6 +50,7 @@ export default function Sidebar() {
         const splits = splitRes.data.data || [];
         const returns = returnRes.data.returns || returnRes.data.data || [];
         const closes = closeRes.data.data || [];
+        const exchanges = exchangeRes.data.data || [];
         const unreadCount = notifRes.data.notifications?.length || 0;
 
         setUnreadNotifCount(unreadCount);
@@ -113,7 +115,16 @@ export default function Sidebar() {
         });
         const returnsCount = Object.keys(groupedReturnsMap).length;
 
-        const total = filteredTxnsCount + transfers.length + splits.length + returnsCount + closes.length;
+        // Group splits by parent barcode for grouped count
+        const uniqueSplitsMap = {};
+        splits.forEach(s => {
+          if (s.barcode) {
+            uniqueSplitsMap[s.barcode] = true;
+          }
+        });
+        const splitsCount = Object.keys(uniqueSplitsMap).length;
+
+        const total = filteredTxnsCount + transfers.length + splitsCount + returnsCount + closes.length + exchanges.length;
         setPendingCount(total);
       } catch (err) {
         console.error('Error fetching sidebar count data:', err);

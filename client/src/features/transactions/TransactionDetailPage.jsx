@@ -13,6 +13,7 @@ import {
   Inbox,
   Lock,
   RotateCcw,
+  RefreshCw,
   Send,
   Shield,
   Store,
@@ -44,6 +45,7 @@ const TransactionDetailPage = () => {
   const [txn, setTxn] = useState(null);
   const [barcodes, setBarcodes] = useState([]);
   const [returnsList, setReturnsList] = useState([]);
+  const [exchangeRequests, setExchangeRequests] = useState([]);
   const [error, setError] = useState('');
 
   // Tabs
@@ -174,6 +176,14 @@ const TransactionDetailPage = () => {
       // Fetch barcodes matching this transaction
       const bcRes = await api.get(`/barcodes/transaction/${txnData.transactionId}`);
       setBarcodes(bcRes.data.barcodes || []);
+
+      // Fetch exchange requests matching this transaction
+      try {
+        const exRes = await api.get(`/barcodes/exchange-requests/transaction/${txnData.transactionId}`);
+        setExchangeRequests(exRes.data.data || []);
+      } catch (exErr) {
+        console.error('Failed to load exchange requests:', exErr);
+      }
 
       // Seed matching form if exists
       setMatchFormData({
@@ -632,7 +642,7 @@ const TransactionDetailPage = () => {
       <div className="h-[60vh] w-full flex flex-col items-center justify-center gap-3">
         <Spinner size="lg" />
         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-          Retrieving secure movement dossier...
+          Retrieving secure movement transaction...
         </p>
       </div>
     );
@@ -641,7 +651,7 @@ const TransactionDetailPage = () => {
   if (error || !txn) {
     return (
       <div className="p-6 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 font-semibold text-center">
-        {error || 'Transaction dossier not found.'}
+        {error || 'Transaction transaction not found.'}
       </div>
     );
   }
@@ -721,7 +731,7 @@ const TransactionDetailPage = () => {
   });
 
   const mgtApproved = txn.approvalChain?.some(a => a.role === 'management' && a.action === 'approved');
-  const isRequesterRejected = txn.requesterRejected || 
+  const isRequesterRejected = txn.requesterRejected ||
     txn.timeline?.some(t => t.action === 'Receipt Rejected' || t.action?.toLowerCase()?.includes('receipt rejected')) ||
     (txn.status === 'rejected' && mgtApproved) ||
     txn.timeline?.some(t => t.action === 'Request Rejected' && (t.description?.toLowerCase()?.includes('requester') || t.description?.toLowerCase()?.includes('receipt')));
@@ -985,6 +995,45 @@ const TransactionDetailPage = () => {
         status: 'COMPLETED',
         badgeChar: 'R',
         stageIndex: 7.5
+      });
+    }
+  });
+
+  // 6.8. Exchange Request Timeline Events
+  exchangeRequests.forEach(ex => {
+    // 1. Exchange Requested
+    if (ex.status === 'pending') {
+      unifiedTimelineRaw.push({
+        timestamp: new Date(ex.createdAt),
+        action: 'Barcode Exchange Requested',
+        by: ex.requester?.fullName || 'Requester',
+        remarks: `Warranty exchange requested for old barcode ${ex.oldBarcode}. Failure reason: ${ex.warrantyReason}`,
+        status: 'PENDING',
+        badgeChar: 'E',
+        stageIndex: 7.2
+      });
+    }
+
+    // 2. Exchange Approved/Rejected
+    if (ex.status === 'approved') {
+      unifiedTimelineRaw.push({
+        timestamp: new Date(ex.approvedAt || ex.updatedAt),
+        action: 'Barcode Exchange Completed',
+        by: ex.approvedBy?.fullName || 'Store Admin',
+        remarks: `Warranty exchange approved. Old barcode ${ex.oldBarcode} replaced with new barcode ${ex.newBarcode || 'Pending'}.`,
+        status: 'APPROVED',
+        badgeChar: 'E',
+        stageIndex: 7.3
+      });
+    } else if (ex.status === 'rejected') {
+      unifiedTimelineRaw.push({
+        timestamp: new Date(ex.updatedAt),
+        action: 'Barcode Exchange Rejected',
+        by: ex.approvedBy?.fullName || 'Store Admin',
+        remarks: `Exchange request for old barcode ${ex.oldBarcode} was rejected by store.`,
+        status: 'REJECTED',
+        badgeChar: 'E',
+        stageIndex: 7.3
       });
     }
   });
@@ -1265,14 +1314,29 @@ const TransactionDetailPage = () => {
     });
   });
 
-  // Sort: first by stageIndex ascending, and then by timestamp ascending within the same stageIndex
+  // Sort: purely by timestamp ascending, using stageIndex to break ties if timestamps are close (within 2 seconds)
   const unifiedTimeline = [...unifiedTimelineRaw];
   unifiedTimeline.sort((a, b) => {
+    if (a.timestamp && b.timestamp) {
+      const timeA = new Date(a.timestamp).getTime();
+      const timeB = new Date(b.timestamp).getTime();
+      if (Math.abs(timeA - timeB) < 2000) {
+        if (a.stageIndex !== b.stageIndex) {
+          return a.stageIndex - b.stageIndex;
+        }
+        const getPriority = (action) => {
+          const act = action?.toLowerCase() || '';
+          if (act.includes('split request') && !act.includes('approved') && !act.includes('rejected') && !act.includes('child')) return 1;
+          if (act.includes('split approved') || act.includes('split rejected')) return 2;
+          if (act.includes('split child')) return 3;
+          return 4;
+        };
+        return getPriority(a.action) - getPriority(b.action);
+      }
+      return timeA - timeB;
+    }
     if (a.stageIndex !== b.stageIndex) {
       return a.stageIndex - b.stageIndex;
-    }
-    if (a.timestamp && b.timestamp) {
-      return new Date(a.timestamp) - new Date(b.timestamp);
     }
     return 0;
   });
@@ -1464,17 +1528,9 @@ const TransactionDetailPage = () => {
               </>
             )}
 
-            {/* Requester Actions (Confirm / Reject Receipt) */}
+            {/* Requester Actions (Confirm Receipt only) */}
             {txn.status === 'dispatched' && isSender && !txn.requesterRejected && !txn.rejectedDeliveryStatus && (
               <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-rose-600 border-rose-205 hover:bg-rose-50"
-                  onClick={() => setRejectReceiptModal(true)}
-                >
-                  Reject Receipt
-                </Button>
                 <Button
                   size="sm"
                   variant="success"
@@ -1846,13 +1902,22 @@ const TransactionDetailPage = () => {
           ? 0
           : (barcodes.length > 0 ? barcodes.filter(b => b.status === 'Active').length : (txn.activeItems || totalItemsCount));
 
+        const returnedCount = barcodes.filter(b => b.status === 'Returned').length;
+        const closedCount = barcodes.filter(b => b.status === 'Closed').length;
+        const exchangedCount = barcodes.filter(b => b.status === 'Exchanged').length;
+
+        const totalItemsVal = barcodes.length > 0
+          ? (activeCount + returnedCount + closedCount + exchangedCount)
+          : (txn.totalItems || totalItemsCount);
+
         return (
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
             {[
-              { label: 'Total Items', val: txn.totalItems || totalItemsCount, icon: Inbox, color: 'text-blue-600 bg-blue-50 dark:bg-blue-950/20' },
+              { label: 'Total Items', val: totalItemsVal, icon: Inbox, color: 'text-blue-600 bg-blue-50 dark:bg-blue-950/20' },
               { label: 'Active', val: activeCount, icon: ArrowRightLeft, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20' },
-              { label: 'Returned', val: barcodes.filter(b => b.status === 'Returned').length, icon: RotateCcw, color: 'text-amber-600 bg-amber-50 dark:bg-amber-950/20' },
-              { label: 'Closed', val: barcodes.filter(b => b.status === 'Closed').length, icon: Lock, color: 'text-rose-600 bg-rose-50 dark:bg-rose-950/20' },
+              { label: 'Exchanged', val: exchangedCount, icon: RefreshCw, color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/20' },
+              { label: 'Returned', val: returnedCount, icon: RotateCcw, color: 'text-amber-600 bg-amber-50 dark:bg-amber-950/20' },
+              { label: 'Closed', val: closedCount, icon: Lock, color: 'text-rose-600 bg-rose-50 dark:bg-rose-950/20' },
               { label: 'Cancelled', val: barcodes.filter(b => b.status === 'Cancelled').length + (txn.status === 'cancelled' ? (txn.totalItems || totalItemsCount) : 0), icon: AlertTriangle, color: 'text-slate-650 bg-slate-50 dark:bg-slate-950/20' }
             ].map((kpi, idx) => (
               <div key={idx} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col gap-3 shadow-xs">
@@ -1904,7 +1969,17 @@ const TransactionDetailPage = () => {
                   <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2 mb-3">
                     <div>
                       <h4 className="text-sm font-black text-slate-800 dark:text-slate-150">{mat.name}</h4>
-                      {mat.description && <p className="text-xs text-slate-400 mt-0.5">{mat.description}</p>}
+                      {(() => {
+                        let descText = mat.description;
+                        if (descText && descText.startsWith('Split child of')) {
+                          const parentBarcode = descText.replace('Split child of', '').trim();
+                          const childBarcode = mat.barcodes && mat.barcodes[0] ? (mat.barcodes[0].barcode || mat.barcodes[0]) : '';
+                          if (childBarcode) {
+                            descText = `Split child: ${childBarcode} created from Parent: ${parentBarcode}`;
+                          }
+                        }
+                        return descText ? <p className="text-xs text-slate-400 mt-0.5">{descText}</p> : null;
+                      })()}
                     </div>
                     <div className="flex flex-col items-end text-right">
                       <Badge variant="info" className="text-xs px-2 py-0.5">{mat.quantity} {mat.unit || 'pcs'}</Badge>
@@ -2077,16 +2152,20 @@ const TransactionDetailPage = () => {
         {activeTab === 'returns' && (
           <Card title="Returns Log">
             <div className="flex flex-col gap-3">
-              {barcodes.filter(b => b.status === 'Returned' || b.status === 'Return Requested').length === 0 ? (
+              {barcodes.filter(b => b.status === 'Returned' || b.status === 'Return Requested' || b.status === 'Exchanged').length === 0 ? (
                 <p className="text-xs text-slate-500 py-6 text-center">No returns initiated yet.</p>
               ) : (
-                barcodes.filter(b => b.status === 'Returned' || b.status === 'Return Requested').map(bc => (
-                  <div key={bc.barcode} className="p-4 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 rounded-xl flex items-center justify-between gap-4">
+                barcodes.filter(b => b.status === 'Returned' || b.status === 'Return Requested' || b.status === 'Exchanged').map(bc => (
+                  <div
+                    key={bc.barcode}
+                    onClick={() => handleBarcodeClick(bc.barcode)}
+                    className="p-4 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 rounded-xl flex items-center justify-between gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 cursor-pointer transition-colors"
+                  >
                     <div>
                       <span className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400">{bc.barcode}</span>
                       <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-1">{bc.materialName}</h4>
                     </div>
-                    <Badge variant={bc.status === 'Returned' ? 'secondary' : 'warning'}>
+                    <Badge variant={bc.status === 'Returned' ? 'secondary' : bc.status === 'Exchanged' ? 'danger' : 'warning'}>
                       {bc.status.toUpperCase()}
                     </Badge>
                   </div>

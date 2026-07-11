@@ -104,7 +104,7 @@ const LoginPage = () => {
             className="w-full py-3 mt-2 text-sm font-semibold tracking-wide"
             loading={loading}
           >
-            Authenticate
+            Login
           </Button>
         </form>
       </Card>

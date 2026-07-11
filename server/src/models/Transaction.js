@@ -17,7 +17,7 @@ const photoSchema = new mongoose.Schema({
 
 const barcodeEntrySchema = new mongoose.Schema({
   barcode: { type: String, required: true },
-  status: { type: String, enum: ['Active', 'Returned', 'Closed', 'pending_acceptance'], default: 'Active' },
+  status: { type: String, enum: ['Active', 'Returned', 'Closed', 'pending_acceptance', 'Exchanged', 'Cancelled'], default: 'Active' },
   owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 });
 

@@ -1203,7 +1203,7 @@ exports.receiveTransaction = async (req, res) => {
       return res.status(404).json({ message: 'Transaction not found.' });
     }
 
-    transaction.status = 'received';
+    transaction.status = 'active';
     addTimeline(transaction, 'Received', `Materials received in ${materialCondition} condition. ${remarks || ''}`, req.user._id);
     await transaction.save();
 
@@ -1318,71 +1318,50 @@ exports.rejectReceipt = async (req, res) => {
     const { reason } = req.body;
 
     const transaction = await Transaction.findOne(getQueryByIdOrTxnId(id));
-    if (!transaction) {
-      return res.status(404).json({ message: 'Transaction not found.' });
+    if (!transaction) return res.status(404).json({ message: 'Transaction not found.' });
+
+    // Validate that the user is the requester (or super_admin)
+    if (transaction.requester.toString() !== req.user._id.toString() && req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Only the requester can reject this receipt.' });
     }
 
-    if (!reason) {
-      return res.status(400).json({ message: 'Rejection reason is required.' });
+    // Verify it is a direct dispatch (handler is null)
+    if (transaction.handler) {
+      return res.status(400).json({ message: 'Receipt rejection is only allowed for direct store dispatches.' });
     }
 
-    const hasHandler = !!transaction.handler;
-
-    if (!hasHandler) {
-      // Direct dispatch reject -> permanently rejected
-      transaction.status = 'rejected';
-      transaction.rejectionReason = reason;
-      transaction.requesterRejected = true;
-      transaction.rejectedDeliveryStatus = 'rejected_by_requester';
-
-      addTimeline(transaction, 'Request Rejected', `Material receipt rejected by requester. Reason: ${reason}. Transaction rejected.`, req.user._id);
-      await transaction.save();
-
-      // Cancel barcodes
-      await Barcode.updateMany(
-        { transactionId: transaction.transactionId },
-        { status: 'Cancelled' }
-      );
-
-      // Write to audit log
-      await AuditLog.create({
-        action: 'REJECT_RECEIPT',
-        entity: 'Transaction',
-        entityId: transaction.transactionId,
-        user: req.user._id,
-        userName: req.user.fullName,
-        description: `Requester rejected material receipt. Reason: ${reason}. Transaction rejected.`,
-      });
-
-      return res.json({ message: 'Material receipt rejected and transaction closed.', transaction });
-    } else {
-      // Handler dispatch reject -> wait for handler to send to store
-      transaction.status = 'dispatched';
-      transaction.rejectionReason = reason;
-      transaction.requesterRejected = true;
-      transaction.rejectedDeliveryStatus = 'rejected_by_requester';
-
-      addTimeline(transaction, 'Receipt Rejected', `Material receipt rejected by requester. Reason: ${reason}. Waiting for handler to return materials to store.`, req.user._id);
-      await transaction.save();
-
-      // Cancel barcodes
-      await Barcode.updateMany(
-        { transactionId: transaction.transactionId },
-        { status: 'Cancelled' }
-      );
-
-      // Write to audit log
-      await AuditLog.create({
-        action: 'REJECT_RECEIPT',
-        entity: 'Transaction',
-        entityId: transaction.transactionId,
-        user: req.user._id,
-        userName: req.user.fullName,
-        description: `Requester rejected material receipt. Reason: ${reason}. Waiting for return to store.`,
-      });
-
-      return res.json({ message: 'Material receipt rejected. Waiting for handler return to store.', transaction });
+    // Must be in dispatched status
+    if (transaction.status !== 'dispatched') {
+      return res.status(400).json({ message: 'Transaction must be in dispatched status to reject receipt.' });
     }
+
+    // Set transaction status to 'rejected'
+    transaction.status = 'rejected';
+    transaction.rejectionReason = reason || 'Rejected by requester upon direct delivery';
+    
+    // Add timeline entry
+    addTimeline(transaction, 'Request Rejected', `Direct delivery receipt rejected by requester: ${reason || 'No remarks'}`, req.user._id);
+
+    // Set all barcodes to 'Cancelled' in Barcode collection
+    await Barcode.updateMany(
+      { transactionId: transaction.transactionId },
+      { status: 'Cancelled' }
+    );
+
+    // Update barcode status inside transaction materials barcodes list as well
+    transaction.materials = transaction.materials.map(m => {
+      if (m.barcodes) {
+        m.barcodes = m.barcodes.map(b => {
+          b.status = 'Cancelled';
+          return b;
+        });
+      }
+      return m;
+    });
+
+    await transaction.save();
+
+    res.json({ message: 'Transaction rejected successfully.', data: transaction });
   } catch (error) {
     console.error('Reject receipt error:', error);
     res.status(500).json({ message: 'Server error.' });
