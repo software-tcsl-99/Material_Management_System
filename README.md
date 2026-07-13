@@ -46,9 +46,4 @@ npm run seed
 
 Creates default Super Admin and sample master data.
 
-### Default Login
-
-- **Employee ID:** `ADMIN001`
-- **Password:** `Admin@1234`
-
 > You will be prompted to change the password on first login.
