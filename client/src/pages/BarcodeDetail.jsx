@@ -39,6 +39,7 @@ export default function BarcodeDetail() {
   const [exchangeSubmitting, setExchangeSubmitting] = useState(false);
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [viewAllModalOpen, setViewAllModalOpen] = useState(false);
 
   const handleExport = async (format) => {
     setExportDropdownOpen(false);
@@ -255,6 +256,9 @@ export default function BarcodeDetail() {
     }
     return timeA - timeB;
   });
+
+  const remarksHistory = timelineHistory.filter(h => h.remarks && h.remarks.trim());
+  const recentRemark = remarksHistory.length > 0 ? remarksHistory[remarksHistory.length - 1] : null;
 
   const handleAcceptSplit = async () => {
     setAccepting(true);
@@ -545,82 +549,123 @@ export default function BarcodeDetail() {
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-3">
                   <div className="flex justify-between items-center pb-2 border-b border-slate-50 dark:border-slate-800/60">
                     <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 tracking-wider">Photos</h4>
-                    <span className="text-[10px] text-blue-650 dark:text-blue-400 hover:underline font-bold cursor-pointer">View All</span>
+                    <span
+                      onClick={() => navigate(`/barcodes/${barcode}/view-all?tab=photos`)}
+                      className="text-[10px] text-blue-650 dark:text-blue-400 hover:underline font-bold cursor-pointer"
+                    >
+                      View All
+                    </span>
                   </div>
                   <div className="flex flex-col gap-4">
                     {!bc.photos || bc.photos.length === 0 ? (
                       <p className="text-xs text-slate-405 italic mt-1">No photos uploaded</p>
                     ) : (
-                      bc.photos.map((p, i) => (
-                        <div key={i} className="flex items-center gap-4 bg-slate-50 dark:bg-slate-950/20 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
-                          <div className="w-24 h-24 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
-                            <img src={p.url} alt={`Scan ${i + 1}`} className="w-full h-full object-cover" />
-                          </div>
-                          <div className="flex flex-col gap-1 text-xs">
-                            <span className="text-[10px] text-slate-400 font-bold tracking-wider">Photo #{i + 1} Location (GPS)</span>
-                            {(() => {
-                              const pLat = p ? parseFloat(p.lat) : NaN;
-                              const pLng = p ? parseFloat(p.lng) : NaN;
-                              const hasPCoords = !isNaN(pLat) && !isNaN(pLng);
+                      (() => {
+                        const recentPhoto = bc.photos[bc.photos.length - 1];
+                        return (
+                          <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-950/20 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                            <div className="w-24 h-24 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
+                              <img src={recentPhoto.url} alt="Recent Scan" className="w-full h-full object-cover" />
+                            </div>
+                            <div className="flex flex-col gap-1 text-xs">
+                              <span className="text-[10px] text-slate-400 font-bold tracking-wider">Photo Location (GPS)</span>
+                              {(() => {
+                                const pLat = recentPhoto ? parseFloat(recentPhoto.lat) : NaN;
+                                const pLng = recentPhoto ? parseFloat(recentPhoto.lng) : NaN;
+                                const hasPCoords = !isNaN(pLat) && !isNaN(pLng);
 
-                              const bcLat = bc?.gps ? parseFloat(bc.gps.lat) : NaN;
-                              const bcLng = bc?.gps ? parseFloat(bc.gps.lng) : NaN;
-                              const hasBcCoords = !isNaN(bcLat) && !isNaN(bcLng);
+                                const bcLat = bc?.gps ? parseFloat(bc.gps.lat) : NaN;
+                                const bcLng = bc?.gps ? parseFloat(bc.gps.lng) : NaN;
+                                const hasBcCoords = !isNaN(bcLat) && !isNaN(bcLng);
 
-                              if (hasPCoords) {
-                                return (
-                                  <>
-                                    <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                                      {pLat.toFixed(4)}° N, {pLng.toFixed(4)}° E
-                                    </p>
-                                    <p className="text-[10px] text-slate-500 font-bold tracking-wide">
-                                      {p.address || 'Captured Location'}
-                                    </p>
-                                  </>
-                                );
-                              } else if (hasBcCoords) {
-                                return (
-                                  <>
-                                    <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                                      {bcLat.toFixed(4)}° N, {bcLng.toFixed(4)}° E
-                                    </p>
-                                    <p className="text-[10px] text-slate-500 font-bold tracking-wide">
-                                      {bc.gps.address || 'Recorded GPS Location'}
-                                    </p>
-                                  </>
-                                );
-                              } else {
-                                return <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>;
-                              }
-                            })()}
+                                if (hasPCoords) {
+                                  return (
+                                    <>
+                                      <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                                        {pLat.toFixed(4)}° N, {pLng.toFixed(4)}° E
+                                      </p>
+                                      <p className="text-[10px] text-slate-500 font-bold tracking-wide">
+                                        {recentPhoto.address || 'Captured Location'}
+                                      </p>
+                                    </>
+                                  );
+                                } else if (hasBcCoords) {
+                                  return (
+                                    <>
+                                      <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                                        {bcLat.toFixed(4)}° N, {bcLng.toFixed(4)}° E
+                                      </p>
+                                      <p className="text-[10px] text-slate-500 font-bold tracking-wide">
+                                        {bc.gps.address || 'Recorded GPS Location'}
+                                      </p>
+                                    </>
+                                  );
+                                } else {
+                                  return <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>;
+                                }
+                              })()}
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })()
                     )}
                   </div>
                 </div>
 
                 {/* Remarks Panel */}
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-2">
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 tracking-wider pb-2 border-b border-slate-50 dark:border-slate-800/60">Remarks</h4>
-                  <p className="text-xs text-slate-600 dark:text-slate-100 font-semibold leading-relaxed mt-1">
-                    {bc.history?.[bc.history.length - 1]?.remarks || 'No remarks recorded for this status lot.'}
-                  </p>
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-50 dark:border-slate-800/60">
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 tracking-wider">Remarks</h4>
+                    <span
+                      onClick={() => navigate(`/barcodes/${barcode}/view-all?tab=remarks`)}
+                      className="text-[10px] text-blue-650 dark:text-blue-400 hover:underline font-bold cursor-pointer"
+                    >
+                      View All
+                    </span>
+                  </div>
+                  {recentRemark ? (
+                    <div className="mt-1">
+                      <p className="text-xs text-slate-655 dark:text-slate-100 font-semibold leading-relaxed">
+                        "{recentRemark.remarks}"
+                      </p>
+                      <span className="block text-[10px] text-slate-400 font-bold mt-1.5 leading-none">
+                        By {recentRemark.user?.fullName || recentRemark.user?.name || recentRemark.user || 'System'} • {recentRemark.action} • {new Date(recentRemark.timestamp).toLocaleString()}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-600 dark:text-slate-100 font-semibold leading-relaxed mt-1">
+                      No remarks recorded for this status lot.
+                    </p>
+                  )}
                 </div>
 
                 {/* Attachments Panel */}
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col gap-2">
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 tracking-wider pb-2 border-b border-slate-50 dark:border-slate-800/60">Attachments</h4>
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-50 dark:border-slate-800/60">
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 tracking-wider">Attachments</h4>
+                    <span
+                      onClick={() => navigate(`/barcodes/${barcode}/view-all?tab=attachments`)}
+                      className="text-[10px] text-blue-650 dark:text-blue-400 hover:underline font-bold cursor-pointer"
+                    >
+                      View All
+                    </span>
+                  </div>
                   {bc.documents?.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic mt-1">No documents</p>
+                    <p className="text-xs text-slate-405 italic mt-1">No documents</p>
                   ) : (
-                    <div className="flex flex-col gap-2.5 mt-1">
-                      {bc.documents.map((doc, idx) => (
-                        <a key={idx} href={doc.url} className="text-xs text-blue-650 dark:text-blue-400 hover:underline font-bold" target="_blank" rel="noreferrer">
-                          {doc.name}
-                        </a>
-                      ))}
-                    </div>
+                    (() => {
+                      const recentDoc = bc.documents[bc.documents.length - 1];
+                      return (
+                        <div className="flex flex-col gap-1 mt-1">
+                          <a href={recentDoc.url} className="text-xs text-blue-650 dark:text-blue-400 hover:underline font-bold" target="_blank" rel="noreferrer">
+                            {recentDoc.name}
+                          </a>
+                          <span className="text-[9px] text-slate-400 font-semibold block mt-0.5">
+                            Uploaded {new Date(recentDoc.uploadedAt || bc.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                      );
+                    })()
                   )}
                 </div>
               </div>
@@ -1041,7 +1086,7 @@ export default function BarcodeDetail() {
 
       {/* Exchange Barcode Modal */}
       {exchangeModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-slate-900/60 dark:bg-slate-955/80 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150">
             <div className="flex justify-between items-start mb-4">
               <div>
@@ -1074,6 +1119,97 @@ export default function BarcodeDetail() {
                 </Button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* View All Photos, Remarks & Documents Modal */}
+      {viewAllModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl p-6 shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="flex justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">All Process Photos, Remarks & Documents History</h3>
+                <p className="text-[10px] text-slate-400 font-bold tracking-wider mt-0.5 font-mono">Barcode: {barcode}</p>
+              </div>
+              <button onClick={() => setViewAllModalOpen(false)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-650">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body (Scrollable list of process history cards) */}
+            <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
+              {timelineHistory.slice().reverse().map((log, idx) => {
+                // Find associated photo by timestamp or metadata
+                const logTime = new Date(log.timestamp).getTime();
+                const associatedPhoto = bc.photos?.find(p => {
+                  const pTime = new Date(p.capturedAt || p.uploadedAt).getTime();
+                  return Math.abs(pTime - logTime) < 10000; // within 10 seconds
+                });
+
+                return (
+                  <div key={idx} className="bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800 p-4.5 rounded-2xl flex flex-col gap-3">
+                    {/* Header: Action Name, User, and Date */}
+                    <div className="flex justify-between items-start gap-4">
+                      <div>
+                        <span className="inline-block text-[10px] font-extrabold bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-2 py-0.5 rounded uppercase tracking-wider font-mono">
+                          {log.action}
+                        </span>
+                        <p className="text-[11px] text-slate-500 font-semibold mt-1">
+                          By <span className="font-extrabold text-slate-750 dark:text-slate-200">{log.user?.fullName || log.user?.name || log.user || 'System'}</span>
+                        </p>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-bold font-mono">
+                        {new Date(log.timestamp).toLocaleString()}
+                      </span>
+                    </div>
+
+                    {/* Remarks Body */}
+                    {log.remarks && (
+                      <div className="p-3 bg-white dark:bg-slate-900 border border-slate-150/60 dark:border-slate-800/80 rounded-xl">
+                        <p className="text-xs text-slate-655 dark:text-slate-350 italic font-semibold leading-relaxed">
+                          "{log.remarks}"
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Associated Photo */}
+                    {associatedPhoto && (
+                      <div className="flex items-center gap-4 bg-white dark:bg-slate-900 border border-slate-150/60 dark:border-slate-800/80 p-3 rounded-xl">
+                        <div className="w-16 h-16 bg-slate-100 dark:bg-slate-950 border border-slate-150 dark:border-slate-800 rounded-lg overflow-hidden flex items-center justify-center shrink-0">
+                          <img src={associatedPhoto.url} alt="Process Upload" className="w-full h-full object-cover" />
+                        </div>
+                        <div className="flex flex-col gap-0.5 text-[10px] text-slate-500">
+                          <span className="font-extrabold text-slate-400 text-[9px] uppercase tracking-wider">Process GPS Coordinates</span>
+                          {associatedPhoto.lat && associatedPhoto.lng ? (
+                            <>
+                              <p className="font-mono font-bold text-slate-700 dark:text-slate-200">
+                                {parseFloat(associatedPhoto.lat).toFixed(4)}° N, {parseFloat(associatedPhoto.lng).toFixed(4)}° E
+                              </p>
+                              <p className="text-[9px] text-slate-400 font-bold leading-tight">
+                                {associatedPhoto.address || 'Pune, India'}
+                              </p>
+                            </>
+                          ) : (
+                            <p className="italic text-slate-400">No location coordinates uploaded.</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {timelineHistory.length === 0 && (
+                <p className="text-xs text-slate-400 italic text-center py-8">No process history logs recorded for this barcode.</p>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end shrink-0">
+              <Button variant="ghost" onClick={() => setViewAllModalOpen(false)}>Close</Button>
+            </div>
           </div>
         </div>
       )}

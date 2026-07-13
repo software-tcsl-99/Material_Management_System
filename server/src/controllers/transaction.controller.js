@@ -130,6 +130,7 @@ exports.createTransaction = async (req, res) => {
         description: m.description || '',
         quantity: m.quantity,
         unit: m.unit || 'pcs',
+        price: m.price || 0,
         barcodes: isSimplified ? [] : m.barcodes.map((b) => ({
           barcode: b.barcode,
           status: 'Active',
@@ -1258,6 +1259,21 @@ exports.receiveTransaction = async (req, res) => {
       description: `Physically received transaction ${transaction.transactionId}`,
     });
 
+    // Post Gokul Shirgaon Godown Transfer to Tally using the exact employee/Godown name when they receive it
+    try {
+      const tallyController = require('./tally.controller');
+      await transaction.populate('requester');
+      const destinationGodown = transaction.requester ? transaction.requester.fullName : 'Main Location';
+      const tallyVoucherNumber = await tallyController.createTallyStockJournal(transaction.transactionId, destinationGodown, transaction.materials);
+      if (tallyVoucherNumber) {
+        transaction.documentNumber = tallyVoucherNumber;
+        await transaction.save();
+        console.log(`Successfully updated transaction ${transaction.transactionId} with Tally voucher number: ${tallyVoucherNumber}`);
+      }
+    } catch (tallyInitErr) {
+      console.error('Failed to initialize Tally Gokul Shirgaon Godown Transfer post:', tallyInitErr.message);
+    }
+
     res.json({ message: 'Transaction received and barcodes activated.', transaction });
   } catch (error) {
     console.error('Receive error:', error);
@@ -1411,10 +1427,18 @@ exports.storeDispatchTransaction = async (req, res) => {
     }
 
     const existingBarcodes = await Barcode.find({ barcode: { $in: allBarcodes } });
-    if (existingBarcodes.length > 0) {
-      return res.status(400).json({
-        message: `Barcode(s) already exist: ${existingBarcodes.map((b) => b.barcode).join(', ')}`,
-      });
+    const User = require('../models/User');
+    const storeAdmin = await User.findOne({ role: 'department_admin', departmentAdminType: 'store' });
+    const storeAdminId = storeAdmin ? storeAdmin._id.toString() : null;
+
+    for (const eb of existingBarcodes) {
+      const isOwnedByStore = storeAdminId && eb.owner && eb.owner.toString() === storeAdminId;
+      const isReturnedOrCancelled = ['Returned', 'Cancelled'].includes(eb.status);
+      if (!isOwnedByStore && !isReturnedOrCancelled) {
+        return res.status(400).json({
+          message: `Barcode "${eb.barcode}" is currently active under another owner and cannot be dispatched.`,
+        });
+      }
     }
 
     // Save receiver and document details
@@ -1446,33 +1470,55 @@ exports.storeDispatchTransaction = async (req, res) => {
       photos: m.photos || [],
     }));
 
-    // Register each barcode inside the Barcode collection
+    // Register or update each barcode inside the Barcode collection
     for (const mat of materials) {
       for (const bcStr of mat.barcodes) {
-        await Barcode.create({
-          barcode: bcStr,
-          transactionId: transaction.transactionId,
-          transaction: transaction._id,
-          materialName: mat.name,
-          status: 'Active',
-          owner: transaction.requester,
-          ownerDepartment: transaction.department,
-          ownershipHistory: [
-            {
-              user: transaction.requester,
-              department: transaction.department,
-              action: 'created',
-              remarks: 'Dispatched from store',
-            },
-          ],
-          history: [
-            {
-              action: 'Dispatched from Store',
-              user: req.user._id,
-              remarks: `Registered in transaction ${transaction.transactionId}`,
-            },
-          ],
-        });
+        const existingBc = existingBarcodes.find(b => b.barcode === bcStr);
+        if (existingBc) {
+          existingBc.transactionId = transaction.transactionId;
+          existingBc.transaction = transaction._id;
+          existingBc.materialName = mat.name;
+          existingBc.status = 'Active';
+          existingBc.owner = transaction.requester;
+          existingBc.ownerDepartment = transaction.department;
+          existingBc.ownershipHistory.push({
+            user: transaction.requester,
+            department: transaction.department,
+            action: 'received',
+            remarks: 'Re-dispatched from store',
+          });
+          existingBc.history.push({
+            action: 'Dispatched from Store',
+            user: req.user._id,
+            remarks: `Re-registered in transaction ${transaction.transactionId}`,
+          });
+          await existingBc.save();
+        } else {
+          await Barcode.create({
+            barcode: bcStr,
+            transactionId: transaction.transactionId,
+            transaction: transaction._id,
+            materialName: mat.name,
+            status: 'Active',
+            owner: transaction.requester,
+            ownerDepartment: transaction.department,
+            ownershipHistory: [
+              {
+                user: transaction.requester,
+                department: transaction.department,
+                action: 'created',
+                remarks: 'Dispatched from store',
+              },
+            ],
+            history: [
+              {
+                action: 'Dispatched from Store',
+                user: req.user._id,
+                remarks: `Registered in transaction ${transaction.transactionId}`,
+              },
+            ],
+          });
+        }
       }
     }
 

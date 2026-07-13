@@ -30,6 +30,8 @@ const StoreDispatchPage = () => {
 
   // Materials states (matching the transaction materials list + store added ones)
   const [materialRows, setMaterialRows] = useState([]);
+  // Available barcodes mapping by material name
+  const [rowBarcodesMap, setRowBarcodesMap] = useState({});
 
   // Transaction level document photos state (multiple capture support)
   const [docPhotos, setDocPhotos] = useState([]);
@@ -91,8 +93,18 @@ const StoreDispatchPage = () => {
           }
         }
 
+        // Fetch Tally inventory to get live pricing and units
+        let tallyInventory = [];
+        try {
+          const tallyRes = await api.get('/tally/inventory');
+          tallyInventory = tallyRes.data.materials || [];
+        } catch (tallyErr) {
+          console.warn('Error loading Tally inventory in dispatch form:', tallyErr);
+        }
+
         // Map transaction materials to local form rows
         const rows = tx.materials.map(m => {
+          const matchedTally = tallyInventory.find(item => item.name.toLowerCase() === m.name.toLowerCase());
           const barcodeInputs = [];
           for (let i = 0; i < m.quantity; i++) {
             barcodeInputs.push('');
@@ -100,9 +112,9 @@ const StoreDispatchPage = () => {
           return {
             name: m.name,
             quantity: m.quantity,
-            unit: m.unit || 'pcs',
+            unit: matchedTally?.unit || m.unit || 'pcs',
             description: m.description || '',
-            price: m.price || 0,
+            price: matchedTally?.price || m.price || 0,
             barcodes: barcodeInputs,
             photos: [],
             isPreExisting: true
@@ -119,6 +131,31 @@ const StoreDispatchPage = () => {
     loadData();
   }, [id]);
 
+  const materialNamesKey = materialRows.map(r => r.name).filter(Boolean).join(',');
+
+  // Fetch available barcodes from GOKUL SHIRGAON store for each material in rows
+  useEffect(() => {
+    const fetchAvailableBarcodes = async () => {
+      const uniqueNames = [...new Set(materialRows.map(r => r.name).filter(Boolean))];
+      for (const name of uniqueNames) {
+        try {
+          const res = await api.get(`/barcodes/store-available?materialName=${encodeURIComponent(name)}`);
+          const bcList = res.data.barcodes || [];
+          setRowBarcodesMap(prev => ({
+            ...prev,
+            [name]: bcList.map(b => b.barcode)
+          }));
+        } catch (err) {
+          console.error(`Failed to fetch store barcodes for "${name}":`, err);
+        }
+      }
+    };
+
+    if (materialRows.length > 0) {
+      fetchAvailableBarcodes();
+    }
+  }, [materialNamesKey]);
+
   const handlePriceChange = (index, value) => {
     const updated = [...materialRows];
     updated[index].price = parseFloat(value) || 0;
@@ -127,9 +164,7 @@ const StoreDispatchPage = () => {
 
   const handleBarcodeChange = (matIndex, bcIndex, value) => {
     const updated = [...materialRows];
-    // Restrict input to digits only (strip alphabetic and special characters)
-    const numericValue = value.replace(/[^0-9]/g, '');
-    updated[matIndex].barcodes[bcIndex] = numericValue;
+    updated[matIndex].barcodes[bcIndex] = value;
     setMaterialRows(updated);
   };
 
@@ -307,10 +342,6 @@ const StoreDispatchPage = () => {
       setError('Receiver Employee is required.');
       return;
     }
-    if (!documentNumber.trim()) {
-      setError('Document Pass Reference Number is required.');
-      return;
-    }
     if (!expectedReturnDate) {
       setError('Expected Return Date is compulsory.');
       return;
@@ -356,7 +387,7 @@ const StoreDispatchPage = () => {
       const payload = {
         receiver: receiverId,
         documentType: 'RDC',
-        documentNumber: documentNumber.trim(),
+        documentNumber: '',
         expectedReturnDate,
         priority: 'medium',
         costCenter: '',
@@ -439,7 +470,7 @@ const StoreDispatchPage = () => {
             1. Logistics Gate Pass & Document Details
           </h3>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-slate-500 dark:text-slate-400 font-bold tracking-wider mb-1.5 text-[10px]">
                 Sender / Receiver Employee
@@ -449,20 +480,6 @@ const StoreDispatchPage = () => {
                 value={transaction?.requester ? `${transaction.requester.fullName} (${transaction.requester.employeeId || 'N/A'})` : 'N/A'}
                 disabled
                 className="w-full text-xs bg-slate-100 border border-slate-200 dark:bg-slate-800 dark:border-slate-800 rounded-lg px-3.5 py-2.5 font-bold cursor-not-allowed text-slate-800 dark:text-slate-200"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-500 dark:text-slate-400 font-bold tracking-wider mb-1.5 text-[10px]">
-                Document Pass Reference Number *
-              </label>
-              <input
-                type="text"
-                value={documentNumber}
-                onChange={(e) => setDocumentNumber(e.target.value)}
-                required
-                placeholder="enter document number"
-                className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg px-3.5 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500"
               />
             </div>
 
@@ -479,7 +496,7 @@ const StoreDispatchPage = () => {
               />
             </div>
 
-            <div className="md:col-span-3">
+            <div className="md:col-span-2">
               <label className="block text-slate-500 dark:text-slate-400 font-bold tracking-wider mb-1.5 text-[10px]">
                 Dispatch Remarks / Purpose
               </label>
@@ -633,22 +650,25 @@ const StoreDispatchPage = () => {
                         type="text"
                         value={row.name}
                         disabled
-                        className="w-full text-xs border rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 mt-1 bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 cursor-not-allowed"
+                        className="w-full text-xs border rounded-lg px-2 py-1 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 mt-1 bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 cursor-not-allowed"
                       />
                     ) : (
                       <TallyMaterialAutocomplete
                         value={row.name}
-                        onChange={(nameVal, unitVal) => {
+                        onChange={(nameVal, unitVal, priceVal) => {
                           handleMaterialNameChange(matIndex, nameVal);
+                          const updated = [...materialRows];
                           if (unitVal) {
-                            const updated = [...materialRows];
                             updated[matIndex].unit = unitVal;
-                            setMaterialRows(updated);
                           }
+                          if (priceVal) {
+                            updated[matIndex].price = priceVal;
+                          }
+                          setMaterialRows(updated);
                         }}
                         placeholder="Search Tally inventory..."
                         required
-                        className="w-full text-xs border rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 mt-1 bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800 text-slate-800 dark:text-slate-200"
+                        className="px-2 py-1 bg-white text-slate-900 border-slate-300 dark:bg-slate-900 dark:text-white dark:border-slate-700 font-medium mt-1"
                       />
                     )}
                   </div>
@@ -662,8 +682,8 @@ const StoreDispatchPage = () => {
                       value={row.quantity}
                       onChange={(e) => handleQuantityChange(matIndex, e.target.value)}
                       disabled={row.isPreExisting}
-                      className={`w-full text-xs border rounded-lg px-2.5 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 ${row.isPreExisting
-                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 cursor-not-allowed'
+                      className={`w-full text-xs border rounded-lg px-2 py-1 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 ${row.isPreExisting
+                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-505 border-slate-200 dark:border-slate-700 cursor-not-allowed'
                         : 'bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800 text-slate-800 dark:text-slate-200'
                         }`}
                     />
@@ -681,7 +701,7 @@ const StoreDispatchPage = () => {
                         setMaterialRows(updated);
                       }}
                       placeholder="Unit"
-                      className="w-full text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-2.5 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200"
+                      className="w-full text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-2 py-1 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200"
                     />
                   </div>
 
@@ -697,7 +717,7 @@ const StoreDispatchPage = () => {
                       onChange={(e) => handlePriceChange(matIndex, e.target.value)}
                       required
                       placeholder="10"
-                      className="w-full text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-3 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                      className="w-full text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg px-2 py-1 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500"
                     />
                   </div>
 
@@ -723,14 +743,38 @@ const StoreDispatchPage = () => {
                         <label className="block text-slate-400 font-bold tracking-wider text-[9px]">
                           Barcode #{bcIndex + 1} *
                         </label>
-                        <input
-                          type="text"
+                        <select
                           value={bcVal}
                           onChange={(e) => handleBarcodeChange(matIndex, bcIndex, e.target.value)}
                           required
-                          placeholder={`Scan/Type Barcode #${bcIndex + 1}`}
-                          className="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500"
-                        />
+                          disabled={(rowBarcodesMap[row.name] || []).length === 0}
+                          className="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {(rowBarcodesMap[row.name] || []).length === 0 ? (
+                            <option value="">material is not availble</option>
+                          ) : (
+                            <>
+                              <option value="">Select Barcode...</option>
+                              {(rowBarcodesMap[row.name] || []).map((code) => {
+                                // Prevent selecting the same barcode in multiple inputs
+                                const isSelectedElsewhere = materialRows.some((r, rIdx) =>
+                                  r.barcodes.some((bc, bIdx) => bc === code && !(rIdx === matIndex && bIdx === bcIndex))
+                                );
+                                if (isSelectedElsewhere) return null;
+                                return (
+                                  <option key={code} value={code}>
+                                    {code}
+                                  </option>
+                                );
+                              })}
+                            </>
+                          )}
+                        </select>
+                        {(rowBarcodesMap[row.name] || []).length === 0 && (
+                          <p className="text-[9px] text-rose-500 font-extrabold mt-1">
+                            material is not availble
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>

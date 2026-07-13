@@ -7,6 +7,7 @@ const Input = React.forwardRef(({
   error,
   icon: Icon,
   className = '',
+  inputClassName = '',
   id,
   required,
   ...props
@@ -36,7 +37,7 @@ const Input = React.forwardRef(({
           type={isPassword ? (visible ? 'text' : 'password') : type}
           className={`
             block w-full rounded-lg border text-sm transition-all focus:outline-none focus:ring-2
-            ${Icon ? 'pl-10' : 'pl-3.5'} pr-10 py-2.5
+            ${inputClassName || `${Icon ? 'pl-10' : 'pl-3.5'} pr-10 py-2.5`}
             bg-white text-slate-900 border-slate-300 focus:ring-primary focus:border-primary
             dark:bg-slate-900 dark:text-white dark:border-slate-700 dark:focus:ring-primary
             ${error

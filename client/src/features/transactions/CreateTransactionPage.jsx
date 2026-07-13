@@ -34,7 +34,7 @@ const CreateTransactionPage = () => {
 
   // Materials State
   const [materials, setMaterials] = useState([
-    { name: '', qty: 1 }
+    { name: '', qty: 1, price: 0, unit: 'Nos' }
   ]);
 
   // Fetch routing users
@@ -55,7 +55,7 @@ const CreateTransactionPage = () => {
   const handleAddMaterial = () => {
     setMaterials([
       ...materials,
-      { name: '', qty: 1 }
+      { name: '', qty: 1, price: 0, unit: 'Nos' }
     ]);
   };
 
@@ -68,6 +68,8 @@ const CreateTransactionPage = () => {
     const updated = [...materials];
     if (field === 'qty') {
       updated[index].qty = Math.max(1, Number(value) || 1);
+    } else if (field === 'price') {
+      updated[index].price = Math.max(0, Number(value) || 0);
     } else {
       updated[index][field] = value ?? '';
     }
@@ -115,7 +117,8 @@ const CreateTransactionPage = () => {
       materials: materials.map(m => ({
         name: m.name.trim(),
         quantity: Number(m.qty) || 1,
-        unit: 'Nos',
+        unit: m.unit || 'Nos',
+        price: Number(m.price) || 0,
         barcodes: []
       })),
       documentType: 'RDC'
@@ -133,7 +136,7 @@ const CreateTransactionPage = () => {
   };
 
   return (
-    <div className="flex flex-col gap-6 max-w-2xl mx-auto pb-10">
+    <div className="flex flex-col gap-6 max-w-3xl mx-auto pb-10">
       {/* Header */}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" onClick={() => navigate('/transactions')}>
@@ -201,29 +204,53 @@ const CreateTransactionPage = () => {
             <div className="space-y-3">
               {materials.map((mat, idx) => (
                 <div key={idx} className="flex items-end gap-3 bg-slate-50/50 dark:bg-slate-900/30 p-3.5 rounded-xl border border-slate-200/60 dark:border-slate-800 relative">
-                  <div className="flex-1 grid grid-cols-3 gap-3">
-                    <div className="col-span-2">
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                    <div className="md:col-span-6">
                       <TallyMaterialAutocomplete
                         label={`${idx + 1}. Material Name`}
                         placeholder="Search Tally inventory..."
                         value={mat.name}
-                        onChange={(nameVal, unitVal) => {
+                        onChange={(nameVal, unitVal, priceVal) => {
                           handleMaterialChange(idx, 'name', nameVal);
+                          handleMaterialChange(idx, 'unit', unitVal || 'Nos');
+                          handleMaterialChange(idx, 'price', priceVal || 0);
                         }}
                         required
-                        className="block w-full rounded-lg border text-sm transition-all focus:outline-none focus:ring-2 pl-3.5 pr-10 py-2.5 bg-white text-slate-900 border-slate-300 focus:ring-primary focus:border-primary dark:bg-slate-900 dark:text-white dark:border-slate-700 dark:focus:ring-primary"
+                        className="px-2 py-1 bg-white text-slate-900 border-slate-300 dark:bg-slate-900 dark:text-white dark:border-slate-700 font-medium"
                       />
                     </div>
-                    <div>
+                    <div className="md:col-span-2">
                       <Input
-                        label="Quantity"
+                        label="Qty"
                         type="number"
                         min="1"
                         value={mat.qty}
                         onChange={(e) => handleMaterialChange(idx, 'qty', e.target.value)}
                         required
+                        inputClassName="px-2 py-1"
                       />
                     </div>
+                     <div className="md:col-span-2">
+                       <Input
+                         label="Unit"
+                         value={mat.unit || 'Nos'}
+                         onChange={(e) => handleMaterialChange(idx, 'unit', e.target.value)}
+                         required
+                         disabled
+                         inputClassName="px-2 py-1 bg-slate-50 dark:bg-slate-900 cursor-not-allowed text-slate-500 font-semibold"
+                       />
+                     </div>
+                     <div className="md:col-span-2">
+                       <Input
+                         label="Est. Price (₹)"
+                         type="number"
+                         value={mat.price || 0}
+                         onChange={(e) => handleMaterialChange(idx, 'price', e.target.value)}
+                         required
+                         disabled
+                         inputClassName="px-2 py-1 bg-slate-50 dark:bg-slate-900 cursor-not-allowed text-slate-500 font-semibold"
+                       />
+                     </div>
                   </div>
 
                   {materials.length > 1 && (

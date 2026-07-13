@@ -7,6 +7,7 @@ const { requirePermission } = require('../middleware/rbac');
 
 router.use(auth);
 
+router.get('/store-available', barcodeController.getStoreAvailableBarcodes);
 router.get('/', requirePermission('barcode:view'), barcodeController.listBarcodes);
 router.get('/search', requirePermission('barcode:view'), barcodeController.searchBarcodes);
 router.get('/pending/transfers', barcodeController.getPendingTransfers);

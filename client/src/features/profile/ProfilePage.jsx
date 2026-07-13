@@ -9,6 +9,7 @@ import useAuthStore from '../../store/authStore';
 const ProfilePage = () => {
   const { user, updateUser } = useAuthStore();
   const fileInputRef = useRef(null);
+  const isSuperAdmin = user?.role === 'super_admin';
 
   // Profile Details State
   const [fullName, setFullName] = useState(user?.fullName || '');
@@ -142,14 +143,16 @@ const ProfilePage = () => {
               )}
 
               {/* Photo Overlay Upload trigger */}
-              <button
-                disabled={photoUploading}
-                onClick={() => fileInputRef.current?.click()}
-                className="absolute inset-0 bg-slate-950/65 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center text-white cursor-pointer text-[10px] sm:text-xs font-semibold gap-1.5"
-              >
-                <Camera className="w-5 h-5 sm:w-6 sm:h-6 text-slate-200" />
-                <span>{photoUploading ? 'Saving...' : 'Upload Photo'}</span>
-              </button>
+              {isSuperAdmin && (
+                <button
+                  disabled={photoUploading}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="absolute inset-0 bg-slate-950/65 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center text-white cursor-pointer text-[10px] sm:text-xs font-semibold gap-1.5"
+                >
+                  <Camera className="w-5 h-5 sm:w-6 sm:h-6 text-slate-200" />
+                  <span>{photoUploading ? 'Saving...' : 'Upload Photo'}</span>
+                </button>
+              )}
             </div>
 
             <input
@@ -254,8 +257,8 @@ const ProfilePage = () => {
           {/* Global Alert Notification */}
           {(profileSuccess || profileError) && (
             <div className={`p-4 rounded-xl border flex items-start gap-3 animate-in slide-in-from-top-4 duration-300 ${profileSuccess
-                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-400'
-                : 'bg-rose-500/10 border-rose-500/20 text-rose-700 dark:text-rose-400'
+              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-400'
+              : 'bg-rose-500/10 border-rose-500/20 text-rose-700 dark:text-rose-400'
               }`}>
               {profileSuccess ? <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" /> : <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />}
               <div className="text-xs font-semibold leading-relaxed">
@@ -288,6 +291,7 @@ const ProfilePage = () => {
                       onChange={(e) => setFullName(e.target.value)}
                       required
                       className="w-full"
+                      disabled={!isSuperAdmin}
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
@@ -300,6 +304,7 @@ const ProfilePage = () => {
                       onChange={(e) => setEmail(e.target.value)}
                       required
                       className="w-full"
+                      disabled={!isSuperAdmin}
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
@@ -312,20 +317,9 @@ const ProfilePage = () => {
                       onChange={(e) => setPhone(e.target.value)}
                       required
                       className="w-full"
+                      disabled={!isSuperAdmin}
                     />
                   </div>
-                </div>
-
-                <div className="flex justify-end border-t border-slate-100 dark:border-slate-800 pt-4">
-                  <Button
-                    type="submit"
-                    size="sm"
-                    loading={updatingProfile}
-                    icon={Save}
-                    className="px-6 shadow-md hover:shadow-lg transition-shadow"
-                  >
-                    Save Changes
-                  </Button>
                 </div>
               </form>
             </div>
@@ -338,8 +332,8 @@ const ProfilePage = () => {
 
               {(passwordSuccess || passwordError) && (
                 <div className={`p-3 rounded-lg border flex items-center gap-2 ${passwordSuccess
-                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
-                    : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400'
+                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400'
                   }`}>
                   {passwordSuccess ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <ShieldAlert className="w-4 h-4 shrink-0" />}
                   <span className="text-xs font-semibold">{passwordSuccess || passwordError}</span>

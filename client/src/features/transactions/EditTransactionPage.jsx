@@ -6,6 +6,7 @@ import Card from '../../components/ui/Card';
 import Input from '../../components/ui/Input';
 import Select from '../../components/ui/Select';
 import Spinner from '../../components/ui/Spinner';
+import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
 import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
 
@@ -28,7 +29,7 @@ const EditTransactionPage = () => {
 
   // Materials State
   const [materials, setMaterials] = useState([
-    { name: '', qty: 1 }
+    { name: '', qty: 1, price: 0, unit: 'Nos' }
   ]);
 
   useEffect(() => {
@@ -63,9 +64,11 @@ const EditTransactionPage = () => {
 
         const mappedMaterials = (txnData.materials || []).map((m) => ({
           name: m.name,
-          qty: m.quantity !== undefined ? m.quantity : (m.qty || 1)
+          qty: m.quantity !== undefined ? m.quantity : (m.qty || 1),
+          unit: m.unit || 'Nos',
+          price: m.price || 0
         }));
-        setMaterials(mappedMaterials.length > 0 ? mappedMaterials : [{ name: '', qty: 1 }]);
+        setMaterials(mappedMaterials.length > 0 ? mappedMaterials : [{ name: '', qty: 1, price: 0, unit: 'Nos' }]);
       } catch (err) {
         console.error('Fetch edit data error:', err);
         setError('Failed to load transaction data.');
@@ -81,7 +84,7 @@ const EditTransactionPage = () => {
   const handleAddMaterial = () => {
     setMaterials([
       ...materials,
-      { name: '', qty: 1 }
+      { name: '', qty: 1, price: 0, unit: 'Nos' }
     ]);
   };
 
@@ -94,6 +97,8 @@ const EditTransactionPage = () => {
     const updated = [...materials];
     if (field === 'qty') {
       updated[index].qty = Math.max(1, Number(value) || 1);
+    } else if (field === 'price') {
+      updated[index].price = Math.max(0, Number(value) || 0);
     } else {
       updated[index][field] = value ?? '';
     }
@@ -142,7 +147,8 @@ const EditTransactionPage = () => {
       materials: materials.map(m => ({
         name: m.name.trim(),
         quantity: Number(m.qty) || 1,
-        unit: 'Nos',
+        unit: m.unit || 'Nos',
+        price: Number(m.price) || 0,
         barcodes: []
       })),
       documentType: 'RDC'
@@ -171,7 +177,7 @@ const EditTransactionPage = () => {
   }
 
   return (
-    <div className="flex flex-col gap-6 max-w-2xl mx-auto pb-10">
+    <div className="flex flex-col gap-6 max-w-3xl mx-auto pb-10">
       {/* Header */}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" onClick={() => navigate(`/transactions/${id}`)}>
@@ -240,17 +246,22 @@ const EditTransactionPage = () => {
               <div className="space-y-3">
                 {materials.map((mat, idx) => (
                   <div key={idx} className="flex items-end gap-3 bg-slate-50/50 dark:bg-slate-900/30 p-3.5 rounded-xl border border-slate-200/60 dark:border-slate-800 relative">
-                    <div className="flex-1 grid grid-cols-3 gap-3">
-                      <div className="col-span-2">
-                        <Input
-                          label={`Material #${idx + 1} Name *`}
-                          placeholder="e.g. Torque Wrench"
+                    <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                      <div className="md:col-span-6">
+                        <TallyMaterialAutocomplete
+                          label={`${idx + 1}. Material Name *`}
+                          placeholder="Search Tally inventory..."
                           value={mat.name}
-                          onChange={(e) => handleMaterialChange(idx, 'name', e.target.value)}
+                          onChange={(nameVal, unitVal, priceVal) => {
+                            handleMaterialChange(idx, 'name', nameVal);
+                            handleMaterialChange(idx, 'unit', unitVal || 'Nos');
+                            handleMaterialChange(idx, 'price', priceVal || 0);
+                          }}
                           required
+                          className="px-2 py-1 bg-white text-slate-900 border-slate-300 dark:bg-slate-900 dark:text-white dark:border-slate-700 font-medium"
                         />
                       </div>
-                      <div>
+                      <div className="md:col-span-1">
                         <Input
                           label="Quantity *"
                           type="number"
@@ -258,6 +269,28 @@ const EditTransactionPage = () => {
                           value={mat.qty}
                           onChange={(e) => handleMaterialChange(idx, 'qty', e.target.value)}
                           required
+                          inputClassName="px-2 py-1"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <Input
+                          label="Unit"
+                          value={mat.unit || 'Nos'}
+                          onChange={(e) => handleMaterialChange(idx, 'unit', e.target.value)}
+                          required
+                          disabled
+                          inputClassName="px-2 py-1 bg-slate-50 dark:bg-slate-900 cursor-not-allowed text-slate-500 font-semibold"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <Input
+                          label="Est. Price (₹)"
+                          type="number"
+                          value={mat.price || 0}
+                          onChange={(e) => handleMaterialChange(idx, 'price', e.target.value)}
+                          required
+                          disabled
+                          inputClassName="px-2 py-1 bg-slate-50 dark:bg-slate-900 cursor-not-allowed text-slate-500 font-semibold"
                         />
                       </div>
                     </div>

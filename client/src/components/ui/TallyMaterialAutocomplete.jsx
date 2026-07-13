@@ -42,7 +42,12 @@ const TallyMaterialAutocomplete = ({ value, onChange, placeholder, className, di
     } else {
       const q = searchQuery.toLowerCase();
       setFilteredMaterials(
-        materials.filter((m) => m.name.toLowerCase().includes(q))
+        materials.filter(
+          (m) =>
+            m.name.toLowerCase().includes(q) ||
+            (m.group && m.group.toLowerCase().includes(q)) ||
+            (m.category && m.category.toLowerCase().includes(q))
+        )
       );
     }
   }, [searchQuery, materials]);
@@ -70,8 +75,8 @@ const TallyMaterialAutocomplete = ({ value, onChange, placeholder, className, di
     }
   }, [isOpen]);
 
-  const handleSelect = (name, unit) => {
-    onChange(name, unit);
+  const handleSelect = (name, unit, price) => {
+    onChange(name, unit, price);
     setIsOpen(false);
     setSearchQuery('');
   };
@@ -89,7 +94,8 @@ const TallyMaterialAutocomplete = ({ value, onChange, placeholder, className, di
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center text-xs text-left bg-white border border-slate-300 rounded-lg px-3.5 py-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-primary dark:bg-slate-900 dark:text-white dark:border-slate-700 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${className}`}
+        className={`w-full flex justify-between items-center text-xs text-left bg-white border border-slate-300 rounded-lg ${className.includes('p-') || className.includes('py-') || className.includes('px-') ? '' : 'px-3.5 py-2.5'
+          } font-bold focus:outline-none focus:ring-2 focus:ring-primary dark:bg-slate-900 dark:text-white dark:border-slate-700 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${className}`}
       >
         <span className={value ? 'text-slate-900 dark:text-white' : 'text-slate-450 dark:text-slate-500'}>
           {value || placeholder || 'Select Tally Material...'}
@@ -100,7 +106,7 @@ const TallyMaterialAutocomplete = ({ value, onChange, placeholder, className, di
       {/* Floating Dropdown Panel */}
       {isOpen && (
         <div className="absolute left-0 right-0 z-50 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl max-h-64 overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-2 duration-150">
-          
+
           {/* Search box inside dropdown */}
           <div className="p-2 border-b border-slate-100 dark:border-slate-800 shrink-0">
             <input
@@ -127,18 +133,17 @@ const TallyMaterialAutocomplete = ({ value, onChange, placeholder, className, di
                 <button
                   key={idx}
                   type="button"
-                  onClick={() => handleSelect(item.name, item.unit)}
-                  className={`w-full flex justify-between items-center text-left px-3.5 py-2.5 text-xs font-bold transition hover:bg-blue-50 dark:hover:bg-slate-800 border-b border-slate-50 dark:border-slate-800/50 last:border-b-0 ${
-                    value === item.name ? 'bg-blue-50/50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'
-                  }`}
+                  onClick={() => handleSelect(item.name, item.unit, item.price)}
+                  className={`w-full flex justify-between items-center text-left px-3.5 py-2.5 text-xs font-bold transition hover:bg-blue-50 dark:hover:bg-slate-800 border-b border-slate-50 dark:border-slate-800/50 last:border-b-0 ${value === item.name ? 'bg-blue-50/50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'
+                    }`}
                 >
-                  <span className="truncate mr-2">{item.name}</span>
-                  <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold whitespace-nowrap ${
-                    item.stock > 0
-                      ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400'
-                      : 'bg-rose-50 text-rose-600 dark:bg-rose-950/20 dark:text-rose-400'
-                  }`}>
-                    {item.stock} {item.unit}
+                  <span className="truncate mr-2">
+                    <span className="block text-slate-800 dark:text-slate-200 whitespace-normal leading-normal">{item.name}</span>
+                    {(item.group || item.category) && (
+                      <span className="block text-[9px] text-slate-400 dark:text-slate-500 font-semibold mt-0.5 whitespace-normal">
+                        {item.group}{item.group && item.category ? ' • ' : ''}{item.category}
+                      </span>
+                    )}
                   </span>
                 </button>
               ))
@@ -148,7 +153,7 @@ const TallyMaterialAutocomplete = ({ value, onChange, placeholder, className, di
             {!loading && searchQuery.trim() && !materials.some(m => m.name.toLowerCase() === searchQuery.toLowerCase()) && (
               <button
                 type="button"
-                onClick={() => handleSelect(searchQuery.trim(), 'Nos')}
+                onClick={() => handleSelect(searchQuery.trim(), 'Nos', 0)}
                 className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 border-t border-slate-100 dark:border-slate-800 block"
               >
                 Use custom name: <span className="underline font-mono">"{searchQuery.trim()}"</span>

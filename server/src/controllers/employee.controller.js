@@ -125,6 +125,19 @@ exports.updateEmployee = async (req, res) => {
     const updates = req.body;
     delete updates.password; // Don't allow password update here
 
+    if (req.user.role !== 'super_admin') {
+      const restrictedFields = ['fullName', 'email', 'employeeId', 'department', 'designation', 'role', 'status', 'departmentAdminType', 'workLocation', 'phone'];
+      const attemptedToChangeRestricted = restrictedFields.some(field => {
+        if (updates[field] === undefined) return false;
+        const oldVal = user[field] ? user[field].toString() : '';
+        const newVal = updates[field] ? updates[field].toString() : '';
+        return oldVal !== newVal;
+      });
+      if (attemptedToChangeRestricted) {
+        return res.status(403).json({ message: 'Only Super Admin can change employee profile info (names, email, department, designation, etc.). Other users can only change password.' });
+      }
+    }
+
     if (updates.role === 'super_admin') {
       return res.status(400).json({ message: 'Cannot promote a user to Super Admin.' });
     }
@@ -175,6 +188,9 @@ exports.updateEmployee = async (req, res) => {
 
 exports.toggleStatus = async (req, res) => {
   try {
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Only Super Admin can toggle employee status.' });
+    }
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'Employee not found.' });
 
@@ -184,5 +200,66 @@ exports.toggleStatus = async (req, res) => {
     res.json({ message: `Employee ${user.status}.`, employee: user });
   } catch (error) {
     res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+const multer = require('multer');
+const { uploadToCloudinary } = require('../config/cloudinary');
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
+
+exports.profilePhotoMiddleware = upload.single('photo');
+
+exports.updateProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const updates = req.body;
+    delete updates.password;
+
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Only Super Admin can change profile info. Other users can only change password.' });
+    }
+
+    Object.assign(user, updates);
+    await user.save();
+
+    res.json({ message: 'Profile updated successfully.', user });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+exports.updateProfilePhoto = async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Only Super Admin can change profile photo. Other users can only change password.' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded.' });
+    }
+
+    const result = await uploadToCloudinary(req.file.buffer, 'mms');
+
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    user.profilePhoto = result.secure_url;
+    await user.save();
+
+    res.json({
+      message: 'Profile photo updated.',
+      url: result.secure_url,
+      profilePhoto: result.secure_url
+    });
+  } catch (error) {
+    console.error('Profile photo upload error:', error);
+    res.status(500).json({ message: 'Upload failed.' });
   }
 };

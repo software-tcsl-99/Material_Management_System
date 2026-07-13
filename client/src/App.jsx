@@ -28,6 +28,7 @@ import StoreDispatchPage from './features/transactions/StoreDispatchPage';
 
 // Sub Pages
 import BarcodeDetail from './pages/BarcodeDetail';
+import BarcodeViewAll from './pages/BarcodeViewAll';
 import HandlerAssignmentPage from './pages/HandlerAssignmentPage';
 import MaterialsTree from './pages/MaterialsTree';
 import NotificationsPage from './pages/NotificationsPage';
@@ -100,6 +101,7 @@ export default function App() {
           <Route path="transactions/:id/return-multiple" element={<ReturnMultiple />} />
           <Route path="transactions/:id/assign-handler" element={<HandlerAssignmentPage />} />
           <Route path="barcodes/:barcode" element={<BarcodeDetail />} />
+          <Route path="barcodes/:barcode/view-all" element={<BarcodeViewAll />} />
           <Route path="barcodes/:barcode/split" element={<SplitMaterial />} />
           <Route path="barcodes/:barcode/transfer" element={<TransferMaterial />} />
           <Route path="barcodes/:barcode/return" element={<ReturnMaterial />} />

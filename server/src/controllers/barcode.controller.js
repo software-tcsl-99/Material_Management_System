@@ -1108,6 +1108,168 @@ exports.listBarcodes = async (req, res) => {
 };
 
 /**
+ * Get barcodes currently owned by the Store Admin for a specific material name
+ */
+exports.getStoreAvailableBarcodes = async (req, res) => {
+  try {
+    const { materialName } = req.query;
+    if (!materialName) {
+      return res.status(400).json({ message: 'materialName query parameter is required.' });
+    }
+
+    const axios = require('axios');
+    const xml2js = require('xml2js');
+    const liveTallyUrl = process.env.TALLY_LIVE_URL || 'http://localhost:9000';
+
+    // 1. Get active company name from Tally
+    const COMPANY_QUERY_XML = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>ActiveCompanies</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="ActiveCompanies" ISINITIALIZE="Yes">
+                <TYPE>Company</TYPE>
+                <FETCH>Name</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    let companyName = '';
+    try {
+      const compResponse = await axios.post(liveTallyUrl, COMPANY_QUERY_XML, {
+        headers: { 'Content-Type': 'application/xml' },
+        timeout: 3000
+      });
+      const parser = new xml2js.Parser({ explicitArray: false });
+      const parsedComp = await parser.parseStringPromise(compResponse.data);
+      const activeCompanyObj = parsedComp?.ENVELOPE?.BODY?.DATA?.COLLECTION?.COMPANY;
+      if (activeCompanyObj) {
+        if (typeof activeCompanyObj === 'string') {
+          companyName = activeCompanyObj;
+        } else if (typeof activeCompanyObj === 'object') {
+          if (activeCompanyObj.NAME) {
+            companyName = typeof activeCompanyObj.NAME === 'object' ? activeCompanyObj.NAME._ : activeCompanyObj.NAME;
+          } else if (activeCompanyObj.$ && activeCompanyObj.$.NAME) {
+            companyName = activeCompanyObj.$.NAME;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to get active company for barcodes from Tally:', err.message);
+      return res.json({ barcodes: [], message: 'Tally Prime server is unreachable.' });
+    }
+
+    if (!companyName) {
+      return res.json({ barcodes: [], message: 'No active company in Tally.' });
+    }
+
+    // 2. Build XML request to fetch all stock items with BatchAllocations
+    const escapedCompanyName = companyName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const STOCK_QUERY_XML = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>StockItemBarcodes</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            <SVCURRENTCOMPANY>${escapedCompanyName}</SVCURRENTCOMPANY>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="StockItemBarcodes" ISINITIALIZE="Yes">
+                <TYPE>StockItem</TYPE>
+                <FETCH>Name, BatchAllocations</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    const response = await axios.post(liveTallyUrl, STOCK_QUERY_XML, {
+      headers: { 'Content-Type': 'application/xml' },
+      timeout: 5000
+    });
+
+    const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
+    const parsedData = await parser.parseStringPromise(response.data);
+
+    const rawItems = parsedData?.ENVELOPE?.BODY?.DATA?.COLLECTION?.STOCKITEM || [];
+    const stockItems = Array.isArray(rawItems) ? rawItems : [rawItems];
+
+    // 3. Find matched item
+    const targetName = materialName.toLowerCase().trim();
+    const matchedItem = stockItems.find(item => {
+      let name = '';
+      if (item) {
+        if (typeof item.NAME === 'string') name = item.NAME;
+        else if (typeof item.NAME === 'object' && item.NAME._) name = item.NAME._;
+        else if (item.$ && item.$.NAME) name = item.$.NAME;
+      }
+      const cleanName = name.trim().toLowerCase();
+      return cleanName === targetName || cleanName.includes(targetName) || targetName.includes(cleanName);
+    });
+
+    const barcodes = [];
+    if (matchedItem && matchedItem['BATCHALLOCATIONS.LIST']) {
+      const rawAllocations = matchedItem['BATCHALLOCATIONS.LIST'];
+      const allocations = Array.isArray(rawAllocations) ? rawAllocations : [rawAllocations];
+
+      // Fetch active barcodes from MongoDB
+      const Barcode = require('../models/Barcode');
+      const activeBcs = await Barcode.find({ status: 'Active' }).select('barcode');
+      const activeBcSet = new Set(activeBcs.map(b => b.barcode));
+
+      allocations.forEach(alloc => {
+        let godownName = '';
+        if (alloc.GODOWNNAME) {
+          godownName = typeof alloc.GODOWNNAME === 'object' ? alloc.GODOWNNAME._ : alloc.GODOWNNAME;
+        }
+        let batchName = '';
+        if (alloc.BATCHNAME) {
+          batchName = typeof alloc.BATCHNAME === 'object' ? alloc.BATCHNAME._ : alloc.BATCHNAME;
+        }
+
+        if (godownName && godownName.trim().toLowerCase() === 'gokul shirgaon' && batchName && batchName.trim()) {
+          const bcStr = batchName.trim();
+          // Check if barcode is already Active/Dispatched in MongoDB
+          if (!activeBcSet.has(bcStr)) {
+            barcodes.push({
+              barcode: bcStr,
+              materialName: materialName,
+              status: 'Active'
+            });
+          }
+        }
+      });
+    }
+
+    res.json({ barcodes });
+  } catch (error) {
+    console.error('getStoreAvailableBarcodes from Tally error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
  * Search barcodes
  */
 exports.searchBarcodes = async (req, res) => {

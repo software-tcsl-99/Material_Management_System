@@ -10,6 +10,7 @@ import {
   Database,
   File,
   FileSpreadsheet,
+  FileText,
   Inbox,
   Lock,
   RefreshCw,

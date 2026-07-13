@@ -7,7 +7,6 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "seed": "node src/scripts/seed.js",
-    "tally": "node src/scripts/seed-tally-materials.js",
     "admin": "node src/scripts/admin.js",
     "reset": "node src/scripts/reset.js",
     "test": "node src/scripts/test-flows.js"

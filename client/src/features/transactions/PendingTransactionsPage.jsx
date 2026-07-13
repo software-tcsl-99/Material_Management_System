@@ -1116,7 +1116,7 @@ const PendingTransactionsPage = () => {
   };
 
 
-  const showPricing = selectedItem && !['submitted', 'tl_approved', 'mgt_approved', 'ready_for_dispatch'].includes(selectedItem.status);
+  const showPricing = true;
 
   return (
     <div className="flex flex-col gap-5 h-[calc(100vh-7rem)] overflow-hidden">
@@ -1420,9 +1420,7 @@ const PendingTransactionsPage = () => {
                             <div className="flex items-center justify-between text-[9px] text-slate-400 font-extrabold mt-1">
                               <span>{t.documentType} Challan</span>
                               <span className="text-slate-700 dark:text-slate-300 font-bold">
-                                {!['submitted', 'tl_approved', 'mgt_approved', 'ready_for_dispatch'].includes(t.status)
-                                  ? `₹${t.grandTotal?.toLocaleString() || '0'}`
-                                  : 'Awaiting Dispatch'}
+                                ₹{t.grandTotal?.toLocaleString() || '0'}
                               </span>
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">

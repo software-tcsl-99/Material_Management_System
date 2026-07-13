@@ -40,9 +40,10 @@ export default function Header() {
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 30000); // Poll notifications
     return () => clearInterval(interval);
-  }, []);
+  }, [user]);
 
   const fetchNotifications = () => {
+    if (!user) return;
     api.get('/notifications?unreadOnly=true')
       .then(({ data }) => setNotifications(data.notifications || []))
       .catch(err => console.error(err));
