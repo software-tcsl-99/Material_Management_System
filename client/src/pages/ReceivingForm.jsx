@@ -25,8 +25,7 @@ export default function ReceivingForm() {
 
   const receiveMutation = useMutation({
     mutationFn: async (payload) => {
-      // Direct update transaction to active/received
-      return api.put(`/transactions/${id}/approve`, { remarks: 'Received materials from handler' });
+      return api.patch(`/transactions/${id}/receive`, payload);
     },
     onSuccess: () => {
       alert('Materials successfully received!');
@@ -34,9 +33,10 @@ export default function ReceivingForm() {
     }
   });
 
-  const handleCapturePhoto = (dataUrl, metadata) => {
-    setCapturedPhoto(dataUrl);
-    setPhotoMeta(metadata);
+  const handleCapturePhoto = (uploadData) => {
+    setCapturedPhoto(uploadData.url);
+    setPhotoMeta(uploadData.metadata);
+    setCameraOpen(false);
   };
 
   const handleSubmit = (e) => {
@@ -47,9 +47,9 @@ export default function ReceivingForm() {
     }
 
     const payload = {
-      condition,
+      materialCondition: condition,
       remarks,
-      gps: { lat: photoMeta.lat, lng: photoMeta.lng, address: photoMeta.address },
+      receiverGeo: { lat: photoMeta.lat, lng: photoMeta.lng, address: photoMeta.address },
       photo: capturedPhoto
     };
 

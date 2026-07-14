@@ -14,21 +14,46 @@ const ReturnFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
 
   if (!isOpen) return null;
 
-  const handleCapture = () => {
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
     setCapturing(true);
-    // Simulate geo-photo capture
-    setTimeout(() => {
-      setPhoto('https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=400&q=80');
-      // Random variance to show real coordinates
-      const lat = (18.5204 + (Math.random() - 0.5) * 0.01).toFixed(4);
-      const lng = (73.8567 + (Math.random() - 0.5) * 0.01).toFixed(4);
-      setCoords({
-        lat,
-        lng,
-        address: `Shop Floor Section C, Pune Plant (${lat}° N, ${lng}° E)`
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const { data } = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
+      
+      setPhoto(data.url);
+      
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((position) => {
+          const lat = position.coords.latitude.toFixed(4);
+          const lng = position.coords.longitude.toFixed(4);
+          setCoords({
+            lat,
+            lng,
+            address: `Shop Floor Section C, Pune Plant (${lat}° N, ${lng}° E)`
+          });
+        }, () => {
+          const lat = 18.5204;
+          const lng = 73.8567;
+          setCoords({
+            lat,
+            lng,
+            address: `Shop Floor Section C, Pune Plant (Coordinates: ${lat}, ${lng})`
+          });
+        });
+      }
+    } catch (err) {
+      setError('Photo upload failed: ' + (err.response?.data?.message || err.message));
+    } finally {
       setCapturing(false);
-    }, 1200);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -106,33 +131,41 @@ const ReturnFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
                   <span className="font-bold">GPS: {coords.lat}, {coords.lng}</span>
                   <span className="truncate">{coords.address}</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleCapture}
-                  className="absolute top-2 right-2 p-1.5 bg-slate-900/80 text-white rounded-lg hover:bg-slate-900 text-[10px] font-bold"
+                <label
+                  className="absolute top-2 right-2 p-1.5 bg-slate-900/80 text-white rounded-lg hover:bg-slate-900 text-[10px] font-bold cursor-pointer"
                 >
                   Retake
-                </button>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoUpload}
+                    className="hidden"
+                  />
+                </label>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={handleCapture}
-                disabled={capturing}
+              <label
                 className="w-full h-32 border-2 border-dashed border-slate-200 hover:border-blue-500 dark:border-slate-800 dark:hover:border-blue-500 rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-slate-50/50 transition-colors cursor-pointer text-slate-500"
               >
                 {capturing ? (
                   <>
                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500" />
-                    <span className="font-bold text-[10px] tracking-wider">Syncing Location...</span>
+                    <span className="font-bold text-[10px] tracking-wider">Uploading Photo...</span>
                   </>
                 ) : (
                   <>
                     <Camera className="w-6 h-6 text-slate-400" />
-                    <span className="font-bold text-[10px] tracking-wider">Capture Geo-Tagged Photo</span>
+                    <span className="font-bold text-[10px] tracking-wider">Upload/Capture Geo-Tagged Photo</span>
                   </>
                 )}
-              </button>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoUpload}
+                  disabled={capturing}
+                  className="hidden"
+                />
+              </label>
             )}
           </div>
 

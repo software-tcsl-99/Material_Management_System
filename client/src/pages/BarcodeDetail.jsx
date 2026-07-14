@@ -260,6 +260,158 @@ export default function BarcodeDetail() {
   const remarksHistory = timelineHistory.filter(h => h.remarks && h.remarks.trim());
   const recentRemark = remarksHistory.length > 0 ? remarksHistory[remarksHistory.length - 1] : null;
 
+  // Aggregate all photos from different forms and stages
+  const allPhotos = [];
+  const seenPhotoUrls = new Set();
+  const addPhoto = (url, lat, lng, address, date, source) => {
+    if (!url || typeof url !== 'string' || seenPhotoUrls.has(url)) return;
+    seenPhotoUrls.add(url);
+    
+    let cleanLat = parseFloat(lat);
+    let cleanLng = parseFloat(lng);
+    if (isNaN(cleanLat) || isNaN(cleanLng)) {
+      cleanLat = bc?.gps?.lat ? parseFloat(bc.gps.lat) : NaN;
+      cleanLng = bc?.gps?.lng ? parseFloat(bc.gps.lng) : NaN;
+    }
+
+    allPhotos.push({
+      url,
+      lat: cleanLat,
+      lng: cleanLng,
+      address: address || bc?.gps?.address || '',
+      date: date || bc?.createdAt || new Date().toISOString(),
+      source
+    });
+  };
+
+  if (bc?.photos) {
+    bc.photos.forEach(p => {
+      const url = typeof p === 'string' ? p : p.url;
+      const lat = typeof p === 'object' ? p.lat : undefined;
+      const lng = typeof p === 'object' ? p.lng : undefined;
+      const address = typeof p === 'object' ? p.address : undefined;
+      const date = typeof p === 'object' ? (p.capturedAt || p.uploadedAt) : undefined;
+      addPhoto(url, lat, lng, address, date, 'Barcode Asset');
+    });
+  }
+
+  if (bc?.history) {
+    bc.history.forEach(log => {
+      if (log.photo) {
+        addPhoto(log.photo, log.gps?.lat, log.gps?.lng, log.gps?.address, log.timestamp, `History (${log.action})`);
+      }
+      if (log.metadata && log.metadata.photo) {
+        addPhoto(log.metadata.photo, log.gps?.lat, log.gps?.lng, log.gps?.address, log.timestamp, `History (${log.action})`);
+      }
+      if (log.metadata && Array.isArray(log.metadata.photos)) {
+        log.metadata.photos.forEach(p => {
+          const url = typeof p === 'string' ? p : p.url;
+          addPhoto(url, log.gps?.lat, log.gps?.lng, log.gps?.address, log.timestamp, `History (${log.action})`);
+        });
+      }
+    });
+  }
+
+  if (bc?.transaction?.photos) {
+    bc.transaction.photos.forEach(p => {
+      const url = typeof p === 'string' ? p : p.url;
+      const lat = typeof p === 'object' ? p.metadata?.lat : undefined;
+      const lng = typeof p === 'object' ? p.metadata?.lng : undefined;
+      const address = typeof p === 'object' ? p.metadata?.address : undefined;
+      const date = typeof p === 'object' ? (p.metadata?.capturedAt || p.metadata?.date) : undefined;
+      addPhoto(url, lat, lng, address, date, 'Transaction Request');
+    });
+  }
+
+  if (bc?.transaction?.materials) {
+    bc.transaction.materials.forEach(mat => {
+      const hasBarcode = mat.barcodes?.some(b => {
+        const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString() || '');
+        return bStr === barcode;
+      });
+      if (hasBarcode && mat.photos) {
+        mat.photos.forEach(p => {
+          const url = typeof p === 'string' ? p : p.url;
+          const lat = typeof p === 'object' ? p.metadata?.lat : undefined;
+          const lng = typeof p === 'object' ? p.metadata?.lng : undefined;
+          const address = typeof p === 'object' ? p.metadata?.address : undefined;
+          const date = typeof p === 'object' ? p.metadata?.capturedAt : undefined;
+          addPhoto(url, lat, lng, address, date, 'Dispatch Form');
+        });
+      }
+    });
+  }
+
+  transfers.forEach((tr, index) => {
+    if (tr.photos) {
+      tr.photos.forEach(p => {
+        const url = typeof p === 'string' ? p : p.url;
+        const date = typeof p === 'object' ? p.capturedAt : undefined;
+        addPhoto(url, tr.gps?.lat, tr.gps?.lng, tr.gps?.address, date || tr.createdAt, `Transfer #${transfers.length - index}`);
+      });
+    }
+  });
+
+  returns.forEach((rt, index) => {
+    if (rt.photos) {
+      rt.photos.forEach(p => {
+        const url = typeof p === 'string' ? p : p.url;
+        const date = typeof p === 'object' ? p.capturedAt : undefined;
+        addPhoto(url, rt.gps?.lat, rt.gps?.lng, rt.gps?.address, date || rt.createdAt, `Return #${returns.length - index}`);
+      });
+    }
+  });
+
+  // Sort photos chronologically so the last one is the most recent
+  allPhotos.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const recentPhoto = allPhotos.length > 0 ? allPhotos[allPhotos.length - 1] : null;
+
+  // Aggregate all attachments/documents from different forms and stages
+  const allAttachments = [];
+  const seenDocUrls = new Set();
+  const addAttachment = (name, url, type, size, date, source) => {
+    if (!url || typeof url !== 'string' || seenDocUrls.has(url)) return;
+    seenDocUrls.add(url);
+    allAttachments.push({
+      name: name || 'Unnamed Document',
+      url,
+      type: type || 'document',
+      size: size || 0,
+      date: date || bc?.createdAt || new Date().toISOString(),
+      source
+    });
+  };
+
+  if (bc?.documents) {
+    bc.documents.forEach(doc => {
+      addAttachment(doc.name, doc.url, doc.type, doc.size, doc.uploadedAt, 'Barcode Asset');
+    });
+  }
+
+  if (bc?.transaction?.documents) {
+    bc.transaction.documents.forEach(doc => {
+      addAttachment(doc.name, doc.url, doc.type, doc.size, doc.uploadedAt, 'Transaction Challan');
+    });
+  }
+
+  const closeRequestsList = data?.closeRequests || [];
+  closeRequestsList.forEach((cr, index) => {
+    if (cr.invoiceUrl) {
+      const fileName = cr.invoiceUrl.split('/').pop() || `Invoice_Close_Request_${index + 1}.pdf`;
+      addAttachment(
+        `Invoice - ${fileName}`,
+        cr.invoiceUrl,
+        'pdf',
+        0,
+        cr.approvedAt || cr.createdAt,
+        `Close Request (Voucher No: ${cr.documentNumber || 'N/A'})`
+      );
+    }
+  });
+
+  allAttachments.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const recentDoc = allAttachments.length > 0 ? allAttachments[allAttachments.length - 1] : null;
+
   const handleAcceptSplit = async () => {
     setAccepting(true);
     try {
@@ -557,57 +709,44 @@ export default function BarcodeDetail() {
                     </span>
                   </div>
                   <div className="flex flex-col gap-4">
-                    {!bc.photos || bc.photos.length === 0 ? (
+                    {!recentPhoto ? (
                       <p className="text-xs text-slate-405 italic mt-1">No photos uploaded</p>
                     ) : (
-                      (() => {
-                        const recentPhoto = bc.photos[bc.photos.length - 1];
-                        return (
-                          <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-950/20 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
-                            <div className="w-24 h-24 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
-                              <img src={recentPhoto.url} alt="Recent Scan" className="w-full h-full object-cover" />
-                            </div>
-                            <div className="flex flex-col gap-1 text-xs">
-                              <span className="text-[10px] text-slate-400 font-bold tracking-wider">Photo Location (GPS)</span>
-                              {(() => {
-                                const pLat = recentPhoto ? parseFloat(recentPhoto.lat) : NaN;
-                                const pLng = recentPhoto ? parseFloat(recentPhoto.lng) : NaN;
-                                const hasPCoords = !isNaN(pLat) && !isNaN(pLng);
-
-                                const bcLat = bc?.gps ? parseFloat(bc.gps.lat) : NaN;
-                                const bcLng = bc?.gps ? parseFloat(bc.gps.lng) : NaN;
-                                const hasBcCoords = !isNaN(bcLat) && !isNaN(bcLng);
-
-                                if (hasPCoords) {
-                                  return (
-                                    <>
-                                      <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                                        {pLat.toFixed(4)}° N, {pLng.toFixed(4)}° E
-                                      </p>
-                                      <p className="text-[10px] text-slate-500 font-bold tracking-wide">
-                                        {recentPhoto.address || 'Captured Location'}
-                                      </p>
-                                    </>
-                                  );
-                                } else if (hasBcCoords) {
-                                  return (
-                                    <>
-                                      <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                                        {bcLat.toFixed(4)}° N, {bcLng.toFixed(4)}° E
-                                      </p>
-                                      <p className="text-[10px] text-slate-500 font-bold tracking-wide">
-                                        {bc.gps.address || 'Recorded GPS Location'}
-                                      </p>
-                                    </>
-                                  );
-                                } else {
-                                  return <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>;
-                                }
-                              })()}
-                            </div>
+                      (
+                        <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-950/20 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                          <div className="w-24 h-24 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
+                            <img src={recentPhoto.url} alt="Recent Scan" className="w-full h-full object-cover" />
                           </div>
-                        );
-                      })()
+                          <div className="flex flex-col gap-1 text-xs">
+                            <span className="text-[10px] text-slate-400 font-bold tracking-wider flex items-center gap-1.5">
+                              <span>Photo Location (GPS)</span>
+                              <span className="bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-1.5 py-0.5 rounded font-mono text-[8px] normal-case">
+                                {recentPhoto.source}
+                              </span>
+                            </span>
+                            {(() => {
+                              const pLat = parseFloat(recentPhoto.lat);
+                              const pLng = parseFloat(recentPhoto.lng);
+                              const hasPCoords = !isNaN(pLat) && !isNaN(pLng);
+
+                              if (hasPCoords) {
+                                return (
+                                  <>
+                                    <p className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                                      {pLat.toFixed(4)}° N, {pLng.toFixed(4)}° E
+                                    </p>
+                                    <p className="text-[10px] text-slate-500 font-bold tracking-wide">
+                                      {recentPhoto.address || 'Captured Location'}
+                                    </p>
+                                  </>
+                                );
+                              } else {
+                                return <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>;
+                              }
+                            })()}
+                          </div>
+                        </div>
+                      )
                     )}
                   </div>
                 </div>
@@ -618,7 +757,7 @@ export default function BarcodeDetail() {
                     <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 tracking-wider">Remarks</h4>
                     <span
                       onClick={() => navigate(`/barcodes/${barcode}/view-all?tab=remarks`)}
-                      className="text-[10px] text-blue-650 dark:text-blue-400 hover:underline font-bold cursor-pointer"
+                      className="text-[10px] text-blue-650 dark:text-blue-405 hover:underline font-bold cursor-pointer"
                     >
                       View All
                     </span>
@@ -628,7 +767,7 @@ export default function BarcodeDetail() {
                       <p className="text-xs text-slate-655 dark:text-slate-100 font-semibold leading-relaxed">
                         "{recentRemark.remarks}"
                       </p>
-                      <span className="block text-[10px] text-slate-400 font-bold mt-1.5 leading-none">
+                      <span className="block text-[10px] text-slate-405 font-bold mt-1.5 leading-none">
                         By {recentRemark.user?.fullName || recentRemark.user?.name || recentRemark.user || 'System'} • {recentRemark.action} • {new Date(recentRemark.timestamp).toLocaleString()}
                       </span>
                     </div>
@@ -650,22 +789,19 @@ export default function BarcodeDetail() {
                       View All
                     </span>
                   </div>
-                  {bc.documents?.length === 0 ? (
+                  {allAttachments.length === 0 ? (
                     <p className="text-xs text-slate-405 italic mt-1">No documents</p>
                   ) : (
-                    (() => {
-                      const recentDoc = bc.documents[bc.documents.length - 1];
-                      return (
-                        <div className="flex flex-col gap-1 mt-1">
-                          <a href={recentDoc.url} className="text-xs text-blue-650 dark:text-blue-400 hover:underline font-bold" target="_blank" rel="noreferrer">
-                            {recentDoc.name}
-                          </a>
-                          <span className="text-[9px] text-slate-400 font-semibold block mt-0.5">
-                            Uploaded {new Date(recentDoc.uploadedAt || bc.createdAt).toLocaleDateString()}
-                          </span>
-                        </div>
-                      );
-                    })()
+                    (
+                      <div className="flex flex-col gap-1 mt-1">
+                        <a href={recentDoc.url} className="text-xs text-blue-650 dark:text-blue-400 hover:underline font-bold" target="_blank" rel="noreferrer">
+                          {recentDoc.name}
+                        </a>
+                        <span className="text-[9px] text-slate-400 font-semibold block mt-0.5">
+                          Uploaded {new Date(recentDoc.date).toLocaleDateString()} • {recentDoc.source}
+                        </span>
+                      </div>
+                    )
                   )}
                 </div>
               </div>

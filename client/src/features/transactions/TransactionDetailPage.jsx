@@ -564,19 +564,45 @@ const TransactionDetailPage = () => {
   };
 
   // Physical Acceptance
-  const simulatePhotoCapture = () => {
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
     setCapturingPhoto(true);
-    setTimeout(() => {
-      setReceivePhoto('https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=400&q=80');
-      const lat = (18.5204 + (Math.random() - 0.5) * 0.01).toFixed(4);
-      const lng = (73.8567 + (Math.random() - 0.5) * 0.01).toFixed(4);
-      setReceiveCoords({
-        lat,
-        lng,
-        address: `Received Dock Area, Pune Plant (${lat}° N, ${lng}° E)`
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const { data } = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
+
+      setReceivePhoto(data.url);
+
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((position) => {
+          const lat = position.coords.latitude.toFixed(4);
+          const lng = position.coords.longitude.toFixed(4);
+          setReceiveCoords({
+            lat,
+            lng,
+            address: `Received Dock Area, Pune Plant (${lat}° N, ${lng}° E)`
+          });
+        }, () => {
+          const lat = 18.5204;
+          const lng = 73.8567;
+          setReceiveCoords({
+            lat,
+            lng,
+            address: `Received Dock Area, Pune Plant (Coordinates: ${lat}, ${lng})`
+          });
+        });
+      }
+    } catch (err) {
+      alert('Photo upload failed: ' + (err.response?.data?.message || err.message));
+    } finally {
       setCapturingPhoto(false);
-    }, 1200);
+    }
   };
 
   const handleReceiveSubmit = async (e) => {
@@ -2266,6 +2292,29 @@ const TransactionDetailPage = () => {
                   Download Excel
                 </button>
               </div>
+
+              {/* Dynamic Transaction Level Documents */}
+              {txn.documents && txn.documents.map((doc, idx) => (
+                <div key={idx} className="p-4 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-900 rounded-xl flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <FileText className="w-8 h-8 text-indigo-500 shrink-0" />
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">{doc.name}</h4>
+                      <p className="text-[10px] text-slate-400">
+                        Uploaded on {new Date(doc.uploadedAt || txn.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                  <a
+                    href={doc.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
+                  >
+                    View Document
+                  </a>
+                </div>
+              ))}
             </div>
           </Card>
         )}
@@ -2584,26 +2633,37 @@ const TransactionDetailPage = () => {
                       <span className="font-extrabold">Coordinates: {receiveCoords.lat}, {receiveCoords.lng}</span>
                       <span className="truncate">{receiveCoords.address}</span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setReceivePhoto('')}
+                      className="absolute top-2 right-2 p-1.5 bg-slate-900/80 text-white rounded-lg hover:bg-slate-900 text-[10px] font-bold"
+                    >
+                      Clear
+                    </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={simulatePhotoCapture}
-                    disabled={capturingPhoto}
+                  <label
                     className="w-full h-32 border-2 border-dashed border-slate-200 dark:border-slate-800 dark:hover:border-blue-500 hover:border-blue-500 rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-slate-50/50 cursor-pointer text-slate-500 font-semibold"
                   >
                     {capturingPhoto ? (
                       <>
                         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500" />
-                        <span className="text-[10px] font-bold tracking-wider">Retrieving Satellite GPS...</span>
+                        <span className="text-[10px] font-bold tracking-wider">Uploading verification picture...</span>
                       </>
                     ) : (
                       <>
                         <Camera className="w-6 h-6 text-slate-400" />
-                        <span className="text-[10px] font-bold tracking-wider">Take Verification Picture</span>
+                        <span className="text-[10px] font-bold tracking-wider">Upload/Take Verification Picture</span>
                       </>
                     )}
-                  </button>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoUpload}
+                      disabled={capturingPhoto}
+                      className="hidden"
+                    />
+                  </label>
                 )}
               </div>
 

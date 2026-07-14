@@ -211,91 +211,121 @@ const StoreDispatchPage = () => {
     setMaterialRows(updated);
   };
 
-  // Simulate Geo-Tagged Photo Capture for Material
-  const handleCaptureMaterialPhoto = (index) => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const updated = [...materialRows];
-          const newPhoto = {
-            url: `/images/mock-material-${index + 1}-${Date.now()}.jpg`,
-            metadata: {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-              accuracy: position.coords.accuracy || 10,
-              address: 'MIDC Phase II, Sector A, Pune, India',
-              date: new Date().toLocaleDateString('en-IN'),
-              time: new Date().toLocaleTimeString('en-IN'),
-              device: navigator.userAgent,
-              employeeName: user?.fullName || 'Store Operator',
-              capturedAt: new Date().toISOString()
-            }
-          };
-          updated[index].photos = [...(updated[index].photos || []), newPhoto];
-          setMaterialRows(updated);
-        },
-        (error) => {
-          const updated = [...materialRows];
-          const newPhoto = {
-            url: `/images/mock-material-${index + 1}-${Date.now()}.jpg`,
-            metadata: {
-              lat: 18.5204,
-              lng: 73.8567,
-              accuracy: 15,
-              address: 'MIDC Pune, Maharashtra, India',
-              date: new Date().toLocaleDateString('en-IN'),
-              time: new Date().toLocaleTimeString('en-IN'),
-              device: navigator.userAgent,
-              employeeName: user?.fullName || 'Store Operator',
-              capturedAt: new Date().toISOString()
-            }
-          };
-          updated[index].photos = [...(updated[index].photos || []), newPhoto];
-          setMaterialRows(updated);
-        }
-      );
+  // Upload and Tag Photo for Material
+  const handleCaptureMaterialPhoto = async (index, file) => {
+    if (!file) return;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const { data } = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      
+      const photoUrl = data.url;
+
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const updated = [...materialRows];
+            const newPhoto = {
+              url: photoUrl,
+              metadata: {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                accuracy: position.coords.accuracy || 10,
+                address: 'MIDC Phase II, Sector A, Pune, India',
+                date: new Date().toLocaleDateString('en-IN'),
+                time: new Date().toLocaleTimeString('en-IN'),
+                device: navigator.userAgent,
+                employeeName: user?.fullName || 'Store Operator',
+                capturedAt: new Date().toISOString()
+              }
+            };
+            updated[index].photos = [...(updated[index].photos || []), newPhoto];
+            setMaterialRows(updated);
+          },
+          (error) => {
+            const updated = [...materialRows];
+            const newPhoto = {
+              url: photoUrl,
+              metadata: {
+                lat: 18.5204,
+                lng: 73.8567,
+                accuracy: 15,
+                address: 'MIDC Pune, Maharashtra, India',
+                date: new Date().toLocaleDateString('en-IN'),
+                time: new Date().toLocaleTimeString('en-IN'),
+                device: navigator.userAgent,
+                employeeName: user?.fullName || 'Store Operator',
+                capturedAt: new Date().toISOString()
+              }
+            };
+            updated[index].photos = [...(updated[index].photos || []), newPhoto];
+            setMaterialRows(updated);
+          }
+        );
+      }
+    } catch (err) {
+      alert('Failed to upload material photo: ' + (err.response?.data?.message || err.message));
     }
   };
 
-  // Simulate Geo-Tagged Photo Capture for Document
-  const handleCaptureDocPhoto = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const newPhoto = {
-            url: `/images/mock-doc-gatepass-${docPhotos.length + 1}.jpg`,
-            metadata: {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-              accuracy: position.coords.accuracy || 10,
-              address: 'MIDC Phase II, Sector A, Pune, India',
-              date: new Date().toLocaleDateString('en-IN'),
-              time: new Date().toLocaleTimeString('en-IN'),
-              device: navigator.userAgent,
-              employeeName: user?.fullName || 'Store Operator',
-              capturedAt: new Date().toISOString()
-            }
-          };
-          setDocPhotos([...docPhotos, newPhoto]);
-        },
-        (error) => {
-          const newPhoto = {
-            url: `/images/mock-doc-gatepass-${docPhotos.length + 1}.jpg`,
-            metadata: {
-              lat: 18.5204,
-              lng: 73.8567,
-              accuracy: 15,
-              address: 'MIDC Pune, Maharashtra, India',
-              date: new Date().toLocaleDateString('en-IN'),
-              time: new Date().toLocaleTimeString('en-IN'),
-              device: navigator.userAgent,
-              employeeName: user?.fullName || 'Store Operator',
-              capturedAt: new Date().toISOString()
-            }
-          };
-          setDocPhotos([...docPhotos, newPhoto]);
-        }
-      );
+  // Upload and Tag Photo for Document
+  const handleCaptureDocPhoto = async (file) => {
+    if (!file) return;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const { data } = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      
+      const photoUrl = data.url;
+
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const newPhoto = {
+              url: photoUrl,
+              metadata: {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                accuracy: position.coords.accuracy || 10,
+                address: 'MIDC Phase II, Sector A, Pune, India',
+                date: new Date().toLocaleDateString('en-IN'),
+                time: new Date().toLocaleTimeString('en-IN'),
+                device: navigator.userAgent,
+                employeeName: user?.fullName || 'Store Operator',
+                capturedAt: new Date().toISOString()
+              }
+            };
+            setDocPhotos([...docPhotos, newPhoto]);
+          },
+          (error) => {
+            const newPhoto = {
+              url: photoUrl,
+              metadata: {
+                lat: 18.5204,
+                lng: 73.8567,
+                accuracy: 15,
+                address: 'MIDC Pune, Maharashtra, India',
+                date: new Date().toLocaleDateString('en-IN'),
+                time: new Date().toLocaleTimeString('en-IN'),
+                device: navigator.userAgent,
+                employeeName: user?.fullName || 'Store Operator',
+                capturedAt: new Date().toISOString()
+              }
+            };
+            setDocPhotos([...docPhotos, newPhoto]);
+          }
+        );
+      }
+    } catch (err) {
+      alert('Failed to upload document photo: ' + (err.response?.data?.message || err.message));
     }
   };
 
@@ -790,16 +820,16 @@ const StoreDispatchPage = () => {
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleCaptureMaterialPhoto(matIndex)}
-                      className="flex items-center gap-1.5 text-blue-600 border-blue-200 dark:text-blue-400 dark:border-blue-800 font-bold text-xs"
-                    >
-                      <Camera className="h-3.5 w-3.5" />
-                      Capture Tagged Photo
-                    </Button>
+                    <label className="flex items-center gap-1.5 text-blue-600 border border-blue-200 dark:text-blue-400 dark:border-blue-800 px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
+                      <Camera className="h-3.5 w-3.5 mr-1" />
+                      Upload Tagged Photo
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handleCaptureMaterialPhoto(matIndex, e.target.files[0])}
+                        className="hidden"
+                      />
+                    </label>
                   </div>
                 </div>
 
@@ -855,15 +885,16 @@ const StoreDispatchPage = () => {
 
           <div className="space-y-4">
             <div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleCaptureDocPhoto}
-                className="flex items-center gap-2 text-blue-600 border-blue-200 dark:text-blue-400 dark:border-blue-800"
-              >
+              <label className="inline-flex items-center gap-2 text-blue-600 border border-blue-200 dark:text-blue-400 dark:border-blue-800 px-4 py-2 rounded-lg font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
                 <Camera className="h-4 w-4" />
-                Capture Tagged Document Photo
-              </Button>
+                Upload Tagged Document Photo
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleCaptureDocPhoto(e.target.files[0])}
+                  className="hidden"
+                />
+              </label>
             </div>
 
             {docPhotos.length > 0 && (

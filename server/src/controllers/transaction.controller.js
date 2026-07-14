@@ -178,7 +178,7 @@ exports.createTransaction = async (req, res) => {
               {
                 action: 'Request Created',
                 user: req.user._id,
-                remarks: `Created in transaction ${transaction.transactionId}`,
+                remarks: remarks || 'Request Created',
               },
             ],
           });
@@ -1227,7 +1227,7 @@ exports.receiveTransaction = async (req, res) => {
       bc.history.push({
         action: 'Received',
         user: req.user._id,
-        remarks: `Received in transaction ${transaction.transactionId}. GPS & Photo Captured.`,
+        remarks: remarks || 'GPS & Photo Captured',
         timestamp: new Date()
       });
       bc.ownershipHistory.push({
@@ -1490,7 +1490,7 @@ exports.storeDispatchTransaction = async (req, res) => {
           existingBc.history.push({
             action: 'Dispatched from Store',
             user: req.user._id,
-            remarks: `Re-registered in transaction ${transaction.transactionId}`,
+            remarks: remarks || 'Re-dispatched from store',
           });
           await existingBc.save();
         } else {
@@ -1514,7 +1514,7 @@ exports.storeDispatchTransaction = async (req, res) => {
               {
                 action: 'Dispatched from Store',
                 user: req.user._id,
-                remarks: `Registered in transaction ${transaction.transactionId}`,
+                remarks: remarks || 'Dispatched from store',
               },
             ],
           });

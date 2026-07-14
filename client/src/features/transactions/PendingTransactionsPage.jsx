@@ -1,7 +1,9 @@
 import {
   ArrowLeft,
   Clock,
-  Search
+  Search,
+  X,
+  Camera
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -10,6 +12,7 @@ import Button from '../../components/ui/Button';
 import useActiveRole from '../../hooks/useActiveRole';
 import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
+import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
 
 const PendingTransactionsPage = () => {
   const navigate = useNavigate();
@@ -40,6 +43,27 @@ const PendingTransactionsPage = () => {
   const [actionRemarks, setActionRemarks] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [transferPhoto, setTransferPhoto] = useState('/images/mock-transfer.jpg');
+  const handleTransferPhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setSubmitting(true);
+    setActionError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const { data } = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      
+      setTransferPhoto(data.url);
+    } catch (err) {
+      setActionError('Photo upload failed: ' + (err.response?.data?.message || err.message));
+    } finally {
+      setSubmitting(false);
+    }
+  };
   const [pendingSplits, setPendingSplits] = useState([]);
   const [approveNewBarcode, setApproveNewBarcode] = useState('');
   const [approveMaterialName, setApproveMaterialName] = useState('');
@@ -61,6 +85,33 @@ const PendingTransactionsPage = () => {
   const [storeRemarks, setStoreRemarks] = useState('');
   const [handlerId, setHandlerId] = useState('');
   const [handlers, setHandlers] = useState([]);
+
+  // Physical Receipt Modal States
+  const [receiveModal, setReceiveModal] = useState(false);
+  const [receiveCondition, setReceiveCondition] = useState('Good');
+  const [receiveRemarks, setReceiveRemarks] = useState('');
+  const [receivePhoto, setReceivePhoto] = useState('');
+  const [receiveCoords, setReceiveCoords] = useState({ lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' });
+  const [capturingPhoto, setCapturingPhoto] = useState(false);
+  const [receivingSubmitting, setReceivingSubmitting] = useState(false);
+
+  // Split Sourcing Modal States for Tally
+  const [approveQuantity, setApproveQuantity] = useState(1);
+  const [approveUnit, setApproveUnit] = useState('pcs');
+  const [approveRate, setApproveRate] = useState(0);
+  const [approveGodown, setApproveGodown] = useState('');
+
+  useEffect(() => {
+    if (selectedItem && selectedItem.barcode && !selectedItem.materials) {
+      // It is a split request
+      setApproveMaterialName(selectedItem.requestedMaterialName || selectedItem.materialName || '');
+      setApproveNewBarcode('');
+      setApproveQuantity(1);
+      setApproveUnit(selectedItem.materialName?.toLowerCase().includes('cable') ? 'mtr' : 'pcs');
+      setApproveRate(selectedItem.materialName?.toLowerCase().includes('cable') ? 500 : 0);
+      setApproveGodown(selectedItem.requester?.fullName || '');
+    }
+  }, [selectedItem]);
 
   const getCardStatusLine = (t) => {
     const isHandler = t.handler?._id === user?._id || t.handler === user?._id;
@@ -637,18 +688,32 @@ const PendingTransactionsPage = () => {
       alert('Please specify the Material Name.');
       return;
     }
+    if (!approveGodown.trim()) {
+      alert('Please specify the Tally Godown Name.');
+      return;
+    }
     setActionError('');
     setSubmitting(true);
     try {
       await api.post('/barcodes/approve-split', {
         requestId: selectedItem._id,
         newBarcode: approveNewBarcode.trim(),
-        materialName: approveMaterialName.trim() || selectedItem.materialName
+        materialName: approveMaterialName.trim() || selectedItem.materialName,
+        quantity: Number(approveQuantity) || 1,
+        unit: approveUnit.trim(),
+        price: Number(approveRate) || 0,
+        godown: approveGodown.trim(),
+        reason: actionRemarks ? actionRemarks.trim() : ''
       });
       alert('Split request approved and new material created!');
       const targetTxnId = selectedItem?.transactionId;
       setApproveNewBarcode('');
       setApproveMaterialName('');
+      setApproveQuantity(1);
+      setApproveUnit('pcs');
+      setApproveRate(0);
+      setApproveGodown('');
+      setActionRemarks('');
       setSelectedItem(null);
       fetchApprovals();
       if (targetTxnId) {
@@ -748,23 +813,42 @@ const PendingTransactionsPage = () => {
           return;
         }
 
-        setSubmitting(true);
-        setActionError('');
-        try {
-          // Submit approval with invoiceNumber
-          await api.post(`/barcodes/close-requests/${requestId}/respond`, {
-            action: 'approve',
-            invoiceNumber: invoiceNumber.trim()
-          });
+        // Trigger file input for actual invoice document upload
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'application/pdf,image/*';
+        fileInput.onchange = async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
 
-          alert('Invoice registered and RDC closed successfully!');
-          setSelectedItem(null);
-          fetchApprovals();
-        } catch (err) {
-          setActionError(err.response?.data?.message || 'Failed to approve close request.');
-        } finally {
-          setSubmitting(false);
-        }
+          setSubmitting(true);
+          setActionError('');
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const uploadRes = await api.post('/upload', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+
+            const invoiceUrl = uploadRes.data.url;
+
+            await api.post(`/barcodes/close-requests/${requestId}/respond`, {
+              action: 'approve',
+              invoiceNumber: invoiceNumber.trim(),
+              invoiceUrl
+            });
+
+            alert('Invoice registered and RDC closed successfully with uploaded document!');
+            setSelectedItem(null);
+            fetchApprovals();
+          } catch (err) {
+            setActionError(err.response?.data?.message || 'Failed to upload/approve close request.');
+          } finally {
+            setSubmitting(false);
+          }
+        };
+        fileInput.click();
         return;
       } else {
         if (!confirm('Are you sure you want to approve this DC Conversion request?')) {
@@ -1035,31 +1119,78 @@ const PendingTransactionsPage = () => {
     setRejectModalOpen(true);
   };
 
-  const handleRequesterAcceptReceipt = async (txnId) => {
-    const remarks = prompt('Enter optional remarks for accepting this material receipt:');
-    setActionError('');
-    setSubmitting(true);
+  const handleRequesterAcceptReceipt = (txnId) => {
+    setReceiveCondition('Good');
+    setReceiveRemarks('');
+    setReceivePhoto('');
+    setReceiveCoords({ lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' });
+    setReceiveModal(true);
+  };
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setCapturingPhoto(true);
     try {
-      const lat = (18.5204 + (Math.random() - 0.5) * 0.01).toFixed(4);
-      const lng = (73.8567 + (Math.random() - 0.5) * 0.01).toFixed(4);
-      await api.patch(`/transactions/${txnId}/receive`, {
-        receiverGeo: {
-          lat,
-          lng,
-          address: `Received Dock Area, Pune Plant (${lat}° N, ${lng}° E)`
-        },
-        materialCondition: 'Good',
-        remarks: remarks || 'Accepted from Pending dashboard',
-        photo: 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=400&q=80'
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const { data } = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      setReceivePhoto(data.url);
+
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((position) => {
+          const lat = position.coords.latitude.toFixed(4);
+          const lng = position.coords.longitude.toFixed(4);
+          setReceiveCoords({
+            lat,
+            lng,
+            address: `Received Dock Area, Pune Plant (${lat}° N, ${lng}° E)`
+          });
+        }, () => {
+          const lat = 18.5204;
+          const lng = 73.8567;
+          setReceiveCoords({
+            lat,
+            lng,
+            address: `Received Dock Area, Pune Plant (Coordinates: ${lat}, ${lng})`
+          });
+        });
+      }
+    } catch (err) {
+      alert('Photo upload failed: ' + (err.response?.data?.message || err.message));
+    } finally {
+      setCapturingPhoto(false);
+    }
+  };
+
+  const handleReceiveSubmit = async (e) => {
+    e.preventDefault();
+    if (!receivePhoto) {
+      alert('Please capture/upload a photo to confirm physical receiving check.');
+      return;
+    }
+    setReceivingSubmitting(true);
+    try {
+      await api.patch(`/transactions/${selectedItem._id}/receive`, {
+        receiverGeo: receiveCoords,
+        materialCondition: receiveCondition,
+        remarks: receiveRemarks,
+        photo: receivePhoto
       });
       alert('Materials accepted. Barcodes distributed to inventory.');
+      setReceiveModal(false);
       setSelectedItem(null);
       fetchApprovals();
-      navigate(`/transactions/${txnId}`);
+      navigate(`/transactions/${selectedItem._id}`);
     } catch (err) {
       alert(err.response?.data?.message || 'Error receiving materials.');
     } finally {
-      setSubmitting(false);
+      setReceivingSubmitting(false);
     }
   };
 
@@ -1198,7 +1329,6 @@ const PendingTransactionsPage = () => {
                             key={s._id}
                             onClick={() => {
                               setSelectedItem(s);
-                              setApproveMaterialName(s.materialName);
                             }}
                             className={`p-4 rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2 border
                           ${isActive
@@ -1717,7 +1847,7 @@ const PendingTransactionsPage = () => {
                   </div>
 
                   <div className="border-t border-slate-100 dark:border-slate-800 pt-4 space-y-3">
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-white tracking-wider">Register New Material Details</h4>
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-white tracking-wider">Register New Material & Tally Stock Journal Details</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[10px] font-bold text-slate-500 mb-1">New Barcode ID *</label>
@@ -1730,15 +1860,64 @@ const PendingTransactionsPage = () => {
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-slate-500 mb-1">Material Name *</label>
+                        <TallyMaterialAutocomplete
+                          value={approveMaterialName}
+                          onChange={(name, unit, price) => {
+                            setApproveMaterialName(name);
+                            if (unit) setApproveUnit(unit);
+                            if (price !== undefined) setApproveRate(price);
+                          }}
+                          placeholder="Select Tally Stock Item..."
+                          label="Material Name"
+                          required
+                          className="w-full text-xs font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 mb-1">Tally Godown Name *</label>
                         <input
                           type="text"
-                          value={approveMaterialName}
-                          onChange={(e) => setApproveMaterialName(e.target.value)}
-                          placeholder="Material Name"
+                          value={approveGodown}
+                          onChange={(e) => setApproveGodown(e.target.value)}
+                          placeholder="e.g. Ravi Sharma"
                           required
                           className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
                         />
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">Qty *</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={approveQuantity}
+                            onChange={(e) => setApproveQuantity(Number(e.target.value))}
+                            required
+                            className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-2 py-2.5 font-semibold"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">Unit *</label>
+                          <input
+                            type="text"
+                            value={approveUnit}
+                            onChange={(e) => setApproveUnit(e.target.value)}
+                            placeholder="pcs"
+                            required
+                            className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-2 py-2.5 font-semibold"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">Rate (₹) *</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={approveRate}
+                            onChange={(e) => setApproveRate(Number(e.target.value))}
+                            required
+                            className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-2 py-2.5 font-semibold"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2036,16 +2215,15 @@ const PendingTransactionsPage = () => {
                             <div className="flex items-center gap-3">
                               <img src={transferPhoto} alt="Verification" className="w-16 h-16 object-cover rounded-lg border border-slate-200" />
                               <div className="flex flex-col gap-1.5">
-                                <input
-                                  type="text"
-                                  value={transferPhoto}
-                                  onChange={(e) => setTransferPhoto(e.target.value)}
-                                  className="text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 focus:outline-none w-52 font-semibold"
-                                  placeholder="Photo URL..."
-                                />
-                                <Button size="xs" variant="outline" type="button" onClick={() => setTransferPhoto(`/images/transfer-${Date.now()}.jpg`)}>
-                                  Regenerate Capture
-                                </Button>
+                                <label className="inline-flex items-center justify-center px-4 py-2 border border-slate-350 text-slate-700 dark:text-slate-200 font-bold rounded-lg cursor-pointer text-xs hover:bg-slate-100 dark:hover:bg-slate-800">
+                                  Upload Actual Photo
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleTransferPhotoUpload}
+                                    className="hidden"
+                                  />
+                                </label>
                               </div>
                             </div>
                           </div>
@@ -2577,6 +2755,107 @@ const PendingTransactionsPage = () => {
                 Confirm Rejection
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Physical Receiving Form Modal */}
+      {receiveModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Verify Materials Receipt
+                </h3>
+                <p className="text-[10px] text-slate-400 font-bold tracking-wider mt-0.5 font-sans">Physical check & Geo-Tag confirmation</p>
+              </div>
+              <button onClick={() => setReceiveModal(false)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleReceiveSubmit} className="mt-4 flex flex-col gap-4 text-xs font-semibold text-slate-650 dark:text-slate-400">
+              {selectedItem?.remarks && (
+                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800/80 rounded-xl space-y-1">
+                  <span className="block text-[9px] text-slate-400 font-bold tracking-wider">Store Dispatch Remarks / Purpose</span>
+                  <p className="text-xs text-slate-700 dark:text-slate-350 font-medium italic font-semibold">"{selectedItem.remarks}"</p>
+                </div>
+              )}
+              <div>
+                <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Material Condition *</label>
+                <select
+                  value={receiveCondition}
+                  onChange={(e) => setReceiveCondition(e.target.value)}
+                  className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition"
+                >
+                  <option value="Good">Good condition</option>
+                  <option value="Minor Damage">Minor packaging damage</option>
+                  <option value="Damaged">Damaged / Reject receipt</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Remarks / Discrepancy checks</label>
+                <textarea
+                  value={receiveRemarks}
+                  onChange={(e) => setReceiveRemarks(e.target.value)}
+                  placeholder="Tallied all items against challan details..."
+                  rows="2"
+                  className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3.5 py-2 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 transition"
+                />
+              </div>
+
+              {/* Camera Photo capture */}
+              <div>
+                <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Geo-Tagged Receipt Photo *</label>
+                {receivePhoto ? (
+                  <div className="relative border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50 h-36">
+                    <img src={receivePhoto} alt="Challan check" className="w-full h-full object-cover" />
+                    <div className="absolute bottom-0 left-0 right-0 bg-slate-950/80 p-2 text-[9px] text-white flex flex-col leading-tight">
+                      <span className="font-extrabold">Coordinates: {receiveCoords.lat}, {receiveCoords.lng}</span>
+                      <span className="truncate">{receiveCoords.address}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReceivePhoto('')}
+                      className="absolute top-2 right-2 p-1.5 bg-slate-900/80 text-white rounded-lg hover:bg-slate-900 text-[10px] font-bold"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                ) : (
+                  <label
+                    className="w-full h-32 border-2 border-dashed border-slate-200 dark:border-slate-800 dark:hover:border-blue-500 hover:border-blue-500 rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-slate-50/50 cursor-pointer text-slate-500 font-bold"
+                  >
+                    {capturingPhoto ? (
+                      <>
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500" />
+                        <span className="text-[10px] font-bold tracking-wider">Uploading verification picture...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="w-6 h-6 text-slate-400" />
+                        <span className="text-[10px] font-bold tracking-wider">Upload/Take Verification Picture</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoUpload}
+                      disabled={capturingPhoto}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+
+              <div className="flex gap-2 justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
+                <Button variant="ghost" type="button" onClick={() => setReceiveModal(false)}>Cancel</Button>
+                <Button variant="success" type="submit" disabled={receivingSubmitting || capturingPhoto}>
+                  {receivingSubmitting ? 'Confirming...' : 'Accept and Distribute'}
+                </Button>
+              </div>
+            </form>
           </div>
         </div>
       )}

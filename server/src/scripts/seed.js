@@ -344,22 +344,22 @@ const seedAll = async () => {
         {
           name: 'Panel PC', quantity: 2, unit: 'pcs', price: 45000,
           barcodes: [
-            { barcode: 'PC120001', status: 'Active', owner: rndEng._id },
-            { barcode: 'PC120002', status: 'Returned', owner: store._id },
+            { barcode: '120001', status: 'Active', owner: rndEng._id },
+            { barcode: '120002', status: 'Returned', owner: store._id },
           ],
         },
         {
           name: 'Encoder', quantity: 3, unit: 'pcs', price: 12000,
           barcodes: [
-            { barcode: 'EN120031', status: 'Active', owner: rndEng._id },
-            { barcode: 'EN120032', status: 'Returned', owner: store._id },
-            { barcode: 'EN120033', status: 'Active', owner: emp3._id },
+            { barcode: '120031', status: 'Active', owner: rndEng._id },
+            { barcode: '120032', status: 'Returned', owner: store._id },
+            { barcode: '120033', status: 'Active', owner: emp3._id },
           ],
         },
         {
           name: 'Head', quantity: 1, unit: 'pcs', price: 8000,
           barcodes: [
-            { barcode: 'HD120001', status: 'Active', owner: emp3._id },
+            { barcode: '120041', status: 'Active', owner: emp3._id },
           ],
         },
       ],
@@ -376,21 +376,21 @@ const seedAll = async () => {
         { action: 'Handler Assigned', description: 'Rahul Handler assigned', user: store._id, timestamp: new Date('2026-06-11T16:15:00Z') },
         { action: 'Dispatched', description: 'Items dispatched to requester', user: handler._id, timestamp: new Date('2026-06-12T10:00:00Z') },
         { action: 'Received', description: 'Ravi received all items', user: emp3._id, timestamp: new Date('2026-06-12T12:00:00Z') },
-        { action: 'Transferred', description: 'PC120001 & EN120031 transferred to R&D Engineer', user: emp3._id, timestamp: new Date('2026-06-14T09:00:00Z') },
-        { action: 'Returned', description: 'PC120002 returned to store', user: emp3._id, timestamp: new Date('2026-06-15T10:00:00Z') },
-        { action: 'Returned', description: 'EN120032 returned to store', user: rndEng._id, timestamp: new Date('2026-06-16T11:00:00Z') },
+        { action: 'Transferred', description: '120001 & 120031 transferred to R&D Engineer', user: emp3._id, timestamp: new Date('2026-06-14T09:00:00Z') },
+        { action: 'Returned', description: '120002 returned to store', user: emp3._id, timestamp: new Date('2026-06-15T10:00:00Z') },
+        { action: 'Returned', description: '120032 returned to store', user: rndEng._id, timestamp: new Date('2026-06-16T11:00:00Z') },
       ],
     });
     console.log(`  ✓ ${txn1.transactionId}: Active (6 items, 4 active, 2 returned)`);
 
     // Create barcodes for TXN 1
     const txn1Barcodes = [
-      { barcode: 'PC120001', mat: 'Panel PC', status: 'Active', owner: rndEng._id, ownerDept: depts['R&D']._id },
-      { barcode: 'PC120002', mat: 'Panel PC', status: 'Returned', owner: store._id, ownerDept: depts['Stores']._id },
-      { barcode: 'EN120031', mat: 'Encoder', status: 'Active', owner: rndEng._id, ownerDept: depts['R&D']._id },
-      { barcode: 'EN120032', mat: 'Encoder', status: 'Returned', owner: store._id, ownerDept: depts['Stores']._id },
-      { barcode: 'EN120033', mat: 'Encoder', status: 'Active', owner: emp3._id, ownerDept: depts['Service']._id },
-      { barcode: 'HD120001', mat: 'Head', status: 'Active', owner: emp3._id, ownerDept: depts['Service']._id },
+      { barcode: '120001', mat: 'Panel PC', status: 'Active', owner: rndEng._id, ownerDept: depts['R&D']._id },
+      { barcode: '120002', mat: 'Panel PC', status: 'Returned', owner: store._id, ownerDept: depts['Stores']._id },
+      { barcode: '120031', mat: 'Encoder', status: 'Active', owner: rndEng._id, ownerDept: depts['R&D']._id },
+      { barcode: '120032', mat: 'Encoder', status: 'Returned', owner: store._id, ownerDept: depts['Stores']._id },
+      { barcode: '120033', mat: 'Encoder', status: 'Active', owner: emp3._id, ownerDept: depts['Service']._id },
+      { barcode: '120041', mat: 'Head', status: 'Active', owner: emp3._id, ownerDept: depts['Service']._id },
     ];
 
     for (const bc of txn1Barcodes) {
@@ -402,7 +402,7 @@ const seedAll = async () => {
         status: bc.status,
         owner: bc.owner,
         ownerDepartment: bc.ownerDept,
-        transferCount: bc.barcode.startsWith('PC1200') || bc.barcode === 'EN120031' ? 1 : 0,
+        transferCount: ['120001', '120002', '120031'].includes(bc.barcode) ? 1 : 0,
         gps: {
           lat: 18.5204,
           lng: 73.8567,
@@ -459,7 +459,7 @@ const seedAll = async () => {
     // Create transfers for TXN 1
     await Transfer.create({
       transactionId: txn1.transactionId,
-      barcode: 'PC120001', fromUser: emp3._id, toUser: rndEng._id,
+      barcode: '120001', fromUser: emp3._id, toUser: rndEng._id,
       fromDepartment: depts['Service']._id, toDepartment: depts['R&D']._id,
       type: 'cross_department', status: 'completed', requiresApproval: true,
       approvedBy: management._id, approvedAt: new Date('2026-06-14T09:00:00Z'),
@@ -468,7 +468,7 @@ const seedAll = async () => {
     });
     await Transfer.create({
       transactionId: txn1.transactionId,
-      barcode: 'EN120031', fromUser: emp3._id, toUser: rndEng._id,
+      barcode: '120031', fromUser: emp3._id, toUser: rndEng._id,
       fromDepartment: depts['Service']._id, toDepartment: depts['R&D']._id,
       type: 'cross_department', status: 'completed', requiresApproval: true,
       approvedBy: management._id, approvedAt: new Date('2026-06-14T10:00:00Z'),
@@ -478,13 +478,13 @@ const seedAll = async () => {
 
     // Create returns for TXN 1
     await Return.create({
-      transactionId: txn1.transactionId, barcode: 'PC120002', fromUser: emp3._id,
+      transactionId: txn1.transactionId, barcode: '120002', fromUser: emp3._id,
       store: store._id, status: 'completed', condition: 'good',
       remarks: 'No longer needed', receivedAt: new Date('2026-06-15T10:00:00Z'),
       createdAt: new Date('2026-06-14T15:00:00Z'),
     });
     await Return.create({
-      transactionId: txn1.transactionId, barcode: 'EN120032', fromUser: rndEng._id,
+      transactionId: txn1.transactionId, barcode: '120032', fromUser: rndEng._id,
       store: store._id, status: 'completed', condition: 'good',
       remarks: 'Testing complete', receivedAt: new Date('2026-06-16T11:00:00Z'),
       createdAt: new Date('2026-06-15T16:00:00Z'),
@@ -497,8 +497,8 @@ const seedAll = async () => {
       { sender: store._id, message: 'Store accepted the request. Assigning handler.', ts: '2026-06-11T16:00:00Z' },
       { sender: handler._id, message: 'I have been assigned. Will pick up items and deliver shortly.', ts: '2026-06-11T16:20:00Z' },
       { sender: emp3._id, message: 'Items delivered to Service Engineer.', ts: '2026-06-12T12:00:00Z' },
-      { sender: rndEng._id, message: 'Received EN120031. Thank you.', ts: '2026-06-14T12:30:00Z' },
-      { sender: emp3._id, message: 'Returned PC120002 to store.', ts: '2026-06-15T10:00:00Z' },
+      { sender: rndEng._id, message: 'Received 120031. Thank you.', ts: '2026-06-14T12:30:00Z' },
+      { sender: emp3._id, message: 'Returned 120002 to store.', ts: '2026-06-15T10:00:00Z' },
     ];
     for (const msg of chatMsgs) {
       await TransactionChat.create({

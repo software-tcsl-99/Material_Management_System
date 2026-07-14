@@ -497,3 +497,761 @@ exports.createTallyStockJournal = async (transactionId, destinationGodown, mater
     console.error('Failed to post Gokul Shirgaon Godown Transfer to Tally:', err.message);
   }
 };
+
+/**
+ * Create a Tally "Gokul Shirgaon Godown Transfer" voucher with configurable source and destination godowns.
+ * Used for:
+ *   - Barcode Transfer: source = sender's godown (fromUser), destination = recipient's godown (toUser)
+ *   - Return to Store: source = material holder's godown (fromUser), destination = GOKUL SHIRGAON
+ *
+ * @param {string} narrationId - Unique identifier for the narration (e.g. transfer._id or return._id)
+ * @param {string} flowType - 'transfer' or 'return'
+ * @param {string} sourceGodown - The godown name to move stock OUT of
+ * @param {string} destinationGodown - The godown name to move stock IN to
+ * @param {Array} materials - Array of { name, quantity, unit, price, barcodes }
+ * @returns {string|undefined} - The Tally voucher number if successfully created
+ */
+exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, destinationGodown, materials) => {
+  try {
+    const liveTallyUrl = process.env.TALLY_LIVE_URL || 'http://localhost:9000';
+    if (!liveTallyUrl) return;
+
+    // 1. Fetch active company
+    const COMP_QUERY = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>ActiveCompanies</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="ActiveCompanies" ISINITIALIZE="Yes">
+                <TYPE>Company</TYPE>
+                <FETCH>Name</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    const compResponse = await axios.post(liveTallyUrl, COMP_QUERY, {
+      headers: { 'Content-Type': 'text/xml' },
+      timeout: 3000
+    });
+
+    const parser = new xml2js.Parser({ explicitArray: false });
+    const parsedComp = await parser.parseStringPromise(compResponse.data);
+    const activeCompanyObj = parsedComp?.ENVELOPE?.BODY?.DATA?.COLLECTION?.COMPANY;
+    let companyName = '';
+    if (activeCompanyObj) {
+      if (typeof activeCompanyObj === 'string') {
+        companyName = activeCompanyObj;
+      } else if (typeof activeCompanyObj === 'object') {
+        if (activeCompanyObj.NAME) {
+          companyName = typeof activeCompanyObj.NAME === 'object' ? activeCompanyObj.NAME._ : activeCompanyObj.NAME;
+        } else if (activeCompanyObj.$ && activeCompanyObj.$.NAME) {
+          companyName = activeCompanyObj.$.NAME;
+        }
+      }
+    }
+
+    if (!companyName) {
+      console.warn(`No active Tally company found. Skipping Godown Transfer for ${flowType} ${narrationId}.`);
+      return;
+    }
+
+    // 2. Format Date (YYYYMMDD) - Use 1st day of the month for Tally Educational Mode compatibility
+    const today = new Date();
+    const YYYY = today.getFullYear();
+    const MM = String(today.getMonth() + 1).padStart(2, '0');
+    const dateStr = `${YYYY}${MM}01`;
+
+    // 3. Escape XML helper
+    const esc = (str) => (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // 4. Build XML voucher lines
+    let consumptionLines = '';
+    let productionLines = '';
+
+    for (const mat of materials) {
+      const name = esc(mat.name);
+      const qty = mat.quantity || 1;
+      const unit = esc(mat.unit || 'pcs');
+      const price = mat.price || 0;
+      const amount = qty * price;
+
+      // Map barcodes to Batch Allocations
+      const matBarcodes = mat.barcodes || [];
+      let batchOutLines = '';
+      let batchInLines = '';
+
+      if (matBarcodes.length > 0) {
+        matBarcodes.forEach(bcObj => {
+          const bcStr = typeof bcObj === 'string' ? bcObj : (bcObj.barcode || '');
+          if (bcStr) {
+            const escapedBc = esc(bcStr);
+            batchOutLines += `
+            <BATCHALLOCATIONS.LIST>
+              <BATCHNAME>${escapedBc}</BATCHNAME>
+              <GODOWNNAME>${esc(sourceGodown)}</GODOWNNAME>
+              <RATE>${price}</RATE>
+              <AMOUNT>${price}</AMOUNT>
+              <ACTUALQTY>-1 ${unit}</ACTUALQTY>
+              <BILLEDQTY>-1 ${unit}</BILLEDQTY>
+            </BATCHALLOCATIONS.LIST>`;
+
+            batchInLines += `
+            <BATCHALLOCATIONS.LIST>
+              <BATCHNAME>${escapedBc}</BATCHNAME>
+              <GODOWNNAME>${esc(destinationGodown)}</GODOWNNAME>
+              <RATE>${price}</RATE>
+              <AMOUNT>-${price}</AMOUNT>
+              <ACTUALQTY>1 ${unit}</ACTUALQTY>
+              <BILLEDQTY>1 ${unit}</BILLEDQTY>
+            </BATCHALLOCATIONS.LIST>`;
+          }
+        });
+      } else {
+        batchOutLines = `
+        <BATCHALLOCATIONS.LIST>
+          <BATCHNAME>Primary Batch</BATCHNAME>
+          <GODOWNNAME>${esc(sourceGodown)}</GODOWNNAME>
+          <RATE>${price}</RATE>
+          <AMOUNT>${amount}</AMOUNT>
+          <ACTUALQTY>-${qty} ${unit}</ACTUALQTY>
+          <BILLEDQTY>-${qty} ${unit}</BILLEDQTY>
+        </BATCHALLOCATIONS.LIST>`;
+
+        batchInLines = `
+        <BATCHALLOCATIONS.LIST>
+          <BATCHNAME>Primary Batch</BATCHNAME>
+          <GODOWNNAME>${esc(destinationGodown)}</GODOWNNAME>
+          <RATE>${price}</RATE>
+          <AMOUNT>-${amount}</AMOUNT>
+          <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
+          <BILLEDQTY>${qty} ${unit}</BILLEDQTY>
+        </BATCHALLOCATIONS.LIST>`;
+      }
+
+      // Source/Consumption (Outward)
+      consumptionLines += `
+      <INVENTORYENTRIESOUT.LIST>
+        <STOCKITEMNAME>${name}</STOCKITEMNAME>
+        <RATE>${price}</RATE>
+        <AMOUNT>${amount}</AMOUNT>
+        <ACTUALQTY>-${qty} ${unit}</ACTUALQTY>
+        <BILLEDQTY>-${qty} ${unit}</BILLEDQTY>
+        ${batchOutLines}
+      </INVENTORYENTRIESOUT.LIST>`;
+
+      // Destination/Production (Inward)
+      productionLines += `
+      <INVENTORYENTRIESIN.LIST>
+        <STOCKITEMNAME>${name}</STOCKITEMNAME>
+        <RATE>${price}</RATE>
+        <AMOUNT>-${amount}</AMOUNT>
+        <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
+        <BILLEDQTY>${qty} ${unit}</BILLEDQTY>
+        ${batchInLines}
+      </INVENTORYENTRIESIN.LIST>`;
+    }
+
+    const narrationText = flowType === 'transfer'
+      ? `Barcode transfer ${narrationId} from ${sourceGodown} to ${destinationGodown}`
+      : `Return to store ${narrationId} from ${sourceGodown} to ${destinationGodown}`;
+
+    const xmlPayload = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Import</TALLYREQUEST>
+        <TYPE>Data</TYPE>
+        <ID>Vouchers</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVCURRENTCOMPANY>${esc(companyName)}</SVCURRENTCOMPANY>
+          </STATICVARIABLES>
+        </DESC>
+        <DATA>
+          <TALLYMESSAGE xmlns:UDF="TallyUDF">
+            <VOUCHER VCHTYPE="Gokul Shirgaon Godown Transfer" ACTION="Create">
+              <DATE>${dateStr}</DATE>
+              <VOUCHERTYPENAME>Gokul Shirgaon Godown Transfer</VOUCHERTYPENAME>
+              <NARRATION>${narrationText}</NARRATION>
+              ${productionLines}
+              ${consumptionLines}
+            </VOUCHER>
+          </TALLYMESSAGE>
+        </DATA>
+      </BODY>
+    </ENVELOPE>`;
+
+    console.log(`Posting Tally Godown Transfer for ${flowType} ${narrationId}: ${sourceGodown} -> ${destinationGodown}`);
+    const voucherRes = await axios.post(liveTallyUrl, xmlPayload, {
+      headers: { 'Content-Type': 'text/xml' },
+      timeout: 5000
+    });
+    console.log(`Tally Godown Transfer response for ${flowType} ${narrationId}:`, voucherRes.data);
+
+    // Wait 500ms for Tally to persist, then query for the auto-generated Voucher Number
+    await new Promise(resolve => setTimeout(resolve, 500));
+    try {
+      const queryXml = `
+      <ENVELOPE>
+        <HEADER>
+          <VERSION>1</VERSION>
+          <TALLYREQUEST>Export</TALLYREQUEST>
+          <TYPE>Collection</TYPE>
+          <ID>MatchedVouchers</ID>
+        </HEADER>
+        <BODY>
+          <DESC>
+            <STATICVARIABLES>
+              <SVCURRENTCOMPANY>${esc(companyName)}</SVCURRENTCOMPANY>
+              <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+            <TDL>
+              <TDLMESSAGE>
+                <COLLECTION NAME="MatchedVouchers" ISINITIALIZE="Yes">
+                  <TYPE>Voucher</TYPE>
+                  <FETCH>VoucherNumber</FETCH>
+                  <FILTER>NarrationFilter</FILTER>
+                </COLLECTION>
+                <SYSTEM NAME="NarrationFilter" TYPE="Formula">$Narration contains "${narrationId}"</SYSTEM>
+              </TDLMESSAGE>
+            </TDL>
+          </DESC>
+        </BODY>
+      </ENVELOPE>`;
+
+      const queryRes = await axios.post(liveTallyUrl, queryXml, {
+        headers: { 'Content-Type': 'application/xml' },
+        timeout: 3000
+      });
+
+      const parsedQuery = await parser.parseStringPromise(queryRes.data);
+      const rawVoucher = parsedQuery?.ENVELOPE?.BODY?.DATA?.COLLECTION?.VOUCHER;
+      const vouchers = Array.isArray(rawVoucher) ? rawVoucher : (rawVoucher ? [rawVoucher] : []);
+      if (vouchers.length > 0) {
+        const vNumObj = vouchers[vouchers.length - 1].VOUCHERNUMBER;
+        const vNum = typeof vNumObj === 'string' ? vNumObj : (vNumObj?._ || '');
+        if (vNum) {
+          console.log(`Extracted Tally voucher number for ${flowType} ${narrationId}: ${vNum}`);
+          return vNum;
+        }
+      }
+    } catch (queryErr) {
+      console.error(`Failed to query voucher number from Tally for ${flowType} ${narrationId}:`, queryErr.message);
+    }
+  } catch (err) {
+    console.error(`Failed to post Godown Transfer to Tally for ${flowType}:`, err.message);
+  }
+};
+
+/**
+ * Create a Tally "Autofill Stock Journal" voucher for a split action.
+ * Moves 1 unit of parent item out of the requester's godown (source)
+ * and produces:
+ *   1) 1 unit of parent item with parent barcode under the requester's godown (destination)
+ *   2) 1 unit of new item with new child barcode under the requester's godown (destination)
+ *
+ * @param {string} splitId - Unique split request ID for narration tracking
+ * @param {object} parentBc - Parent barcode details { materialName, barcode }
+ * @param {object} newBcDoc - Child barcode details { materialName, barcode }
+ * @param {object} parentMaterial - Parent material info { unit, price }
+ * @param {string} requesterGodown - The godown name where the material holder has the stock
+ * @returns {string|undefined} - The Tally voucher number if successfully created
+ */
+exports.createTallySplitStockJournal = async (splitId, parentBc, newBcDoc, parentMaterial, requesterGodown, parentGodown) => {
+  try {
+    const liveTallyUrl = process.env.TALLY_LIVE_URL || 'http://localhost:9000';
+    if (!liveTallyUrl) return;
+
+    // 1. Fetch active company
+    const COMP_QUERY = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>ActiveCompanies</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="ActiveCompanies" ISINITIALIZE="Yes">
+                <TYPE>Company</TYPE>
+                <FETCH>Name</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    const compResponse = await axios.post(liveTallyUrl, COMP_QUERY, {
+      headers: { 'Content-Type': 'text/xml' },
+      timeout: 3000
+    });
+
+    const parser = new xml2js.Parser({ explicitArray: false });
+    const parsedComp = await parser.parseStringPromise(compResponse.data);
+    const activeCompanyObj = parsedComp?.ENVELOPE?.BODY?.DATA?.COLLECTION?.COMPANY;
+    let companyName = '';
+    if (activeCompanyObj) {
+      if (typeof activeCompanyObj === 'string') {
+        companyName = activeCompanyObj;
+      } else if (typeof activeCompanyObj === 'object') {
+        if (activeCompanyObj.NAME) {
+          companyName = typeof activeCompanyObj.NAME === 'object' ? activeCompanyObj.NAME._ : activeCompanyObj.NAME;
+        } else if (activeCompanyObj.$ && activeCompanyObj.$.NAME) {
+          companyName = activeCompanyObj.$.NAME;
+        }
+      }
+    }
+
+    if (!companyName) {
+      console.warn(`No active Tally company found. Skipping Split Stock Journal for ${splitId}.`);
+      return;
+    }
+
+    // 2. Format Date (YYYYMMDD) - Use 1st day of the month for Tally Educational Mode date compatibility
+    const today = new Date();
+    const YYYY = today.getFullYear();
+    const MM = String(today.getMonth() + 1).padStart(2, '0');
+    const dateStr = `${YYYY}${MM}01`;
+
+    // 3. Escape XML helper
+    const esc = (str) => (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const parentName = esc(parentBc.materialName);
+    const parentBarcode = esc(parentBc.barcode);
+    const childName = esc(newBcDoc.materialName || parentBc.materialName);
+    const childBarcode = esc(newBcDoc.barcode);
+
+    // Parent unit and price details (fallback to child's info if not explicitly set on parentBc)
+    const pUnit = esc(parentBc.unit || parentMaterial?.unit || 'Nos');
+    const pPrice = parentBc.price !== undefined && parentBc.price !== null ? parentBc.price : (parentMaterial?.price || 0);
+    const pAmount = pPrice;
+
+    // Child unit and price details (from frontend form input)
+    const cUnit = esc(parentMaterial?.unit || 'pcs');
+    const cPrice = parentMaterial?.price || 0;
+    const cAmount = cPrice;
+
+    const sourceGodown = esc(parentGodown || 'GOKUL SHIRGAON');
+    const destGodownChild = esc(requesterGodown || 'GOKUL SHIRGAON');
+
+    // Consumption (Outward): parent barcode consumed (1 unit)
+    const consumptionLines = `
+    <INVENTORYENTRIESOUT.LIST>
+      <STOCKITEMNAME>${parentName}</STOCKITEMNAME>
+      <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+      <RATE>${pPrice}</RATE>
+      <AMOUNT>${pAmount}</AMOUNT>
+      <ACTUALQTY>-1 ${pUnit}</ACTUALQTY>
+      <BILLEDQTY>-1 ${pUnit}</BILLEDQTY>
+      <BATCHALLOCATIONS.LIST>
+        <BATCHNAME>${parentBarcode}</BATCHNAME>
+        <GODOWNNAME>${sourceGodown}</GODOWNNAME>
+        <RATE>${pPrice}</RATE>
+        <AMOUNT>${pAmount}</AMOUNT>
+        <ACTUALQTY>-1 ${pUnit}</ACTUALQTY>
+        <BILLEDQTY>-1 ${pUnit}</BILLEDQTY>
+      </BATCHALLOCATIONS.LIST>
+    </INVENTORYENTRIESOUT.LIST>`;
+
+    // Production (Inward): parent barcode (1 unit) + child barcode (1 unit) produced
+    const productionLines = `
+    <INVENTORYENTRIESIN.LIST>
+      <STOCKITEMNAME>${parentName}</STOCKITEMNAME>
+      <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+      <RATE>${pPrice}</RATE>
+      <AMOUNT>-${pAmount}</AMOUNT>
+      <ACTUALQTY>1 ${pUnit}</ACTUALQTY>
+      <BILLEDQTY>1 ${pUnit}</BILLEDQTY>
+      <BATCHALLOCATIONS.LIST>
+        <BATCHNAME>${parentBarcode}</BATCHNAME>
+        <GODOWNNAME>${sourceGodown}</GODOWNNAME>
+        <RATE>${pPrice}</RATE>
+        <AMOUNT>-${pAmount}</AMOUNT>
+        <ACTUALQTY>1 ${pUnit}</ACTUALQTY>
+        <BILLEDQTY>1 ${pUnit}</BILLEDQTY>
+      </BATCHALLOCATIONS.LIST>
+    </INVENTORYENTRIESIN.LIST>
+    <INVENTORYENTRIESIN.LIST>
+      <STOCKITEMNAME>${childName}</STOCKITEMNAME>
+      <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+      <RATE>${cPrice}</RATE>
+      <AMOUNT>-${cAmount}</AMOUNT>
+      <ACTUALQTY>1 ${cUnit}</ACTUALQTY>
+      <BILLEDQTY>1 ${cUnit}</BILLEDQTY>
+      <BATCHALLOCATIONS.LIST>
+        <BATCHNAME>${childBarcode}</BATCHNAME>
+        <GODOWNNAME>${destGodownChild}</GODOWNNAME>
+        <RATE>${cPrice}</RATE>
+        <AMOUNT>-${cAmount}</AMOUNT>
+        <ACTUALQTY>1 ${cUnit}</ACTUALQTY>
+        <BILLEDQTY>1 ${cUnit}</BILLEDQTY>
+      </BATCHALLOCATIONS.LIST>
+    </INVENTORYENTRIESIN.LIST>`;
+
+    const xmlPayload = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Import</TALLYREQUEST>
+        <TYPE>Data</TYPE>
+        <ID>Vouchers</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVCURRENTCOMPANY>${esc(companyName)}</SVCURRENTCOMPANY>
+          </STATICVARIABLES>
+        </DESC>
+        <DATA>
+          <TALLYMESSAGE xmlns:UDF="TallyUDF">
+            <VOUCHER VCHTYPE="Autofill Stock Journal" ACTION="Create">
+              <DATE>${dateStr}</DATE>
+              <VOUCHERTYPENAME>Autofill Stock Journal</VOUCHERTYPENAME>
+              <NARRATION>Split barcode splitId ${splitId} from parent ${parentBc.barcode} to child ${newBcDoc.barcode}</NARRATION>
+              ${productionLines}
+              ${consumptionLines}
+            </VOUCHER>
+          </TALLYMESSAGE>
+        </DATA>
+      </BODY>
+    </ENVELOPE>`;
+
+    console.log(`Posting Tally Autofill Stock Journal for split ${splitId}: ${parentBc.barcode} -> ${newBcDoc.barcode}`);
+    const voucherRes = await axios.post(liveTallyUrl, xmlPayload, {
+      headers: { 'Content-Type': 'text/xml' },
+      timeout: 5000
+    });
+    console.log(`Tally Autofill Stock Journal response for split ${splitId}:`, voucherRes.data);
+
+    const parsedImport = await parser.parseStringPromise(voucherRes.data);
+    const importResult = parsedImport?.ENVELOPE?.BODY?.DATA?.IMPORTRESULT;
+    if (importResult) {
+      const lineError = importResult.LINEERROR;
+      if (lineError) {
+        const errorText = typeof lineError === 'string' ? lineError : (lineError?._ || JSON.stringify(lineError));
+        throw new Error(errorText);
+      }
+      const errorsCount = parseTallyNumber(importResult.ERRORS);
+      const exceptionsCount = parseTallyNumber(importResult.EXCEPTIONS);
+      if (errorsCount > 0 || exceptionsCount > 0) {
+        throw new Error(`Tally import failed with ${errorsCount} errors and ${exceptionsCount} exceptions.`);
+      }
+    }
+
+    // Extract last created voucher ID if present from import metadata as a reliable fallback
+    let lastCreatedVchId = '';
+    const cmpInfoEx = parsedImport?.ENVELOPE?.BODY?.DESC?.CMPINFOEX;
+    if (cmpInfoEx && cmpInfoEx.IDINFO && cmpInfoEx.IDINFO.LASTCREATEDVCHID) {
+      lastCreatedVchId = typeof cmpInfoEx.IDINFO.LASTCREATEDVCHID === 'object'
+        ? cmpInfoEx.IDINFO.LASTCREATEDVCHID._
+        : cmpInfoEx.IDINFO.LASTCREATEDVCHID;
+    }
+
+    // Wait 500ms for Tally to persist, then query for the auto-generated Voucher Number
+    await new Promise(resolve => setTimeout(resolve, 500));
+    try {
+      const queryXml = `
+      <ENVELOPE>
+        <HEADER>
+          <VERSION>1</VERSION>
+          <TALLYREQUEST>Export</TALLYREQUEST>
+          <TYPE>Collection</TYPE>
+          <ID>MatchedVouchers</ID>
+        </HEADER>
+        <BODY>
+          <DESC>
+            <STATICVARIABLES>
+              <SVCURRENTCOMPANY>${esc(companyName)}</SVCURRENTCOMPANY>
+              <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+            <TDL>
+              <TDLMESSAGE>
+                <COLLECTION NAME="MatchedVouchers" ISINITIALIZE="Yes">
+                  <TYPE>Voucher</TYPE>
+                  <FETCH>VoucherNumber</FETCH>
+                  <FILTER>NarrationFilter</FILTER>
+                </COLLECTION>
+                <SYSTEM NAME="NarrationFilter" TYPE="Formula">$Narration contains "${splitId}"</SYSTEM>
+              </TDLMESSAGE>
+            </TDL>
+          </DESC>
+        </BODY>
+      </ENVELOPE>`;
+
+      const queryRes = await axios.post(liveTallyUrl, queryXml, {
+        headers: { 'Content-Type': 'application/xml' },
+        timeout: 3000
+      });
+
+      const parsedQuery = await parser.parseStringPromise(queryRes.data);
+      const rawVoucher = parsedQuery?.ENVELOPE?.BODY?.DATA?.COLLECTION?.VOUCHER;
+      const vouchers = Array.isArray(rawVoucher) ? rawVoucher : (rawVoucher ? [rawVoucher] : []);
+      if (vouchers.length > 0) {
+        const vNumObj = vouchers[vouchers.length - 1].VOUCHERNUMBER;
+        const vNum = typeof vNumObj === 'string' ? vNumObj : (vNumObj?._ || '');
+        if (vNum) {
+          console.log(`Extracted Tally split voucher number for ${splitId}: ${vNum}`);
+          return vNum;
+        }
+      }
+    } catch (queryErr) {
+      console.error(`Failed to query voucher number from Tally for split ${splitId}:`, queryErr.message);
+    }
+
+    // Fallback if import succeeded but the voucher number query timed out or failed
+    const fallbackVchNum = lastCreatedVchId ? `Tally-ID-${lastCreatedVchId}` : 'Tally-SUCCESS';
+    console.log(`Fallback Tally voucher number assigned: ${fallbackVchNum}`);
+    return fallbackVchNum;
+  } catch (err) {
+    console.error(`Failed to post Split Stock Journal to Tally:`, err.message);
+    throw err;
+  }
+};
+
+/**
+ * Fetches current godown name, item name, and unit for a barcode directly from Tally Prime
+ */
+exports.getBarcodeTallyDetails = async (barcodeStr) => {
+  try {
+    const liveTallyUrl = process.env.TALLY_LIVE_URL || 'http://localhost:9000';
+    if (!liveTallyUrl) return null;
+
+    // 1. Fetch active company
+    const COMP_QUERY = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>ActiveCompanies</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="ActiveCompanies" ISINITIALIZE="Yes">
+                <TYPE>Company</TYPE>
+                <FETCH>Name</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    const compResponse = await axios.post(liveTallyUrl, COMP_QUERY, {
+      headers: { 'Content-Type': 'text/xml' },
+      timeout: 1000
+    });
+
+    const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
+    const parsedComp = await parser.parseStringPromise(compResponse.data);
+    const activeCompanyObj = parsedComp?.ENVELOPE?.BODY?.DATA?.COLLECTION?.COMPANY;
+    let companyName = '';
+    if (activeCompanyObj) {
+      if (typeof activeCompanyObj === 'string') {
+        companyName = activeCompanyObj;
+      } else if (typeof activeCompanyObj === 'object') {
+        if (activeCompanyObj.NAME) {
+          companyName = typeof activeCompanyObj.NAME === 'object' ? activeCompanyObj.NAME._ : activeCompanyObj.NAME;
+        } else if (activeCompanyObj.$ && activeCompanyObj.$.NAME) {
+          companyName = activeCompanyObj.$.NAME;
+        }
+      }
+    }
+
+    if (!companyName) return null;
+
+    // 2. Query all stock items with BatchAllocations
+    const xmlPayload = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>StockItemsCollection</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVCURRENTCOMPANY>${companyName.trim()}</SVCURRENTCOMPANY>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="StockItemsCollection" ISINITIALIZE="Yes">
+                <TYPE>StockItem</TYPE>
+                <FETCH>Name, BaseUnits, BatchAllocations.List</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    const response = await axios.post(liveTallyUrl, xmlPayload, {
+      headers: { 'Content-Type': 'application/xml' },
+      timeout: 1500
+    });
+
+    const parsedData = await parser.parseStringPromise(response.data);
+    const rawItems = parsedData?.ENVELOPE?.BODY?.DATA?.COLLECTION?.STOCKITEM || [];
+    const stockItems = Array.isArray(rawItems) ? rawItems : [rawItems];
+
+    for (const item of stockItems) {
+      let itemName = '';
+      if (item.$ && item.$.NAME) itemName = item.$.NAME;
+      else if (item.NAME) itemName = typeof item.NAME === 'string' ? item.NAME : (item.NAME._ || '');
+      itemName = itemName.trim();
+
+      const rawAllocations = item['BATCHALLOCATIONS.LIST'] || item['batchallocations.list'];
+      if (rawAllocations) {
+        const allocations = Array.isArray(rawAllocations) ? rawAllocations : [rawAllocations];
+        for (const alloc of allocations) {
+          let batchName = '';
+          if (alloc.BATCHNAME) {
+            batchName = typeof alloc.BATCHNAME === 'object' ? alloc.BATCHNAME._ : alloc.BATCHNAME;
+          } else if (alloc.batchname) {
+            batchName = typeof alloc.batchname === 'object' ? alloc.batchname._ : alloc.batchname;
+          }
+          
+          if (batchName && batchName.trim().toLowerCase() === barcodeStr.toLowerCase().trim()) {
+            let godownName = '';
+            if (alloc.GODOWNNAME) {
+              godownName = typeof alloc.GODOWNNAME === 'object' ? alloc.GODOWNNAME._ : alloc.GODOWNNAME;
+            } else if (alloc.godownname) {
+              godownName = typeof alloc.godownname === 'object' ? alloc.godownname._ : alloc.godownname;
+            }
+
+            let unit = 'pcs';
+            if (item.BASEUNITS) {
+              unit = typeof item.BASEUNITS === 'object' ? (item.BASEUNITS._ || 'pcs') : item.BASEUNITS;
+              if (unit === 'Not Applicable') unit = 'pcs';
+            }
+
+            return {
+              itemName,
+              godown: godownName || 'GOKUL SHIRGAON',
+              unit: unit.trim()
+            };
+          }
+        }
+      }
+    }
+    // 3. Fallback: Search Day Book vouchers
+    const voucherXmlPayload = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>VouchersByBatchCollection</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVCURRENTCOMPANY>${companyName.trim()}</SVCURRENTCOMPANY>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="VouchersByBatchCollection" ISINITIALIZE="Yes">
+                <TYPE>Voucher</TYPE>
+                <FETCH>VoucherNumber, Date, VoucherTypeName, InventoryEntries.List, InventoryEntriesIn.List, InventoryEntriesOut.List, AllInventoryEntries.List</FETCH>
+                <FILTER>VchTypeFilter</FILTER>
+              </COLLECTION>
+              <SYSTEM NAME="VchTypeFilter" TYPE="Formula">$VoucherTypeName = "Autofill Stock Journal" or $VoucherTypeName = "Gokul Shirgaon Godown Transfer" or $VoucherTypeName = "Stock Journal" or $VoucherTypeName = "Purchase" or $VoucherTypeName = "Receipt Note"</SYSTEM>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    const vResponse = await axios.post(liveTallyUrl, voucherXmlPayload, {
+      headers: { 'Content-Type': 'application/xml' },
+      timeout: 1500
+    });
+
+    const parsedVData = await parser.parseStringPromise(vResponse.data);
+    const rawVouchers = parsedVData?.ENVELOPE?.BODY?.DATA?.COLLECTION?.VOUCHER || [];
+    const vouchers = Array.isArray(rawVouchers) ? rawVouchers : [rawVouchers];
+
+    for (const v of vouchers) {
+      const entries = [];
+      const addEntry = (list) => {
+        if (!list) return;
+        const array = Array.isArray(list) ? list : [list];
+        entries.push(...array);
+      };
+      addEntry(v['INVENTORYENTRIES.LIST'] || v['inventoryentries.list']);
+      addEntry(v['INVENTORYENTRIESIN.LIST'] || v['inventoryentriesin.list']);
+      addEntry(v['INVENTORYENTRIESOUT.LIST'] || v['inventoryentriesout.list']);
+      addEntry(v['ALLINVENTORYENTRIES.LIST'] || v['allinventoryentries.list']);
+
+      for (const entry of entries) {
+        let entryMatName = '';
+        const nameKey = Object.keys(entry).find(k => k.toLowerCase() === 'stockitemname');
+        if (nameKey) {
+          const val = entry[nameKey];
+          entryMatName = typeof val === 'object' ? val._ : val;
+        }
+
+        const rawAllocations = entry['BATCHALLOCATIONS.LIST'] || entry['batchallocations.list'];
+        if (rawAllocations) {
+          const allocations = Array.isArray(rawAllocations) ? rawAllocations : [rawAllocations];
+          for (const alloc of allocations) {
+            let batchName = '';
+            if (alloc.BATCHNAME) {
+              batchName = typeof alloc.BATCHNAME === 'object' ? alloc.BATCHNAME._ : alloc.BATCHNAME;
+            } else if (alloc.batchname) {
+              batchName = typeof alloc.batchname === 'object' ? alloc.batchname._ : alloc.batchname;
+            }
+            if (batchName && batchName.trim().toLowerCase() === barcodeStr.toLowerCase().trim()) {
+              let godownName = '';
+              if (alloc.GODOWNNAME) {
+                godownName = typeof alloc.GODOWNNAME === 'object' ? alloc.GODOWNNAME._ : alloc.GODOWNNAME;
+              } else if (alloc.godownname) {
+                godownName = typeof alloc.godownname === 'object' ? alloc.godownname._ : alloc.godownname;
+              }
+              return {
+                itemName: entryMatName ? entryMatName.trim() : null,
+                godown: godownName || 'GOKUL SHIRGAON',
+                unit: 'Nos'
+              };
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.error('Error fetching barcode Tally details:', err.message);
+    return null;
+  }
+};

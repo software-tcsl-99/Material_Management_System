@@ -150,6 +150,151 @@ export default function BarcodeViewAll() {
 
   const remarksList = timelineHistory.filter(log => log.remarks && log.remarks.trim());
 
+  // Aggregate all photos from different forms and stages
+  const allPhotos = [];
+  const seenPhotoUrls = new Set();
+  const addPhoto = (url, lat, lng, address, date, source) => {
+    if (!url || typeof url !== 'string' || seenPhotoUrls.has(url)) return;
+    seenPhotoUrls.add(url);
+    
+    let cleanLat = parseFloat(lat);
+    let cleanLng = parseFloat(lng);
+    if (isNaN(cleanLat) || isNaN(cleanLng)) {
+      cleanLat = bc?.gps?.lat ? parseFloat(bc.gps.lat) : NaN;
+      cleanLng = bc?.gps?.lng ? parseFloat(bc.gps.lng) : NaN;
+    }
+
+    allPhotos.push({
+      url,
+      lat: cleanLat,
+      lng: cleanLng,
+      address: address || bc?.gps?.address || '',
+      date: date || bc?.createdAt || new Date().toISOString(),
+      source
+    });
+  };
+
+  if (bc?.photos) {
+    bc.photos.forEach(p => {
+      const url = typeof p === 'string' ? p : p.url;
+      const lat = typeof p === 'object' ? p.lat : undefined;
+      const lng = typeof p === 'object' ? p.lng : undefined;
+      const address = typeof p === 'object' ? p.address : undefined;
+      const date = typeof p === 'object' ? (p.capturedAt || p.uploadedAt) : undefined;
+      addPhoto(url, lat, lng, address, date, 'Barcode Asset');
+    });
+  }
+
+  if (bc?.history) {
+    bc.history.forEach(log => {
+      if (log.photo) {
+        addPhoto(log.photo, log.gps?.lat, log.gps?.lng, log.gps?.address, log.timestamp, `History (${log.action})`);
+      }
+      if (log.metadata && log.metadata.photo) {
+        addPhoto(log.metadata.photo, log.gps?.lat, log.gps?.lng, log.gps?.address, log.timestamp, `History (${log.action})`);
+      }
+      if (log.metadata && Array.isArray(log.metadata.photos)) {
+        log.metadata.photos.forEach(p => {
+          const url = typeof p === 'string' ? p : p.url;
+          addPhoto(url, log.gps?.lat, log.gps?.lng, log.gps?.address, log.timestamp, `History (${log.action})`);
+        });
+      }
+    });
+  }
+
+  if (bc?.transaction?.photos) {
+    bc.transaction.photos.forEach(p => {
+      const url = typeof p === 'string' ? p : p.url;
+      const lat = typeof p === 'object' ? p.metadata?.lat : undefined;
+      const lng = typeof p === 'object' ? p.metadata?.lng : undefined;
+      const address = typeof p === 'object' ? p.metadata?.address : undefined;
+      const date = typeof p === 'object' ? (p.metadata?.capturedAt || p.metadata?.date) : undefined;
+      addPhoto(url, lat, lng, address, date, 'Transaction Request');
+    });
+  }
+
+  if (bc?.transaction?.materials) {
+    bc.transaction.materials.forEach(mat => {
+      const hasBarcode = mat.barcodes?.some(b => {
+        const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString() || '');
+        return bStr === barcode;
+      });
+      if (hasBarcode && mat.photos) {
+        mat.photos.forEach(p => {
+          const url = typeof p === 'string' ? p : p.url;
+          const lat = typeof p === 'object' ? p.metadata?.lat : undefined;
+          const lng = typeof p === 'object' ? p.metadata?.lng : undefined;
+          const address = typeof p === 'object' ? p.metadata?.address : undefined;
+          const date = typeof p === 'object' ? p.metadata?.capturedAt : undefined;
+          addPhoto(url, lat, lng, address, date, 'Dispatch Form');
+        });
+      }
+    });
+  }
+
+  transfers.forEach((tr, index) => {
+    if (tr.photos) {
+      tr.photos.forEach(p => {
+        const url = typeof p === 'string' ? p : p.url;
+        const date = typeof p === 'object' ? p.capturedAt : undefined;
+        addPhoto(url, tr.gps?.lat, tr.gps?.lng, tr.gps?.address, date || tr.createdAt, `Transfer #${transfers.length - index}`);
+      });
+    }
+  });
+
+  returns.forEach((rt, index) => {
+    if (rt.photos) {
+      rt.photos.forEach(p => {
+        const url = typeof p === 'string' ? p : p.url;
+        const date = typeof p === 'object' ? p.capturedAt : undefined;
+        addPhoto(url, rt.gps?.lat, rt.gps?.lng, rt.gps?.address, date || rt.createdAt, `Return #${returns.length - index}`);
+      });
+    }
+  });
+
+  // Aggregate all attachments/documents from different forms and stages
+  const allAttachments = [];
+  const seenDocUrls = new Set();
+  const addAttachment = (name, url, type, size, date, source) => {
+    if (!url || typeof url !== 'string' || seenDocUrls.has(url)) return;
+    seenDocUrls.add(url);
+    allAttachments.push({
+      name: name || 'Unnamed Document',
+      url,
+      type: type || 'document',
+      size: size || 0,
+      date: date || bc?.createdAt || new Date().toISOString(),
+      source
+    });
+  };
+
+  if (bc?.documents) {
+    bc.documents.forEach(doc => {
+      addAttachment(doc.name, doc.url, doc.type, doc.size, doc.uploadedAt, 'Barcode Asset');
+    });
+  }
+
+  if (bc?.transaction?.documents) {
+    bc.transaction.documents.forEach(doc => {
+      addAttachment(doc.name, doc.url, doc.type, doc.size, doc.uploadedAt, 'Transaction Challan');
+    });
+  }
+
+  const closeRequests = data?.closeRequests || [];
+  closeRequests.forEach((cr, index) => {
+    if (cr.invoiceUrl) {
+      const fileName = cr.invoiceUrl.split('/').pop() || `Invoice_Close_Request_${index + 1}.pdf`;
+      addAttachment(
+        `Invoice - ${fileName}`,
+        cr.invoiceUrl,
+        'pdf',
+        0,
+        cr.approvedAt || cr.createdAt,
+        `Close Request (Voucher No: ${cr.documentNumber || 'N/A'})`
+      );
+    }
+  });
+
   const handleTabChange = (tabName) => {
     setSearchParams({ tab: tabName });
   };
@@ -209,7 +354,7 @@ export default function BarcodeViewAll() {
               }`}
             >
               <ImageIcon className="w-4 h-4" />
-              Photos ({bc.photos?.length || 0})
+              Photos ({allPhotos.length})
             </button>
             <button
               onClick={() => handleTabChange('remarks')}
@@ -231,7 +376,7 @@ export default function BarcodeViewAll() {
               }`}
             >
               <Paperclip className="w-4 h-4" />
-              Attachments ({bc.documents?.length || 0})
+              Attachments ({allAttachments.length})
             </button>
           </div>
 
@@ -242,24 +387,26 @@ export default function BarcodeViewAll() {
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white tracking-wider border-b border-slate-100 dark:border-slate-850 pb-2">
                   All Uploaded Photos
                 </h3>
-                {!bc.photos || bc.photos.length === 0 ? (
+                {allPhotos.length === 0 ? (
                   <p className="text-xs text-slate-400 italic py-10 text-center">No photos uploaded for this barcode.</p>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {bc.photos.map((p, idx) => (
+                    {allPhotos.map((p, idx) => (
                       <div key={idx} className="flex items-center gap-4 bg-slate-50 dark:bg-slate-955/20 p-4.5 rounded-2xl border border-slate-100 dark:border-slate-800">
                         <div className="w-28 h-28 bg-slate-100 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-xl overflow-hidden flex items-center justify-center shrink-0 shadow-sm">
                           <img src={p.url} alt={`Scan ${idx + 1}`} className="w-full h-full object-cover" />
                         </div>
                         <div className="flex flex-col gap-1 text-xs">
-                          <span className="text-[10px] text-slate-400 font-extrabold tracking-wider uppercase">Photo #{idx + 1} GPS Location</span>
+                          <span className="text-[10px] text-slate-400 font-extrabold tracking-wider uppercase flex items-center gap-2">
+                            <span>Photo #{idx + 1}</span>
+                            <span className="bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-1.5 py-0.5 rounded font-mono text-[9px] normal-case">
+                              {p.source}
+                            </span>
+                          </span>
                           {(() => {
-                            const pLat = p ? parseFloat(p.lat) : NaN;
-                            const pLng = p ? parseFloat(p.lng) : NaN;
+                            const pLat = parseFloat(p.lat);
+                            const pLng = parseFloat(p.lng);
                             const hasPCoords = !isNaN(pLat) && !isNaN(pLng);
-                            const bcLat = bc?.gps ? parseFloat(bc.gps.lat) : NaN;
-                            const bcLng = bc?.gps ? parseFloat(bc.gps.lng) : NaN;
-                            const hasBcCoords = !isNaN(bcLat) && !isNaN(bcLng);
 
                             if (hasPCoords) {
                               return (
@@ -273,25 +420,13 @@ export default function BarcodeViewAll() {
                                   </p>
                                 </>
                               );
-                            } else if (hasBcCoords) {
-                              return (
-                                <>
-                                  <p className="font-mono font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
-                                    <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                                    {bcLat.toFixed(4)}° N, {bcLng.toFixed(4)}° E
-                                  </p>
-                                  <p className="text-[10px] text-slate-505 font-semibold tracking-wide">
-                                    {bc.gps.address || 'Recorded GPS Location'}
-                                  </p>
-                                </>
-                              );
                             } else {
                               return <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>;
                             }
                           })()}
                           <span className="text-[9px] text-slate-405 font-bold font-mono mt-1.5 flex items-center gap-1">
                             <Calendar className="w-3 h-3" />
-                            {new Date(p.capturedAt || p.uploadedAt || bc.createdAt).toLocaleString()}
+                            {new Date(p.date).toLocaleString()}
                           </span>
                         </div>
                       </div>
@@ -343,11 +478,11 @@ export default function BarcodeViewAll() {
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white tracking-wider border-b border-slate-100 dark:border-slate-850 pb-2">
                   All Uploaded Attachments
                 </h3>
-                {!bc.documents || bc.documents.length === 0 ? (
+                {allAttachments.length === 0 ? (
                   <p className="text-xs text-slate-400 italic py-10 text-center">No documents uploaded for this barcode.</p>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {bc.documents.map((doc, idx) => (
+                    {allAttachments.map((doc, idx) => (
                       <div key={idx} className="flex items-center gap-4 bg-slate-50 dark:bg-slate-955/20 p-4.5 rounded-2xl border border-slate-100 dark:border-slate-800">
                         <div className="w-12 h-12 bg-blue-50 dark:bg-blue-950/30 rounded-xl flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
                           <FileText className="w-6 h-6" />
@@ -361,9 +496,14 @@ export default function BarcodeViewAll() {
                           >
                             {doc.name}
                           </a>
-                          <span className="text-[10px] text-slate-400 font-semibold block mt-0.5 font-mono">
-                            Uploaded: {new Date(doc.uploadedAt || bc.createdAt).toLocaleDateString()}
-                          </span>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] text-slate-400 font-semibold font-mono">
+                              Uploaded: {new Date(doc.date).toLocaleDateString()}
+                            </span>
+                            <span className="bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-1.5 py-0.5 rounded font-mono text-[9px]">
+                              {doc.source}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     ))}

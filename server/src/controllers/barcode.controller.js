@@ -148,22 +148,22 @@ exports.transferBarcode = async (req, res) => {
     bc.history.push({
       action: 'Transfer Initiated',
       user: req.user._id,
-      remarks: isCrossDept
+      remarks: remarks || (isCrossDept
         ? `Transfer initiated to ${toUser.fullName} (pending Management approval)`
-        : `Transfer initiated to ${toUser.fullName} (pending recipient acceptance)`,
+        : `Transfer initiated to ${toUser.fullName} (pending recipient acceptance)`),
     });
     if (isCrossDept) {
       bc.history.push({
         action: 'Transfer Pending Management Approval',
         user: req.user._id,
-        remarks: 'Awaiting management review/approval',
+        remarks: remarks || 'Awaiting management review/approval',
         timestamp: new Date()
       });
     } else {
       bc.history.push({
         action: 'Transfer Pending Acceptance',
         user: toUserId,
-        remarks: 'Employee request pending recipient acceptance',
+        remarks: remarks || 'Employee request pending recipient acceptance',
         timestamp: new Date()
       });
     }
@@ -236,13 +236,13 @@ exports.handleTransfer = async (req, res) => {
           bc.history.push({
             action: 'Transfer Approved by Management',
             user: req.user._id,
-            remarks: 'Management approved transfer request',
+            remarks: reason || 'Management approved transfer request',
             timestamp: new Date()
           });
           bc.history.push({
             action: 'Transfer Pending Acceptance',
             user: transfer.toUser,
-            remarks: 'Employee request pending recipient acceptance',
+            remarks: transfer.remarks || 'Employee request pending recipient acceptance',
             timestamp: new Date()
           });
           await bc.save();
@@ -308,7 +308,7 @@ exports.handleTransfer = async (req, res) => {
       bc.history.push({
         action: 'Transfer Accepted',
         user: req.user._id,
-        remarks: 'Transfer accepted',
+        remarks: reason || 'Transfer accepted',
         gps,
         photos: req.body.photos || []
       });
@@ -345,6 +345,43 @@ exports.handleTransfer = async (req, res) => {
         transfer.transactionId,
         transfer.barcode
       );
+
+      // Create Tally Gokul Shirgaon Godown Transfer voucher for the transfer
+      try {
+        const tallyController = require('./tally.controller');
+        const Transaction = require('../models/Transaction');
+        const parentTxn = await Transaction.findOne({ transactionId: transfer.transactionId });
+        if (parentTxn) {
+          // Find the material matching this barcode
+          const matchedMat = parentTxn.materials.find(m =>
+            m.barcodes && m.barcodes.some(b => {
+              const bStr = typeof b === 'string' ? b : (b.barcode || '');
+              return bStr === transfer.barcode;
+            })
+          );
+          const materialForTally = [{
+            name: matchedMat ? matchedMat.name : (bc ? bc.materialName : 'Unknown Material'),
+            quantity: 1,
+            unit: matchedMat ? matchedMat.unit : 'pcs',
+            price: matchedMat ? matchedMat.price : 0,
+            barcodes: [transfer.barcode]
+          }];
+          const sourceGodown = fromUserObj?.fullName || 'GOKUL SHIRGAON';
+          const destGodown = toUserObj?.fullName || 'Main Location';
+          const voucherNum = await tallyController.createTallyGodownTransfer(
+            transfer._id.toString(),
+            'transfer',
+            sourceGodown,
+            destGodown,
+            materialForTally
+          );
+          if (voucherNum) {
+            console.log(`Tally transfer voucher created: ${voucherNum} for barcode ${transfer.barcode}`);
+          }
+        }
+      } catch (tallyErr) {
+        console.error('Failed to create Tally godown transfer voucher for transfer:', tallyErr.message);
+      }
     } else if (action === 'reject') {
       transfer.status = 'rejected';
       transfer.rejectedBy = req.user._id;
@@ -652,6 +689,50 @@ exports.acceptReturn = async (req, res) => {
       returnDoc.barcode
     );
 
+    // Create Tally Gokul Shirgaon Godown Transfer voucher for the return
+    try {
+      const tallyController = require('./tally.controller');
+      const User = require('../models/User');
+      const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
+      const fromUserObj = await User.findById(returnDoc.fromUser);
+
+      // Find material info from the parent transaction
+      const parentTxn = await Transaction.findOne({ transactionId: returnDoc.transactionId || bc?.transactionId });
+      let matchedMat = null;
+      if (parentTxn) {
+        matchedMat = parentTxn.materials.find(m =>
+          m.barcodes && m.barcodes.some(b => {
+            const bStr = typeof b === 'string' ? b : (b.barcode || '');
+            return bStr === returnDoc.barcode;
+          })
+        );
+      }
+
+      const materialForTally = [{
+        name: matchedMat ? matchedMat.name : (bc ? bc.materialName : 'Unknown Material'),
+        quantity: 1,
+        unit: matchedMat ? matchedMat.unit : 'pcs',
+        price: matchedMat ? matchedMat.price : 0,
+        barcodes: [returnDoc.barcode]
+      }];
+
+      const sourceGodown = fromUserObj?.fullName || 'Main Location';
+      const destGodown = 'GOKUL SHIRGAON';
+
+      const voucherNum = await tallyController.createTallyGodownTransfer(
+        returnDoc._id.toString(),
+        'return',
+        sourceGodown,
+        destGodown,
+        materialForTally
+      );
+      if (voucherNum) {
+        console.log(`Tally return voucher created: ${voucherNum} for barcode ${returnDoc.barcode}`);
+      }
+    } catch (tallyErr) {
+      console.error('Failed to create Tally godown transfer voucher for return:', tallyErr.message);
+    }
+
     res.json({ message: 'Return accepted.', return: returnDoc });
   } catch (error) {
     res.status(500).json({ message: 'Server error.' });
@@ -876,7 +957,7 @@ exports.getPendingSplitRequests = async (req, res) => {
  */
 exports.approveSplitRequest = async (req, res) => {
   try {
-    const { requestId, newBarcode, materialName, quantity, action, reason } = req.body;
+    const { requestId, newBarcode, materialName, quantity, unit, price, rate, godown, action, reason } = req.body;
 
     const isStore = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store');
     if (!isStore) {
@@ -923,7 +1004,7 @@ exports.approveSplitRequest = async (req, res) => {
     }
 
     // Get parent barcode details
-    const parentBc = await Barcode.findOne({ barcode: splitReq.barcode });
+    const parentBc = await Barcode.findOne({ barcode: splitReq.barcode }).populate('owner');
     if (!parentBc) return res.status(404).json({ message: 'Parent barcode not found.' });
 
     // Get requester details
@@ -959,7 +1040,7 @@ exports.approveSplitRequest = async (req, res) => {
       history: [{
         action: 'Split Child Created',
         user: req.user._id,
-        remarks: `Created from split approval of parent ${parentBc.barcode}`,
+        remarks: reason || `Created from split approval of parent ${parentBc.barcode}`,
       }],
     });
 
@@ -967,7 +1048,7 @@ exports.approveSplitRequest = async (req, res) => {
     parentBc.history.push({
       action: 'Split Approved',
       user: req.user._id,
-      remarks: `Split approved. New child barcode ${newBarcode} created.`,
+      remarks: reason || `Split approved. New child barcode ${newBarcode} created.`,
     });
     await parentBc.save();
 
@@ -999,10 +1080,100 @@ exports.approveSplitRequest = async (req, res) => {
       
       transaction.timeline.push({
         action: 'Split Approved',
-        description: `Store approved split. New barcode ${newBarcode} registered and active.`,
+        description: reason || `Store approved split. New barcode ${newBarcode} registered and active.`,
         user: req.user._id,
       });
       await transaction.save();
+
+      // Post Tally Autofill Stock Journal for split barcode
+      try {
+        const tallyController = require('./tally.controller');
+        const requesterGodown = godown || requesterUser.fullName || 'Main Location';
+        const materialInfo = {
+          materialName: materialName || parentBc.materialName,
+          unit: unit || parentMaterial?.unit || 'pcs',
+          price: (price !== undefined && price !== null ? Number(price) : (rate !== undefined && rate !== null ? Number(rate) : (parentMaterial?.price || 0)))
+        };
+        
+        let parentUnit = parentMaterial?.unit || 'pcs';
+        let parentPrice = parentMaterial?.price || 0;
+        let parentGodown = 'GOKUL SHIRGAON';
+        if (parentBc.owner) {
+          const ownerUser = parentBc.owner;
+          if (ownerUser.role === 'department_admin' && ownerUser.departmentAdminType === 'store') {
+            parentGodown = 'GOKUL SHIRGAON';
+          } else {
+            parentGodown = ownerUser.fullName || 'GOKUL SHIRGAON';
+          }
+        }
+        let parentTallyName = parentBc.materialName;
+        
+        try {
+          const tallyDetails = await tallyController.getBarcodeTallyDetails(parentBc.barcode);
+          if (tallyDetails) {
+            if (tallyDetails.godown) {
+              parentGodown = tallyDetails.godown;
+              console.log(`Resolved live Tally godown for parent barcode ${parentBc.barcode}: ${parentGodown}`);
+            }
+            if (tallyDetails.itemName) {
+              parentTallyName = tallyDetails.itemName;
+              console.log(`Resolved live Tally stock item name for parent barcode ${parentBc.barcode}: ${parentTallyName}`);
+            }
+            if (tallyDetails.unit) {
+              parentUnit = tallyDetails.unit;
+              console.log(`Resolved live Tally unit for parent barcode ${parentBc.barcode}: ${parentUnit}`);
+            }
+          }
+        } catch (tallyDetailErr) {
+          console.warn('Failed to fetch parent barcode details from Tally live (using DB fallback):', tallyDetailErr.message);
+        }
+
+        // Use the resolved Tally stock item name, unit, and price for parent consumption and production
+        parentBc.materialName = parentTallyName;
+        parentBc.unit = parentUnit;
+        parentBc.price = parentPrice;
+
+        const splitVoucherNum = await tallyController.createTallySplitStockJournal(
+          splitReq._id.toString(),
+          parentBc,
+          newBcDoc,
+          materialInfo,
+          requesterGodown,
+          parentGodown
+        );
+        if (splitVoucherNum) {
+          console.log(`Tally Split Stock Journal voucher created: ${splitVoucherNum} for split ${splitReq._id}`);
+        } else {
+          throw new Error('Tally Prime rejected stock journal creation. Please verify item and godown existence in Tally.');
+        }
+      } catch (tallyErr) {
+        console.error('Failed to create Tally Autofill Stock Journal voucher for split:', tallyErr.message);
+
+        // Revert DB updates for transactional integrity
+        try {
+          await Barcode.deleteOne({ _id: newBcDoc._id });
+          
+          parentBc.history.pop();
+          await parentBc.save();
+
+          transaction.materials.pop();
+          transaction.totalItems = Math.max(0, (transaction.totalItems || 1) - 1);
+          transaction.activeItems = Math.max(0, (transaction.activeItems || 1) - 1);
+          transaction.timeline.pop();
+          await transaction.save();
+
+          splitReq.status = 'pending';
+          splitReq.approvedBy = undefined;
+          splitReq.approvedAt = undefined;
+          splitReq.newBarcode = undefined;
+          splitReq.newQuantity = undefined;
+          await splitReq.save();
+        } catch (revertErr) {
+          console.error('Failed to revert DB updates on Tally failure:', revertErr.message);
+        }
+
+        return res.status(400).json({ message: `Tally integration error: ${tallyErr.message}` });
+      }
     }
 
     // Notify all store admins about this split creation/transfer
@@ -1176,15 +1347,17 @@ exports.getStoreAvailableBarcodes = async (req, res) => {
       return res.json({ barcodes: [], message: 'No active company in Tally.' });
     }
 
-    // 2. Build XML request to fetch all stock items with BatchAllocations
     const escapedCompanyName = companyName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // 2. Build XML request to fetch all stock items with BatchAllocations
+    // Query stock items
     const STOCK_QUERY_XML = `
     <ENVELOPE>
       <HEADER>
         <VERSION>1</VERSION>
         <TALLYREQUEST>Export</TALLYREQUEST>
         <TYPE>Collection</TYPE>
-        <ID>StockItemBarcodes</ID>
+        <ID>LiveStockItems</ID>
       </HEADER>
       <BODY>
         <DESC>
@@ -1194,9 +1367,9 @@ exports.getStoreAvailableBarcodes = async (req, res) => {
           </STATICVARIABLES>
           <TDL>
             <TDLMESSAGE>
-              <COLLECTION NAME="StockItemBarcodes" ISINITIALIZE="Yes">
+              <COLLECTION NAME="LiveStockItems" ISINITIALIZE="Yes">
                 <TYPE>StockItem</TYPE>
-                <FETCH>Name, BatchAllocations</FETCH>
+                <FETCH>Name, BaseUnits, ClosingBalance, OpeningBalance, OpeningRate, ClosingRate, BatchAllocations</FETCH>
               </COLLECTION>
             </TDLMESSAGE>
           </TDL>
@@ -1204,60 +1377,233 @@ exports.getStoreAvailableBarcodes = async (req, res) => {
       </BODY>
     </ENVELOPE>`;
 
-    const response = await axios.post(liveTallyUrl, STOCK_QUERY_XML, {
-      headers: { 'Content-Type': 'application/xml' },
-      timeout: 5000
-    });
+    // Query vouchers
+    const VOUCHER_QUERY_XML = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>DayBookVouchers</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            <SVCURRENTCOMPANY>${escapedCompanyName}</SVCURRENTCOMPANY>
+            <SVFROMDATE>20260401</SVFROMDATE>
+            <SVTODATE>20261231</SVTODATE>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="DayBookVouchers" ISINITIALIZE="Yes">
+                <TYPE>Voucher</TYPE>
+                <FETCH>Date, VoucherTypeName, VoucherNumber, InventoryEntries, InventoryEntriesIn, InventoryEntriesOut, AllInventoryEntries</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
 
-    const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
-    const parsedData = await parser.parseStringPromise(response.data);
+    // Perform Tally queries in parallel
+    const [stockRes, voucherRes] = await Promise.all([
+      axios.post(liveTallyUrl, STOCK_QUERY_XML, {
+        headers: { 'Content-Type': 'application/xml' },
+        timeout: 5000
+      }).catch(err => {
+        console.error('Tally StockItem query failed:', err.message);
+        return { data: '' };
+      }),
+      axios.post(liveTallyUrl, VOUCHER_QUERY_XML, {
+        headers: { 'Content-Type': 'application/xml' },
+        timeout: 5000
+      }).catch(err => {
+        console.error('Tally Voucher query failed:', err.message);
+        return { data: '' };
+      })
+    ]);
 
-    const rawItems = parsedData?.ENVELOPE?.BODY?.DATA?.COLLECTION?.STOCKITEM || [];
-    const stockItems = Array.isArray(rawItems) ? rawItems : [rawItems];
+    const parser2 = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
+    
+    // Parse Stock Items
+    let stockItems = [];
+    if (stockRes.data) {
+      try {
+        const parsedStock = await parser2.parseStringPromise(stockRes.data);
+        const rawItems = parsedStock?.ENVELOPE?.BODY?.DATA?.COLLECTION?.STOCKITEM || [];
+        stockItems = Array.isArray(rawItems) ? rawItems : [rawItems];
+      } catch (err) {
+        console.error('Failed to parse stock items XML:', err.message);
+      }
+    }
 
-    // 3. Find matched item
+    // Parse Vouchers
+    let vouchers = [];
+    if (voucherRes.data) {
+      try {
+        const parsedVouchers = await parser2.parseStringPromise(voucherRes.data);
+        const rawVouchers = parsedVouchers?.ENVELOPE?.BODY?.DATA?.COLLECTION?.VOUCHER || [];
+        vouchers = Array.isArray(rawVouchers) ? rawVouchers : [rawVouchers];
+      } catch (err) {
+        console.error('Failed to parse vouchers XML:', err.message);
+      }
+    }
+
+    // 3. Find matched items in StockItems
     const targetName = materialName.toLowerCase().trim();
+    const targetWords = targetName.split(/\s+/).filter(w => w.length > 1);
+
     const matchedItem = stockItems.find(item => {
       let name = '';
       if (item) {
-        if (typeof item.NAME === 'string') name = item.NAME;
-        else if (typeof item.NAME === 'object' && item.NAME._) name = item.NAME._;
-        else if (item.$ && item.$.NAME) name = item.$.NAME;
+        const nameKey = Object.keys(item).find(k => k.toLowerCase() === 'name');
+        if (nameKey) {
+          const val = item[nameKey];
+          if (typeof val === 'string') name = val;
+          else if (typeof val === 'object' && val._) name = val._;
+        }
+        if (!name && item.$) {
+          const attrKey = Object.keys(item.$).find(k => k.toLowerCase() === 'name');
+          if (attrKey) {
+            name = item.$[attrKey];
+          }
+        }
       }
       const cleanName = name.trim().toLowerCase();
-      return cleanName === targetName || cleanName.includes(targetName) || targetName.includes(cleanName);
+      if (cleanName === targetName || cleanName.includes(targetName) || targetName.includes(cleanName)) {
+        return true;
+      }
+      if (targetWords.length > 0 && targetWords.every(word => cleanName.includes(word))) {
+        return true;
+      }
+      return false;
     });
 
-    const barcodes = [];
-    if (matchedItem && matchedItem['BATCHALLOCATIONS.LIST']) {
-      const rawAllocations = matchedItem['BATCHALLOCATIONS.LIST'];
-      const allocations = Array.isArray(rawAllocations) ? rawAllocations : [rawAllocations];
+    const gatheredBarcodes = new Map(); // map: barcode -> { barcode, materialName, status: 'Active' }
 
-      // Fetch active barcodes from MongoDB
-      const Barcode = require('../models/Barcode');
-      const activeBcs = await Barcode.find({ status: 'Active' }).select('barcode');
-      const activeBcSet = new Set(activeBcs.map(b => b.barcode));
+    let matchedItemName = '';
+    if (matchedItem) {
+      const nameKey = Object.keys(matchedItem).find(k => k.toLowerCase() === 'name');
+      if (nameKey) {
+        const val = matchedItem[nameKey];
+        if (typeof val === 'string') matchedItemName = val;
+        else if (typeof val === 'object' && val._) matchedItemName = val._;
+      }
+      if (!matchedItemName && matchedItem.$) {
+        const attrKey = Object.keys(matchedItem.$).find(k => k.toLowerCase() === 'name');
+        if (attrKey) {
+          matchedItemName = matchedItem.$[attrKey];
+        }
+      }
+    }
+
+    // Helper to process allocations
+    const processAllocations = (rawAllocations, actualItemName) => {
+      if (!rawAllocations || rawAllocations === '     ' || typeof rawAllocations === 'string') return;
+      const allocations = Array.isArray(rawAllocations) ? rawAllocations : [rawAllocations];
 
       allocations.forEach(alloc => {
         let godownName = '';
-        if (alloc.GODOWNNAME) {
-          godownName = typeof alloc.GODOWNNAME === 'object' ? alloc.GODOWNNAME._ : alloc.GODOWNNAME;
-        }
-        let batchName = '';
-        if (alloc.BATCHNAME) {
-          batchName = typeof alloc.BATCHNAME === 'object' ? alloc.BATCHNAME._ : alloc.BATCHNAME;
+        const godownKey = Object.keys(alloc).find(k => k.toLowerCase() === 'godownname');
+        if (godownKey) {
+          const val = alloc[godownKey];
+          godownName = typeof val === 'object' ? val._ : val;
         }
 
-        if (godownName && godownName.trim().toLowerCase() === 'gokul shirgaon' && batchName && batchName.trim()) {
+        let batchName = '';
+        const batchKey = Object.keys(alloc).find(k => k.toLowerCase() === 'batchname');
+        if (batchKey) {
+          const val = alloc[batchKey];
+          batchName = typeof val === 'object' ? val._ : val;
+        }
+
+        const cleanGodown = godownName ? godownName.trim().toLowerCase() : '';
+        const isStoreGodown = !cleanGodown || 
+                              cleanGodown.includes('gokul') || 
+                              cleanGodown.includes('shirgaon') || 
+                              cleanGodown.includes('main') || 
+                              cleanGodown.includes('primary') || 
+                              cleanGodown.includes('store');
+
+        if (isStoreGodown && batchName && batchName.trim() && batchName.trim().toLowerCase() !== 'primary batch') {
           const bcStr = batchName.trim();
-          // Check if barcode is already Active/Dispatched in MongoDB
-          if (!activeBcSet.has(bcStr)) {
-            barcodes.push({
-              barcode: bcStr,
-              materialName: materialName,
-              status: 'Active'
-            });
+          gatheredBarcodes.set(bcStr, {
+            barcode: bcStr,
+            materialName: actualItemName || matchedItemName || materialName,
+            status: 'Active'
+          });
+        }
+      });
+    };
+
+    // 1. Process batch allocations from opening StockItems
+    if (matchedItem) {
+      let rawAllocations = null;
+      const allocationsKey = Object.keys(matchedItem).find(k => k.toLowerCase() === 'batchallocations.list');
+      if (allocationsKey) {
+        rawAllocations = matchedItem[allocationsKey];
+      }
+      processAllocations(rawAllocations, matchedItemName);
+    }
+
+    // 2. Process batch allocations from transaction Vouchers (Day Book)
+    vouchers.forEach(v => {
+      const entries = [];
+      const addEntry = (list) => {
+        if (!list) return;
+        const array = Array.isArray(list) ? list : [list];
+        entries.push(...array);
+      };
+
+      addEntry(v['INVENTORYENTRIES.LIST'] || v['inventoryentries.list']);
+      addEntry(v['INVENTORYENTRIESIN.LIST'] || v['inventoryentriesin.list']);
+      addEntry(v['INVENTORYENTRIESOUT.LIST'] || v['inventoryentriesout.list']);
+      addEntry(v['ALLINVENTORYENTRIES.LIST'] || v['allinventoryentries.list']);
+
+      entries.forEach(entry => {
+        let entryMatName = '';
+        const nameKey = Object.keys(entry).find(k => k.toLowerCase() === 'stockitemname');
+        if (nameKey) {
+          const val = entry[nameKey];
+          entryMatName = typeof val === 'object' ? val._ : val;
+        }
+
+        if (entryMatName) {
+          const cleanEntryName = entryMatName.trim().toLowerCase();
+          
+          // Match matching stock item names
+          let nameMatches = cleanEntryName === targetName || cleanEntryName.includes(targetName) || targetName.includes(cleanEntryName);
+          if (!nameMatches && targetWords.length > 0 && targetWords.every(word => cleanEntryName.includes(word))) {
+            nameMatches = true;
           }
+
+          if (nameMatches) {
+            let rawAllocations = null;
+            const allocationsKey = Object.keys(entry).find(k => k.toLowerCase() === 'batchallocations.list');
+            if (allocationsKey) {
+              rawAllocations = entry[allocationsKey];
+            }
+            processAllocations(rawAllocations, entryMatName);
+          }
+        }
+      });
+    });
+
+    // 3. Filter out barcodes already Active or pending_acceptance in MongoDB
+    const barcodesList = Array.from(gatheredBarcodes.values());
+    const barcodes = [];
+
+    if (barcodesList.length > 0) {
+      const Barcode = require('../models/Barcode');
+      const activeBcs = await Barcode.find({ 
+        status: { $in: ['Active', 'pending_acceptance'] } 
+      }).select('barcode');
+      const activeBcSet = new Set(activeBcs.map(b => b.barcode));
+
+      barcodesList.forEach(item => {
+        if (!activeBcSet.has(item.barcode)) {
+          barcodes.push(item);
         }
       });
     }
