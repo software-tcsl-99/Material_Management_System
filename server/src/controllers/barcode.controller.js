@@ -91,6 +91,38 @@ exports.getBarcodesByTransaction = async (req, res) => {
   }
 };
 
+const checkBarcodePendingActions = async (barcodeStr) => {
+  const normalized = barcodeStr ? barcodeStr.trim().toUpperCase() : '';
+  if (!normalized) return null;
+
+  // 1. Check Split
+  const SplitRequest = require('../models/SplitRequest');
+  const pendingSplit = await SplitRequest.findOne({ barcode: normalized, status: 'pending' });
+  if (pendingSplit) return 'An exchange, split, return, transfer, or close request is already pending for this barcode.';
+
+  // 2. Check Exchange
+  const ExchangeRequest = require('../models/ExchangeRequest');
+  const pendingExchange = await ExchangeRequest.findOne({ oldBarcode: normalized, status: 'pending' });
+  if (pendingExchange) return 'An exchange, split, return, transfer, or close request is already pending for this barcode.';
+
+  // 3. Check Transfer
+  const Transfer = require('../models/Transfer');
+  const pendingTransfer = await Transfer.findOne({ barcode: normalized, status: 'pending' });
+  if (pendingTransfer) return 'An exchange, split, return, transfer, or close request is already pending for this barcode.';
+
+  // 4. Check Return
+  const Return = require('../models/Return');
+  const pendingReturn = await Return.findOne({ barcode: normalized, status: { $in: ['pending', 'handler_assigned', 'collected', 'store_received'] } });
+  if (pendingReturn) return 'An exchange, split, return, transfer, or close request is already pending for this barcode.';
+
+  // 5. Check Close
+  const CloseRequest = require('../models/CloseRequest');
+  const pendingClose = await CloseRequest.findOne({ barcode: normalized, status: { $in: ['pending', 'pending_accounts_approval', 'pending_store_acceptance'] } });
+  if (pendingClose) return 'An exchange, split, return, transfer, or close request is already pending for this barcode.';
+
+  return null;
+};
+
 /**
  * Transfer barcode to another user
  */
@@ -101,7 +133,12 @@ exports.transferBarcode = async (req, res) => {
 
     const bc = await Barcode.findOne({ barcode: normalizedBarcode }).populate('owner');
     if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
-    if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+    if (bc.status !== 'Active' && bc.status !== 'Exchanged') return res.status(400).json({ message: 'Barcode is not active.' });
+
+    const pendingError = await checkBarcodePendingActions(normalizedBarcode);
+    if (pendingError) {
+      return res.status(400).json({ message: pendingError });
+    }
 
     // Validate that the parent transaction is fully delivered and received by the requester
     if (bc.transactionId) {
@@ -109,12 +146,6 @@ exports.transferBarcode = async (req, res) => {
       if (txn && !['received', 'active', 'partially_returned', 'closed'].includes(txn.status)) {
         return res.status(400).json({ message: 'Cannot transfer barcode before the material is fully delivered and received.' });
       }
-    }
-
-    // Validate that no other transfer request is currently active/in-progress for this barcode
-    const activeTransfer = await Transfer.findOne({ barcode: normalizedBarcode, status: 'pending' });
-    if (activeTransfer) {
-      return res.status(400).json({ message: 'Cannot transfer barcode while another transfer is active.' });
     }
 
     if (bc.owner._id.toString() !== req.user._id.toString() && req.user.role !== 'super_admin') {
@@ -451,8 +482,13 @@ exports.returnBarcode = async (req, res) => {
 
     const bc = await Barcode.findOne({ barcode: normalizedBarcode });
     if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
-    if (bc.status !== 'Active' && bc.status !== 'Exchanged') {
-      return res.status(400).json({ message: 'Barcode is not active or eligible for return.' });
+    if (bc.status !== 'Active') {
+      return res.status(400).json({ message: 'Barcode is not active.' });
+    }
+
+    const pendingError = await checkBarcodePendingActions(normalizedBarcode);
+    if (pendingError) {
+      return res.status(400).json({ message: pendingError });
     }
 
     // Validate that the parent transaction is fully delivered and received by the requester
@@ -461,12 +497,6 @@ exports.returnBarcode = async (req, res) => {
       if (txn && !['received', 'active', 'partially_returned', 'closed'].includes(txn.status)) {
         return res.status(400).json({ message: 'Cannot return barcode before the material is fully delivered and received.' });
       }
-    }
-
-    // Validate that no return request is currently active/in-progress for this barcode
-    const activeReturn = await Return.findOne({ barcode: normalizedBarcode, status: { $nin: ['completed', 'rejected'] } });
-    if (activeReturn) {
-      return res.status(400).json({ message: 'Cannot return barcode while a return request is active.' });
     }
 
     const status = returnHandler ? 'handler_assigned' : 'pending';
@@ -889,7 +919,12 @@ exports.createSplitRequest = async (req, res) => {
     const normalizedBarcode = barcode ? barcode.trim().toUpperCase() : '';
     const bc = await Barcode.findOne({ barcode: normalizedBarcode });
     if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
-    if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+    if (bc.status !== 'Active' && bc.status !== 'Exchanged') return res.status(400).json({ message: 'Barcode is not active.' });
+
+    const pendingError = await checkBarcodePendingActions(normalizedBarcode);
+    if (pendingError) {
+      return res.status(400).json({ message: pendingError });
+    }
 
     // Validate that the parent transaction is fully delivered and received by the requester
     if (bc.transactionId) {
@@ -1867,7 +1902,12 @@ exports.createCloseRequest = async (req, res) => {
     const Barcode = require('../models/Barcode');
     const bc = await Barcode.findOne({ barcode });
     if (!bc) return res.status(404).json({ message: 'Barcode not found.' });
-    if (bc.status !== 'Active') return res.status(400).json({ message: 'Barcode is not active.' });
+    if (bc.status !== 'Active' && bc.status !== 'Exchanged') return res.status(400).json({ message: 'Barcode is not active.' });
+
+    const pendingError = await checkBarcodePendingActions(barcode);
+    if (pendingError) {
+      return res.status(400).json({ message: pendingError });
+    }
 
     // Validate ownership
     if (bc.owner.toString() !== req.user._id.toString()) {
@@ -1876,7 +1916,7 @@ exports.createCloseRequest = async (req, res) => {
 
 
 
-    const { managementApprover } = req.body;
+    const { managementApprover, customerName } = req.body;
 
     const CloseRequest = require('../models/CloseRequest');
     const closeReq = await CloseRequest.create({
@@ -1887,6 +1927,7 @@ exports.createCloseRequest = async (req, res) => {
       remarks,
       requester: req.user._id,
       managementApprover: ['DC FOC', 'Invoice'].includes(documentType) ? managementApprover : undefined,
+      customerName: documentType === 'DC FOC' ? customerName : undefined,
       status: 'pending'
     });
 
@@ -1896,6 +1937,7 @@ exports.createCloseRequest = async (req, res) => {
       remarks,
       requester: req.user._id,
       managementApprover: ['DC FOC', 'Invoice'].includes(documentType) ? managementApprover : undefined,
+      customerName: documentType === 'DC FOC' ? customerName : undefined,
       status: 'pending'
     };
 
@@ -2215,6 +2257,22 @@ exports.handleCloseRequest = async (req, res) => {
       if (action === 'reject') {
         return res.status(400).json({ message: 'Store cannot reject conversion requests. Store can only accept them.' });
       } else if (action === 'approve') {
+        let tallyVoucherNum = null;
+        if (closeReq.documentType === 'DC FOC') {
+          try {
+            const tallyDcFocController = require('./tallyDcFoc.controller');
+            tallyVoucherNum = await tallyDcFocController.postTallyDeliveryNote(
+              closeReq.barcode,
+              closeReq.customerName || 'Consumer',
+              closeReq.documentNumber
+            );
+            console.log(`Tally Delivery Note created: ${tallyVoucherNum} for barcode ${closeReq.barcode}`);
+          } catch (tallyErr) {
+            console.error('Failed to create Tally Delivery Note voucher:', tallyErr.message);
+            return res.status(400).json({ message: `Tally integration error: ${tallyErr.message}` });
+          }
+        }
+
         closeReq.status = 'approved';
         closeReq.approvedBy = req.user._id;
         closeReq.approvedAt = new Date();
@@ -2224,7 +2282,7 @@ exports.handleCloseRequest = async (req, res) => {
         bc.history.push({
           action: 'Closed',
           user: req.user._id,
-          remarks: `Store accepted and closed RDC, converting to ${closeReq.documentType} (${closeReq.documentNumber})`
+          remarks: `Store accepted and closed RDC, converting to ${closeReq.documentType} (${closeReq.documentNumber})${tallyVoucherNum ? ` (Tally DN: ${tallyVoucherNum})` : ''}`
         });
         await bc.save();
 
@@ -2299,16 +2357,14 @@ exports.createExchangeRequest = async (req, res) => {
     if (!oldBc) return res.status(404).json({ message: 'Old barcode not found.' });
     if (oldBc.status !== 'Active') return res.status(400).json({ message: 'Only active barcodes can be exchanged.' });
 
+    const pendingError = await checkBarcodePendingActions(normalizedOld);
+    if (pendingError) {
+      return res.status(400).json({ message: pendingError });
+    }
+
     // Verify ownership
     if (oldBc.owner?.toString() !== req.user._id.toString() && req.user.role !== 'super_admin') {
       return res.status(403).json({ message: 'You are not the owner of this barcode.' });
-    }
-
-    const ExchangeRequest = require('../models/ExchangeRequest');
-    // Check if there is already a pending exchange request for this old barcode
-    const activeExchange = await ExchangeRequest.findOne({ oldBarcode: normalizedOld, status: 'pending' });
-    if (activeExchange) {
-      return res.status(400).json({ message: 'An exchange request is already pending for this barcode.' });
     }
 
     const exchangeReq = await ExchangeRequest.create({
@@ -2456,7 +2512,7 @@ exports.handleExchangeRequest = async (req, res) => {
       }
 
       // 2. Create the new barcode document as Active in Barcode collection
-      await Barcode.create({
+      const newBcDoc = await Barcode.create({
         barcode: normalizedNew,
         transactionId: exchangeReq.transactionId,
         transaction: oldBc.transaction,
@@ -2483,6 +2539,116 @@ exports.handleExchangeRequest = async (req, res) => {
           timestamp: new Date()
         }]
       });
+
+      // Post Tally Autofill Stock Journal for exchange barcode
+      try {
+        const tallyController = require('./tally.controller');
+        const parentMaterial = originalTxn ? originalTxn.materials.find(
+          m => m.name.toLowerCase() === oldBc.materialName.toLowerCase()
+        ) : null;
+
+        const employeeGodown = requesterUser.fullName || 'Main Location';
+        const materialInfo = {
+          materialName: oldBc.materialName,
+          unit: parentMaterial?.unit || 'pcs',
+          price: parentMaterial?.price || 0
+        };
+
+        let oldUnit = parentMaterial?.unit || 'pcs';
+        let oldPrice = parentMaterial?.price || 0;
+        let oldTallyName = oldBc.materialName;
+
+        try {
+          const tallyDetails = await tallyController.getBarcodeTallyDetails(oldBc.barcode);
+          if (tallyDetails) {
+            if (tallyDetails.itemName) {
+              oldTallyName = tallyDetails.itemName;
+              console.log(`Resolved live Tally stock item name for old barcode ${oldBc.barcode}: ${oldTallyName}`);
+            }
+            if (tallyDetails.unit) {
+              oldUnit = tallyDetails.unit;
+              console.log(`Resolved live Tally unit for old barcode ${oldBc.barcode}: ${oldUnit}`);
+            }
+          }
+        } catch (tallyDetailErr) {
+          console.warn('Failed to fetch old barcode details from Tally live (using DB fallback):', tallyDetailErr.message);
+        }
+
+        // Use resolved Tally values
+        oldBc.materialName = oldTallyName;
+        oldBc.unit = oldUnit;
+        oldBc.price = oldPrice;
+
+        newBcDoc.materialName = oldTallyName;
+        newBcDoc.unit = oldUnit;
+        newBcDoc.price = oldPrice;
+
+        const exchangeVoucherNum = await tallyController.createTallyExchangeStockJournal(
+          exchangeReq._id.toString(),
+          oldBc,
+          newBcDoc,
+          materialInfo,
+          employeeGodown
+        );
+        if (exchangeVoucherNum) {
+          console.log(`Tally Exchange Stock Journal voucher created: ${exchangeVoucherNum} for exchange ${exchangeReq._id}`);
+        } else {
+          throw new Error('Tally Prime rejected stock journal creation. Please verify item and godown existence in Tally.');
+        }
+      } catch (tallyErr) {
+        console.error('Failed to create Tally Autofill Stock Journal voucher for exchange:', tallyErr.message);
+
+        // Revert DB updates for transactional integrity
+        try {
+          await Barcode.deleteOne({ _id: newBcDoc._id });
+
+          oldBc.status = 'Active';
+          oldBc.history.pop();
+          oldBc.history.pop();
+          await oldBc.save();
+
+          if (originalTxn) {
+            originalTxn.materials = originalTxn.materials.map(mat => {
+              if (mat.barcodes) {
+                const containsNew = mat.barcodes.some(b => {
+                  const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+                  return bStr === normalizedNew;
+                });
+                if (containsNew) {
+                  mat.barcodes = mat.barcodes.filter(b => {
+                    const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+                    return bStr !== normalizedNew;
+                  });
+                  mat.barcodes = mat.barcodes.map(b => {
+                    const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+                    if (bStr === exchangeReq.oldBarcode) {
+                      if (typeof b === 'object') {
+                        b.status = 'Active';
+                      }
+                    }
+                    return b;
+                  });
+                  mat.quantity = Math.max(0, (mat.quantity || 1) - 1);
+                  originalTxn.totalItems = Math.max(0, (originalTxn.totalItems || 1) - 1);
+                }
+              }
+              return mat;
+            });
+            originalTxn.timeline.pop();
+            await originalTxn.save();
+          }
+
+          exchangeReq.status = 'pending';
+          exchangeReq.newBarcode = undefined;
+          exchangeReq.approvedBy = undefined;
+          exchangeReq.approvedAt = undefined;
+          await exchangeReq.save();
+        } catch (revertErr) {
+          console.error('Failed to revert DB updates on Tally failure:', revertErr.message);
+        }
+
+        return res.status(400).json({ message: `Tally integration error: ${tallyErr.message}` });
+      }
 
       // Notify requester
       await createNotification(

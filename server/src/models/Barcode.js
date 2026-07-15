@@ -113,6 +113,7 @@ const barcodeSchema = new mongoose.Schema(
       remarks: { type: String },
       requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       managementApprover: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      customerName: { type: String },
       status: { type: String, enum: ['pending', 'pending_accounts_approval', 'pending_store_acceptance', 'approved', 'rejected'], default: 'pending' },
       rejectionReason: { type: String }
     }

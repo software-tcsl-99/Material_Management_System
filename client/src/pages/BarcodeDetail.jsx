@@ -31,6 +31,7 @@ export default function BarcodeDetail() {
   const [barcodeCloseSubmitting, setBarcodeCloseSubmitting] = useState(false);
   const [managementUsers, setManagementUsers] = useState([]);
   const [selectedManagementId, setSelectedManagementId] = useState('');
+  const [selectedCustomerName, setSelectedCustomerName] = useState('');
 
   // Exchange Request modal states
   const [exchangeModalOpen, setExchangeModalOpen] = useState(false);
@@ -77,6 +78,15 @@ export default function BarcodeDetail() {
       const res = await api.get('/auth/me');
       return res.data.user;
     }
+  });
+
+  const { data: tallyCustomersData } = useQuery({
+    queryKey: ['tallyCustomers'],
+    queryFn: async () => {
+      const res = await api.get('/barcodes/tally/customers');
+      return res.data.customers || [];
+    },
+    enabled: barcodeCloseModal && barcodeCloseDocType === 'DC FOC'
   });
 
   useEffect(() => {
@@ -266,7 +276,7 @@ export default function BarcodeDetail() {
   const addPhoto = (url, lat, lng, address, date, source) => {
     if (!url || typeof url !== 'string' || seenPhotoUrls.has(url)) return;
     seenPhotoUrls.add(url);
-    
+
     let cleanLat = parseFloat(lat);
     let cleanLng = parseFloat(lng);
     if (isNaN(cleanLat) || isNaN(cleanLng)) {
@@ -439,6 +449,10 @@ export default function BarcodeDetail() {
       alert('Please select a management approver.');
       return;
     }
+    if (barcodeCloseDocType === 'DC FOC' && !selectedCustomerName) {
+      alert('Please select a customer.');
+      return;
+    }
     setBarcodeCloseSubmitting(true);
     try {
       await api.post('/barcodes/close-request', {
@@ -446,7 +460,8 @@ export default function BarcodeDetail() {
         documentType: barcodeCloseDocType,
         documentNumber: barcodeCloseDocNumber,
         remarks: barcodeCloseRemarks,
-        managementApprover: ['DC FOC', 'Invoice'].includes(barcodeCloseDocType) ? selectedManagementId : undefined
+        managementApprover: ['DC FOC', 'Invoice'].includes(barcodeCloseDocType) ? selectedManagementId : undefined,
+        customerName: barcodeCloseDocType === 'DC FOC' ? selectedCustomerName : undefined
       });
       alert('Close request submitted successfully!');
       setBarcodeCloseModal(false);
@@ -560,15 +575,19 @@ export default function BarcodeDetail() {
                 <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${barcode}/split`)}>
                   Split Serial
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${barcode}/return`)}>
-                  Return Request
-                </Button>
+                {bc.status?.toUpperCase() !== 'EXCHANGED' && (
+                  <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${barcode}/return`)}>
+                    Return Request
+                  </Button>
+                )}
                 <Button size="sm" variant="outline" onClick={() => {
-                  setBarcodeCloseDocType('DC Internal');
-                  setBarcodeCloseDocNumber('');
-                  setBarcodeCloseRemarks('');
-                  setBarcodeCloseModal(true);
-                }}>
+                   setBarcodeCloseDocType('DC Internal');
+                   setBarcodeCloseDocNumber('');
+                   setBarcodeCloseRemarks('');
+                   setSelectedManagementId('');
+                   setSelectedCustomerName('');
+                   setBarcodeCloseModal(true);
+                 }}>
                   Convert to DC
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => {
@@ -1179,6 +1198,23 @@ export default function BarcodeDetail() {
                       <option value="">Select Management Admin...</option>
                       {managementUsers.map(u => (
                         <option key={u.value} value={u.value}>{u.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {barcodeCloseDocType === 'DC FOC' && (
+                  <div>
+                    <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Select Tally Customer *</label>
+                    <select
+                      value={selectedCustomerName}
+                      onChange={(e) => setSelectedCustomerName(e.target.value)}
+                      required
+                      className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
+                    >
+                      <option value="">Select Customer...</option>
+                      {tallyCustomersData?.map(cust => (
+                        <option key={cust} value={cust}>{cust}</option>
                       ))}
                     </select>
                   </div>

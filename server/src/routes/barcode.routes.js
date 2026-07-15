@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const barcodeController = require('../controllers/barcode.controller');
 const barcodeExportController = require('../controllers/barcodeExport.controller');
+const tallyDcFocController = require('../controllers/tallyDcFoc.controller');
 const auth = require('../middleware/auth');
 const { requirePermission } = require('../middleware/rbac');
 
@@ -27,6 +28,7 @@ router.put('/return/:returnId/assign-handler', barcodeController.assignReturnHan
 router.post('/split-request', requirePermission('material:view'), barcodeController.createSplitRequest);
 router.post('/approve-split', requirePermission('approval:approve'), barcodeController.approveSplitRequest);
 router.post('/close-request', requirePermission('barcode:view'), barcodeController.createCloseRequest);
+router.get('/tally/customers', requirePermission('barcode:view'), tallyDcFocController.getTallyCustomers);
 router.post('/close-requests/:requestId/respond', requirePermission('approval:approve'), barcodeController.handleCloseRequest);
 router.get('/exchange-requests/pending', requirePermission('approval:view'), barcodeController.getPendingExchangeRequests);
 router.post('/exchange-request', requirePermission('material:view'), barcodeController.createExchangeRequest);

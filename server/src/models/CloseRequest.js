@@ -15,6 +15,7 @@ const closeRequestSchema = new mongoose.Schema(
     },
     managementApprover: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     invoiceUrl: { type: String },
+    customerName: { type: String },
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedAt: { type: Date },
     rejectionReason: { type: String, default: '' },

@@ -1255,3 +1255,274 @@ exports.getBarcodeTallyDetails = async (barcodeStr) => {
     return null;
   }
 };
+
+/**
+ * Create a Tally "Autofill Stock Journal" voucher for an exchange action.
+ * Moves 1 unit of old barcode out of the employee's godown (source)
+ * and produces:
+ *   1) 1 unit of old barcode under the employee's godown (destination)
+ *   2) 1 unit of new barcode under the employee's godown (destination)
+ *
+ * @param {string} exchangeId - Unique exchange request ID for narration tracking
+ * @param {object} oldBc - Old barcode details { materialName, barcode }
+ * @param {object} newBcDoc - New barcode details { materialName, barcode }
+ * @param {object} parentMaterial - Parent material info { unit, price }
+ * @param {string} employeeGodown - The employee name / godown name
+ * @returns {string|undefined} - The Tally voucher number if successfully created
+ */
+exports.createTallyExchangeStockJournal = async (exchangeId, oldBc, newBcDoc, parentMaterial, employeeGodown) => {
+  try {
+    const liveTallyUrl = process.env.TALLY_LIVE_URL || 'http://localhost:9000';
+    if (!liveTallyUrl) return;
+
+    // 1. Fetch active company
+    const COMP_QUERY = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>ActiveCompanies</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="ActiveCompanies" ISINITIALIZE="Yes">
+                <TYPE>Company</TYPE>
+                <FETCH>Name</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    const compResponse = await axios.post(liveTallyUrl, COMP_QUERY, {
+      headers: { 'Content-Type': 'text/xml' },
+      timeout: 3000
+    });
+
+    const parser = new xml2js.Parser({ explicitArray: false });
+    const parsedComp = await parser.parseStringPromise(compResponse.data);
+    const activeCompanyObj = parsedComp?.ENVELOPE?.BODY?.DATA?.COLLECTION?.COMPANY;
+    let companyName = '';
+    if (activeCompanyObj) {
+      if (typeof activeCompanyObj === 'string') {
+        companyName = activeCompanyObj;
+      } else if (typeof activeCompanyObj === 'object') {
+        if (activeCompanyObj.NAME) {
+          companyName = typeof activeCompanyObj.NAME === 'object' ? activeCompanyObj.NAME._ : activeCompanyObj.NAME;
+        } else if (activeCompanyObj.$ && activeCompanyObj.$.NAME) {
+          companyName = activeCompanyObj.$.NAME;
+        }
+      }
+    }
+
+    if (!companyName) {
+      console.warn(`No active Tally company found. Skipping Exchange Stock Journal for ${exchangeId}.`);
+      return;
+    }
+
+    // 2. Format Date (YYYYMMDD) - Use 1st day of the month for Tally Educational Mode date compatibility
+    const today = new Date();
+    const YYYY = today.getFullYear();
+    const MM = String(today.getMonth() + 1).padStart(2, '0');
+    const dateStr = `${YYYY}${MM}01`;
+
+    // 3. Escape XML helper
+    const esc = (str) => (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const oldName = esc(oldBc.materialName);
+    const oldBarcode = esc(oldBc.barcode);
+    const newName = esc(newBcDoc.materialName || oldBc.materialName);
+    const newBarcode = esc(newBcDoc.barcode);
+
+    // Old unit and price details
+    const oUnit = esc(oldBc.unit || parentMaterial?.unit || 'Nos');
+    const oPrice = oldBc.price !== undefined && oldBc.price !== null ? oldBc.price : (parentMaterial?.price || 0);
+    const oAmount = oPrice;
+
+    // New unit and price details
+    const nUnit = esc(newBcDoc.unit || parentMaterial?.unit || 'Nos');
+    const nPrice = newBcDoc.price !== undefined && newBcDoc.price !== null ? newBcDoc.price : (parentMaterial?.price || 0);
+    const nAmount = nPrice;
+
+    const godown = esc(employeeGodown || 'GOKUL SHIRGAON');
+
+    // Consumption (Outward): old barcode consumed (1 unit)
+    const consumptionLines = `
+    <INVENTORYENTRIESOUT.LIST>
+      <STOCKITEMNAME>${oldName}</STOCKITEMNAME>
+      <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+      <RATE>${oPrice}</RATE>
+      <AMOUNT>${oAmount}</AMOUNT>
+      <ACTUALQTY>-1 ${oUnit}</ACTUALQTY>
+      <BILLEDQTY>-1 ${oUnit}</BILLEDQTY>
+      <BATCHALLOCATIONS.LIST>
+        <BATCHNAME>${oldBarcode}</BATCHNAME>
+        <GODOWNNAME>${godown}</GODOWNNAME>
+        <RATE>${oPrice}</RATE>
+        <AMOUNT>${oAmount}</AMOUNT>
+        <ACTUALQTY>-1 ${oUnit}</ACTUALQTY>
+        <BILLEDQTY>-1 ${oUnit}</BILLEDQTY>
+      </BATCHALLOCATIONS.LIST>
+    </INVENTORYENTRIESOUT.LIST>`;
+
+    // Production (Inward): old barcode (1 unit) + new barcode (1 unit) produced
+    const productionLines = `
+    <INVENTORYENTRIESIN.LIST>
+      <STOCKITEMNAME>${oldName}</STOCKITEMNAME>
+      <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+      <RATE>${oPrice}</RATE>
+      <AMOUNT>-${oAmount}</AMOUNT>
+      <ACTUALQTY>1 ${oUnit}</ACTUALQTY>
+      <BILLEDQTY>1 ${oUnit}</BILLEDQTY>
+      <BATCHALLOCATIONS.LIST>
+        <BATCHNAME>${oldBarcode}</BATCHNAME>
+        <GODOWNNAME>${godown}</GODOWNNAME>
+        <RATE>${oPrice}</RATE>
+        <AMOUNT>-${oAmount}</AMOUNT>
+        <ACTUALQTY>1 ${oUnit}</ACTUALQTY>
+        <BILLEDQTY>1 ${oUnit}</BILLEDQTY>
+      </BATCHALLOCATIONS.LIST>
+    </INVENTORYENTRIESIN.LIST>
+    <INVENTORYENTRIESIN.LIST>
+      <STOCKITEMNAME>${newName}</STOCKITEMNAME>
+      <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+      <RATE>${nPrice}</RATE>
+      <AMOUNT>-${nAmount}</AMOUNT>
+      <ACTUALQTY>1 ${nUnit}</ACTUALQTY>
+      <BILLEDQTY>1 ${nUnit}</BILLEDQTY>
+      <BATCHALLOCATIONS.LIST>
+        <BATCHNAME>${newBarcode}</BATCHNAME>
+        <GODOWNNAME>${godown}</GODOWNNAME>
+        <RATE>${nPrice}</RATE>
+        <AMOUNT>-${nAmount}</AMOUNT>
+        <ACTUALQTY>1 ${nUnit}</ACTUALQTY>
+        <BILLEDQTY>1 ${nUnit}</BILLEDQTY>
+      </BATCHALLOCATIONS.LIST>
+    </INVENTORYENTRIESIN.LIST>`;
+
+    const xmlPayload = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Import</TALLYREQUEST>
+        <TYPE>Data</TYPE>
+        <ID>Vouchers</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVCURRENTCOMPANY>${esc(companyName)}</SVCURRENTCOMPANY>
+          </STATICVARIABLES>
+        </DESC>
+        <DATA>
+          <TALLYMESSAGE xmlns:UDF="TallyUDF">
+            <VOUCHER VCHTYPE="Autofill Stock Journal" ACTION="Create">
+              <DATE>${dateStr}</DATE>
+              <VOUCHERTYPENAME>Autofill Stock Journal</VOUCHERTYPENAME>
+              <NARRATION>Exchange barcode exchangeId ${exchangeId} from old ${oldBc.barcode} to new ${newBcDoc.barcode}</NARRATION>
+              ${productionLines}
+              ${consumptionLines}
+            </VOUCHER>
+          </TALLYMESSAGE>
+        </DATA>
+      </BODY>
+    </ENVELOPE>`;
+
+    console.log(`Posting Tally Autofill Stock Journal for exchange ${exchangeId}: ${oldBc.barcode} -> ${newBcDoc.barcode}`);
+    const voucherRes = await axios.post(liveTallyUrl, xmlPayload, {
+      headers: { 'Content-Type': 'text/xml' },
+      timeout: 5000
+    });
+    console.log(`Tally Autofill Stock Journal response for exchange ${exchangeId}:`, voucherRes.data);
+
+    const parsedImport = await parser.parseStringPromise(voucherRes.data);
+    const importResult = parsedImport?.ENVELOPE?.BODY?.DATA?.IMPORTRESULT;
+    if (importResult) {
+      const lineError = importResult.LINEERROR;
+      if (lineError) {
+        const errorText = typeof lineError === 'string' ? lineError : (lineError?._ || JSON.stringify(lineError));
+        throw new Error(errorText);
+      }
+      const errorsCount = parseTallyNumber(importResult.ERRORS);
+      const exceptionsCount = parseTallyNumber(importResult.EXCEPTIONS);
+      if (errorsCount > 0 || exceptionsCount > 0) {
+        throw new Error(`Tally import failed with ${errorsCount} errors and ${exceptionsCount} exceptions.`);
+      }
+    }
+
+    // Extract last created voucher ID if present from import metadata as a reliable fallback
+    let lastCreatedVchId = '';
+    const cmpInfoEx = parsedImport?.ENVELOPE?.BODY?.DESC?.CMPINFOEX;
+    if (cmpInfoEx && cmpInfoEx.IDINFO && cmpInfoEx.IDINFO.LASTCREATEDVCHID) {
+      lastCreatedVchId = typeof cmpInfoEx.IDINFO.LASTCREATEDVCHID === 'object'
+        ? cmpInfoEx.IDINFO.LASTCREATEDVCHID._
+        : cmpInfoEx.IDINFO.LASTCREATEDVCHID;
+    }
+
+    // Wait 500ms for Tally to persist, then query for the auto-generated Voucher Number
+    await new Promise(resolve => setTimeout(resolve, 500));
+    try {
+      const queryXml = `
+      <ENVELOPE>
+        <HEADER>
+          <VERSION>1</VERSION>
+          <TALLYREQUEST>Export</TALLYREQUEST>
+          <TYPE>Collection</TYPE>
+          <ID>MatchedVouchers</ID>
+        </HEADER>
+        <BODY>
+          <DESC>
+            <STATICVARIABLES>
+              <SVCURRENTCOMPANY>${esc(companyName)}</SVCURRENTCOMPANY>
+              <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+            <TDL>
+              <TDLMESSAGE>
+                <COLLECTION NAME="MatchedVouchers" ISINITIALIZE="Yes">
+                  <TYPE>Voucher</TYPE>
+                  <FETCH>VoucherNumber</FETCH>
+                  <FILTER>NarrationFilter</FILTER>
+                </COLLECTION>
+                <SYSTEM NAME="NarrationFilter" TYPE="Formula">$Narration contains "${exchangeId}"</SYSTEM>
+              </TDLMESSAGE>
+            </TDL>
+          </DESC>
+        </BODY>
+      </ENVELOPE>`;
+
+      const queryRes = await axios.post(liveTallyUrl, queryXml, {
+        headers: { 'Content-Type': 'application/xml' },
+        timeout: 3000
+      });
+
+      const parsedQuery = await parser.parseStringPromise(queryRes.data);
+      const rawVoucher = parsedQuery?.ENVELOPE?.BODY?.DATA?.COLLECTION?.VOUCHER;
+      const vouchers = Array.isArray(rawVoucher) ? rawVoucher : (rawVoucher ? [rawVoucher] : []);
+      if (vouchers.length > 0) {
+        const vNumObj = vouchers[vouchers.length - 1].VOUCHERNUMBER;
+        const vNum = typeof vNumObj === 'string' ? vNumObj : (vNumObj?._ || '');
+        if (vNum) {
+          console.log(`Extracted Tally exchange voucher number for ${exchangeId}: ${vNum}`);
+          return vNum;
+        }
+      }
+    } catch (queryErr) {
+      console.error(`Failed to query voucher number from Tally for exchange ${exchangeId}:`, queryErr.message);
+    }
+
+    // Fallback if import succeeded but the voucher number query timed out or failed
+    const fallbackVchNum = lastCreatedVchId ? `Tally-ID-${lastCreatedVchId}` : 'Tally-SUCCESS';
+    console.log(`Fallback Tally voucher number assigned: ${fallbackVchNum}`);
+    return fallbackVchNum;
+  } catch (err) {
+    console.error(`Failed to post Exchange Stock Journal to Tally:`, err.message);
+    throw err;
+  }
+};
