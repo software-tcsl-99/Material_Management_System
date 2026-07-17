@@ -23,6 +23,9 @@ const tallyRoutes = require('./routes/tally.routes');
 
 const app = express();
 
+// Enable trust proxy for Render / reverse proxy support
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(
   helmet({
