@@ -58,6 +58,18 @@ const TransactionListPage = () => {
       const response = await api.get('/transactions', { params });
       let data = response.data.data || [];
 
+      // Filter out completed handler transactions for the handler
+      data = data.filter(t => {
+        const isHandler = (t.handler?._id || t.handler)?.toString() === user?._id?.toString();
+        const isRequester = (t.requester?._id || t.requester || t.sender?._id || t.sender)?.toString() === user?._id?.toString();
+        if (isHandler && !isRequester) {
+          // Sourcing handler role is complete if status is dispatched or later
+          const isComplete = ['dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'].includes(t.status);
+          if (isComplete) return false;
+        }
+        return true;
+      });
+
       // Manual filtering for in-progress statuses if needed
       if (activeTab === 'In Progress') {
         // Find any transaction that is in workflow states between submission and completion

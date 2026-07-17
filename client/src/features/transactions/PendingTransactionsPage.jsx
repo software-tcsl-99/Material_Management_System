@@ -1,18 +1,18 @@
 import {
   ArrowLeft,
+  Camera,
   Clock,
   Search,
-  X,
-  Camera
+  X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
+import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
 import useActiveRole from '../../hooks/useActiveRole';
 import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
-import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
 
 const PendingTransactionsPage = () => {
   const navigate = useNavigate();
@@ -52,11 +52,11 @@ const PendingTransactionsPage = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      
+
       const { data } = await api.post('/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      
+
       setTransferPhoto(data.url);
     } catch (err) {
       setActionError('Photo upload failed: ' + (err.response?.data?.message || err.message));
@@ -271,15 +271,15 @@ const PendingTransactionsPage = () => {
 
       const [txnRes, transferRes, splitRes, returnRes, closeRes, exchangeRes] = await Promise.all([
         api.get('/transactions'),
-        api.get('/barcodes/pending/transfers'),
-        isStore ? api.get('/barcodes/split-requests/pending') : Promise.resolve({ data: { data: [] } }),
-        api.get('/barcodes/returns/pending'),
-        isCloseReqEligible ? api.get('/barcodes/close-requests/pending') : Promise.resolve({ data: { data: [] } }),
-        isStore ? api.get('/barcodes/exchange-requests/pending') : Promise.resolve({ data: { data: [] } })
+        api.get('/barcodes/list/transfers'),
+        api.get('/barcodes/list/splits'),
+        api.get('/barcodes/list/returns'),
+        api.get('/barcodes/list/close-requests'),
+        api.get('/barcodes/list/exchange-requests')
       ]);
 
       const allTxns = txnRes.data.data || [];
-      const allTransfers = transferRes.data.transfers || [];
+      const allTransfers = transferRes.data.transfers || transferRes.data.data || [];
       const allSplits = splitRes.data.data || [];
       const allReturns = returnRes.data.data || [];
       const allCloses = closeRes.data.data || [];
@@ -363,8 +363,55 @@ const PendingTransactionsPage = () => {
       .catch(err => console.error('Error loading employees:', err));
   }, [activeRole.role, activeRole.adminType]);
 
+  // Helper to check if a transaction is pending action for the current user/role
+  const checkIsPending = (t) => {
+    const isHandlerDeliveryPending = t.handler && ['store_accepted', 'handler_assigned', 'dispatched'].includes(t.status);
+    if (isHandlerDeliveryPending) {
+      if (t.status === 'handler_assigned') {
+        const isMyHandler = t.handler && (t.handler?._id === user?._id || t.handler === user?._id);
+        const isPendingTarget = t.pendingHandlerTransfer?.status === 'pending' && (t.pendingHandlerTransfer?.toHandler?._id === user?._id || t.pendingHandlerTransfer?.toHandler === user?._id);
+        if (!isMyHandler && !isPendingTarget) return false;
+      } else if (t.status === 'store_accepted') {
+        const isStore = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
+        const isMyHandler = t.handler && (t.handler?._id === user?._id || t.handler === user?._id);
+        if (!isStore && !isMyHandler) return false;
+      } else if (t.status === 'dispatched') {
+        if (t.rejectedDeliveryStatus === 'rejected_by_requester') {
+          const isMyHandler = t.handler && (t.handler?._id === user?._id || t.handler === user?._id);
+          const isPendingTarget = t.pendingHandlerTransfer?.status === 'pending' && (t.pendingHandlerTransfer?.toHandler?._id === user?._id || t.pendingHandlerTransfer?.toHandler === user?._id);
+          if (!isMyHandler && !isPendingTarget) return false;
+        } else if (t.rejectedDeliveryStatus === 'sent_to_store') {
+          const isStore = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
+          if (!isStore) return false;
+        } else {
+          const isMyRequester = t.requester && (t.requester?._id === user?._id || t.requester === user?._id);
+          if (!isMyRequester) return false;
+        }
+      }
+    } else {
+      if (activeRole.role === 'employee') {
+        const isRequesterPending = (t.requester?._id === user?._id || t.requester === user?._id) && t.status === 'dispatched';
+        if (!isRequesterPending) return false;
+      } else if (activeRole.role === 'team_lead') {
+        if (t.status !== 'submitted') return false;
+      } else if (activeRole.role === 'department_admin') {
+        if (activeRole.adminType === 'management') {
+          if (t.status !== 'tl_approved') return false;
+        } else if (activeRole.adminType === 'store') {
+          const isSentToStore = t.status === 'dispatched' && t.rejectedDeliveryStatus === 'sent_to_store';
+          if (!isSentToStore && !['mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status)) return false;
+        } else {
+          return false;
+        }
+      } else if (activeRole.role === 'super_admin') {
+        if (['completed', 'received', 'closed', 'rejected', 'active', 'partially_returned'].includes(t.status)) return false;
+      }
+    }
+    return true;
+  };
+
   // Apply filters to transactions
-  const filteredTxns = txns.filter(t => {
+  const allFilteredTxns = txns.filter(t => {
     // For employee, only show their own requests
     if (activeRole.role === 'employee') {
       const isMyTxn = (t.requester?._id === user?._id || t.requester === user?._id) ||
@@ -377,60 +424,6 @@ const PendingTransactionsPage = () => {
     if (activeRole.role === 'department_admin' && activeRole.adminType === 'management') {
       const isMyMgtApprover = (t.managementApprover?._id || t.managementApprover)?.toString() === user?._id?.toString();
       if (!isMyMgtApprover) return false;
-    }
-
-    // 1. Status mapping based on tab
-    const isHandlerDeliveryPending = t.handler && ['store_accepted', 'handler_assigned', 'dispatched'].includes(t.status);
-
-    if (statusTab === 'pending') {
-      if (isHandlerDeliveryPending) {
-        if (t.status === 'handler_assigned') {
-          // Only show to the assigned handler or pending transfer target
-          const isMyHandler = t.handler && (t.handler?._id === user?._id || t.handler === user?._id);
-          const isPendingTarget = t.pendingHandlerTransfer?.status === 'pending' && (t.pendingHandlerTransfer?.toHandler?._id === user?._id || t.pendingHandlerTransfer?.toHandler === user?._id);
-          if (!isMyHandler && !isPendingTarget) return false;
-        } else if (t.status === 'store_accepted') {
-          // Only show to store admin (and super admin)
-          const isStore = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
-          if (!isStore) return false;
-        } else if (t.status === 'dispatched') {
-          if (t.rejectedDeliveryStatus === 'rejected_by_requester') {
-            // Only show to the assigned handler or pending transfer target
-            const isMyHandler = t.handler && (t.handler?._id === user?._id || t.handler === user?._id);
-            const isPendingTarget = t.pendingHandlerTransfer?.status === 'pending' && (t.pendingHandlerTransfer?.toHandler?._id === user?._id || t.pendingHandlerTransfer?.toHandler === user?._id);
-            if (!isMyHandler && !isPendingTarget) return false;
-          } else if (t.rejectedDeliveryStatus === 'sent_to_store') {
-            // Only show to store admin (and super admin)
-            const isStore = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
-            if (!isStore) return false;
-          } else {
-            // Normal transit - only show to the requester (confirm receipt)
-            const isMyRequester = t.requester && (t.requester?._id === user?._id || t.requester === user?._id);
-            if (!isMyRequester) return false;
-          }
-        }
-      } else {
-        if (activeRole.role === 'employee') {
-          const isRequesterPending = (t.requester?._id === user?._id || t.requester === user?._id) && t.status === 'dispatched';
-          if (!isRequesterPending) return false;
-        } else if (activeRole.role === 'team_lead') {
-          if (t.status !== 'submitted') return false;
-        } else if (activeRole.role === 'department_admin') {
-          if (activeRole.adminType === 'management') {
-            if (t.status !== 'tl_approved') return false;
-          } else if (activeRole.adminType === 'store') {
-            const isSentToStore = t.status === 'dispatched' && t.rejectedDeliveryStatus === 'sent_to_store';
-            if (!isSentToStore && !['mgt_approved', 'ready_for_dispatch', 'store_accepted'].includes(t.status)) return false;
-          } else {
-            return false;
-          }
-        } else if (activeRole.role === 'super_admin') {
-          if (['completed', 'received', 'closed', 'rejected', 'active', 'partially_returned'].includes(t.status)) return false;
-        }
-      }
-    } else if (statusTab === 'history') {
-      const isHistoryStatus = ['completed', 'received', 'closed', 'rejected', 'active', 'partially_returned'].includes(t.status);
-      if (!isHistoryStatus) return false;
     }
 
     if (filterRequestType !== 'all' && filterRequestType !== 'material') return false;
@@ -463,14 +456,37 @@ const PendingTransactionsPage = () => {
     return true;
   });
 
+  const pendingTxns = allFilteredTxns.filter(t => checkIsPending(t));
+  const historyTxns = allFilteredTxns.filter(t => {
+    const isHistoryStatus = !['submitted', 'draft'].includes(t.status);
+    if (!isHistoryStatus || checkIsPending(t)) return false;
+    const isRequester = t.requester?._id === user?._id || t.requester === user?._id || t.sender?._id === user?._id || t.sender === user?._id;
+    const isTL = t.teamLead?._id === user?._id || t.teamLead === user?._id;
+    const isMgt = t.managementApprover?._id === user?._id || t.managementApprover === user?._id;
+    const isStore = t.store?._id === user?._id || t.store === user?._id;
+    const isHandler = t.handler?._id === user?._id || t.handler === user?._id;
+    const isReceiver = t.receiver?._id === user?._id || t.receiver === user?._id;
+    return isRequester || isTL || isMgt || isStore || isHandler || isReceiver;
+  });
+
+  const filteredTxns = statusTab === 'pending' ? pendingTxns : historyTxns;
+
   // Filter pending transfers
   const filteredTransfers = pendingTransfers.filter(tr => {
-    if (statusTab !== 'pending') return false; // Transfers are only shown in pending tab
+    const isPending = tr.status === 'pending';
+    if (statusTab === 'pending' ? !isPending : isPending) return false;
+    if (statusTab === 'history') {
+      const isRequester = tr.fromUser?._id === user?._id || tr.fromUser === user?._id;
+      const isRecipient = tr.toUser?._id === user?._id || tr.toUser === user?._id;
+      const isApprover = tr.approvedBy?._id === user?._id || tr.approvedBy === user?._id;
+      const isRejecter = tr.rejectedBy?._id === user?._id || tr.rejectedBy === user?._id;
+      if (!isRequester && !isRecipient && !isApprover && !isRejecter) return false;
+    }
     if (filterRequestType !== 'all' && filterRequestType !== 'transfer') return false;
 
     if (search) {
       const q = search.toLowerCase();
-      const matchBarcode = tr.barcode.toLowerCase().includes(q);
+      const matchBarcode = tr.barcode?.toLowerCase().includes(q);
       const matchRequester = tr.fromUser?.fullName?.toLowerCase().includes(q) || tr.toUser?.fullName?.toLowerCase().includes(q);
       const matchMaterial = tr.materialName?.toLowerCase().includes(q);
       if (!matchBarcode && !matchRequester && !matchMaterial) return false;
@@ -481,7 +497,14 @@ const PendingTransactionsPage = () => {
 
   // Filter pending splits
   const filteredSplits = pendingSplits.filter(s => {
-    if (statusTab !== 'pending') return false;
+    const isPending = s.status === 'pending';
+    if (statusTab === 'pending' ? !isPending : isPending) return false;
+    if (statusTab === 'history') {
+      const isRequester = s.requester?._id === user?._id || s.requester === user?._id;
+      const isApprover = s.approvedBy?._id === user?._id || s.approvedBy === user?._id;
+      const isStoreAdminOrSuper = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
+      if (!isRequester && !isApprover && !(s.status === 'rejected' && isStoreAdminOrSuper)) return false;
+    }
     if (filterRequestType !== 'all' && filterRequestType !== 'split') return false;
     if (search) {
       const q = search.toLowerCase();
@@ -495,7 +518,15 @@ const PendingTransactionsPage = () => {
 
   // Filter pending returns
   const filteredReturns = pendingReturns.filter(r => {
-    if (statusTab !== 'pending') return false;
+    const isPending = ['pending', 'initiated', 'handler_assigned', 'collected', 'store_received'].includes(r.status);
+    if (statusTab === 'pending' ? !isPending : isPending) return false;
+    if (statusTab === 'history') {
+      const isRequester = r.fromUser?._id === user?._id || r.fromUser === user?._id;
+      const isHandler = r.returnHandler?._id === user?._id || r.returnHandler === user?._id;
+      const isStoreAdmin = r.store?._id === user?._id || r.store === user?._id;
+      const isStoreAdminOrSuper = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
+      if (!isRequester && !isHandler && !isStoreAdmin && !(r.status === 'rejected' && isStoreAdminOrSuper)) return false;
+    }
     if (filterRequestType !== 'all' && filterRequestType !== 'return') return false;
     if (search) {
       const q = search.toLowerCase();
@@ -509,7 +540,18 @@ const PendingTransactionsPage = () => {
 
   // Filter pending close requests
   const filteredCloseRequests = pendingCloseRequests.filter(cr => {
-    if (statusTab !== 'pending') return false;
+    const isPending = ['pending', 'pending_store_acceptance', 'pending_accounts_approval'].includes(cr.status);
+    if (statusTab === 'pending' ? !isPending : isPending) return false;
+    if (statusTab === 'history') {
+      const isRequester = cr.requester?._id === user?._id || cr.requester === user?._id;
+      const isApprover = cr.approvedBy?._id === user?._id || cr.approvedBy === user?._id;
+      const isMgtApprover = cr.managementApprover?._id === user?._id || cr.managementApprover === user?._id;
+      const isTLOfRequester = activeRole.role === 'team_lead' && (cr.requester?.department?._id || cr.requester?.department) === user?.department;
+      const isAccounts = activeRole.role === 'department_admin' && activeRole.adminType === 'accounts';
+      const isStore = activeRole.role === 'department_admin' && activeRole.adminType === 'store';
+      const isSuper = activeRole.role === 'super_admin';
+      if (!isRequester && !isApprover && !isMgtApprover && !(cr.status === 'rejected' && (isTLOfRequester || isAccounts || isStore || isSuper))) return false;
+    }
     if (filterRequestType !== 'all' && filterRequestType !== 'conversion') return false;
     if (search) {
       const q = search.toLowerCase();
@@ -523,7 +565,14 @@ const PendingTransactionsPage = () => {
 
   // Filter pending exchange requests
   const filteredExchanges = pendingExchanges.filter(e => {
-    if (statusTab !== 'pending') return false;
+    const isPending = e.status === 'pending';
+    if (statusTab === 'pending' ? !isPending : isPending) return false;
+    if (statusTab === 'history') {
+      const isRequester = e.requester?._id === user?._id || e.requester === user?._id;
+      const isApprover = e.approvedBy?._id === user?._id || e.approvedBy === user?._id;
+      const isStoreAdminOrSuper = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
+      if (!isRequester && !isApprover && !(e.status === 'rejected' && isStoreAdminOrSuper)) return false;
+    }
     if (filterRequestType !== 'all' && filterRequestType !== 'exchange') return false;
     if (search) {
       const q = search.toLowerCase();
@@ -1247,6 +1296,57 @@ const PendingTransactionsPage = () => {
 
 
   const showPricing = true;
+  const pendingTransfersCount = pendingTransfers.filter(tr => tr.status === 'pending').length;
+  const pendingSplitsCount = pendingSplits.filter(s => s.status === 'pending').length;
+  const pendingReturnsCount = pendingReturns.filter(r => ['pending', 'initiated', 'handler_assigned', 'collected', 'store_received'].includes(r.status)).length;
+  const pendingCloseCount = pendingCloseRequests.filter(cr => ['pending', 'pending_store_acceptance', 'pending_accounts_approval'].includes(cr.status)).length;
+  const pendingExchangesCount = pendingExchanges.filter(e => e.status === 'pending').length;
+
+  const historyTransfersCount = pendingTransfers.filter(tr => {
+    if (tr.status === 'pending') return false;
+    const isRequester = tr.fromUser?._id === user?._id || tr.fromUser === user?._id;
+    const isRecipient = tr.toUser?._id === user?._id || tr.toUser === user?._id;
+    const isApprover = tr.approvedBy?._id === user?._id || tr.approvedBy === user?._id;
+    const isRejecter = tr.rejectedBy?._id === user?._id || tr.rejectedBy === user?._id;
+    return isRequester || isRecipient || isApprover || isRejecter;
+  }).length;
+
+  const historySplitsCount = pendingSplits.filter(s => {
+    if (s.status === 'pending') return false;
+    const isRequester = s.requester?._id === user?._id || s.requester === user?._id;
+    const isApprover = s.approvedBy?._id === user?._id || s.approvedBy === user?._id;
+    const isStoreAdminOrSuper = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
+    return isRequester || isApprover || (s.status === 'rejected' && isStoreAdminOrSuper);
+  }).length;
+
+  const historyReturnsCount = pendingReturns.filter(r => {
+    if (['pending', 'initiated', 'handler_assigned', 'collected', 'store_received'].includes(r.status)) return false;
+    const isRequester = r.fromUser?._id === user?._id || r.fromUser === user?._id;
+    const isHandler = r.returnHandler?._id === user?._id || r.returnHandler === user?._id;
+    const isStoreAdmin = r.store?._id === user?._id || r.store === user?._id;
+    const isStoreAdminOrSuper = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
+    return isRequester || isHandler || isStoreAdmin || (r.status === 'rejected' && isStoreAdminOrSuper);
+  }).length;
+
+  const historyCloseCount = pendingCloseRequests.filter(cr => {
+    if (['pending', 'pending_store_acceptance', 'pending_accounts_approval'].includes(cr.status)) return false;
+    const isRequester = cr.requester?._id === user?._id || cr.requester === user?._id;
+    const isApprover = cr.approvedBy?._id === user?._id || cr.approvedBy === user?._id;
+    const isMgtApprover = cr.managementApprover?._id === user?._id || cr.managementApprover === user?._id;
+    const isTLOfRequester = activeRole.role === 'team_lead' && (cr.requester?.department?._id || cr.requester?.department) === user?.department;
+    const isAccounts = activeRole.role === 'department_admin' && activeRole.adminType === 'accounts';
+    const isStore = activeRole.role === 'department_admin' && activeRole.adminType === 'store';
+    const isSuper = activeRole.role === 'super_admin';
+    return isRequester || isApprover || isMgtApprover || (cr.status === 'rejected' && (isTLOfRequester || isAccounts || isStore || isSuper));
+  }).length;
+
+  const historyExchangesCount = pendingExchanges.filter(e => {
+    if (e.status === 'pending') return false;
+    const isRequester = e.requester?._id === user?._id || e.requester === user?._id;
+    const isApprover = e.approvedBy?._id === user?._id || e.approvedBy === user?._id;
+    const isStoreAdminOrSuper = activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store');
+    return isRequester || isApprover || (e.status === 'rejected' && isStoreAdminOrSuper);
+  }).length;
 
   return (
     <div className="flex flex-col gap-5 h-[calc(100vh-7rem)] overflow-hidden">
@@ -1265,7 +1365,7 @@ const PendingTransactionsPage = () => {
           <select
             value={filterRequestType}
             onChange={(e) => setFilterRequestType(e.target.value)}
-            className="w-full sm:w-44 px-3 py-2 text-xs bg-white border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-lg focus:outline-none focus:border-blue-500 text-slate-700 dark:text-slate-200 font-extrabold"
+            className="w-full sm:w-44 px-3 py-2 text-xs bg-white border border-slate-200 dark:bg-slate-955 dark:border-slate-800 rounded-lg focus:outline-none focus:border-blue-500 text-slate-700 dark:text-slate-200 font-extrabold"
           >
             <option value="all">All Request Types</option>
             <option value="material">Material Requests</option>
@@ -1293,10 +1393,10 @@ const PendingTransactionsPage = () => {
       {/* Tabs */}
       <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6 shrink-0">
         <button onClick={() => setStatusTab('pending')} className={`pb-2.5 text-xs font-bold tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'pending' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-          Pending Requests ({filteredTxns.length + filteredTransfers.length + filteredSplits.length + filteredReturns.length + filteredCloseRequests.length + filteredExchanges.length})
+          Pending Requests ({pendingTxns.length + pendingTransfersCount + pendingSplitsCount + pendingReturnsCount + pendingCloseCount + pendingExchangesCount})
         </button>
         <button onClick={() => setStatusTab('history')} className={`pb-2.5 text-xs font-bold tracking-wider border-b-2 transition-all cursor-pointer ${statusTab === 'history' ? 'border-blue-600 text-blue-600 font-extrabold' : 'border-transparent text-slate-400'}`}>
-          Request History
+          Request History ({historyTxns.length + historyTransfersCount + historySplitsCount + historyReturnsCount + historyCloseCount + historyExchangesCount})
         </button>
       </div>
 
@@ -1309,15 +1409,14 @@ const PendingTransactionsPage = () => {
           /* Left Side: Cards Queue list taking full width */
           <div className="w-full flex flex-col gap-3 overflow-y-auto pr-1">
             {((statusTab === 'pending' && filteredTxns.length === 0 && filteredTransfers.length === 0 && filteredSplits.length === 0 && filteredReturns.length === 0 && filteredCloseRequests.length === 0 && filteredExchanges.length === 0) ||
-              (statusTab === 'history' && filteredTxns.length === 0)) ? (
+              (statusTab === 'history' && filteredTxns.length === 0 && filteredTransfers.length === 0 && filteredSplits.length === 0 && filteredReturns.length === 0 && filteredCloseRequests.length === 0 && filteredExchanges.length === 0)) ? (
               <div className="text-center py-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl">
                 <Clock className="w-10 h-10 text-slate-355 mx-auto mb-2.5 animate-pulse" />
                 <p className="text-sm font-bold text-slate-500">Queue is empty</p>
               </div>
             ) : (
-              <>
-                {/* Split Requests List */}
-                {statusTab === 'pending' && filteredSplits.length > 0 && (
+              <>                {/* Split Requests List */}
+                {(statusTab === 'pending' || statusTab === 'history') && filteredSplits.length > 0 && (
                   <div className="flex flex-col gap-2">
                     <span className="text-[10px] text-slate-400 font-extrabold tracking-widest pl-1 mb-1 block">Split Requests</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1331,8 +1430,8 @@ const PendingTransactionsPage = () => {
                             }}
                             className={`p-4 rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2 border
                           ${isActive
-                                ? 'border-purple-500 ring-1 ring-purple-500/20 bg-purple-50/20 dark:bg-purple-950/10'
-                                : 'border-purple-200 dark:border-purple-900/40 bg-purple-50/10 dark:bg-purple-950/5 hover:border-purple-300 dark:hover:border-purple-800'}
+                                ? 'border-purple-500 ring-1 ring-purple-500/20 bg-purple-50/20 dark:bg-purple-955/10'
+                                : 'border-purple-200 dark:border-purple-900/40 bg-purple-50/10 dark:bg-purple-955/5 hover:border-purple-300 dark:hover:border-purple-800'}
                         `}
                           >
                             <div className="flex items-start justify-between gap-3">
@@ -1340,7 +1439,9 @@ const PendingTransactionsPage = () => {
                                 <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 tracking-wider font-extrabold">Split Request</span>
                                 <span className="text-xs font-extrabold text-slate-655 dark:text-slate-400 font-mono">{s.transactionId}</span>
                               </div>
-                              <Badge variant="primary">PENDING</Badge>
+                              <Badge variant={s.status === 'approved' ? 'success' : s.status === 'rejected' ? 'danger' : 'primary'}>
+                                {s.status.toUpperCase()}
+                              </Badge>
                             </div>
                             <div>
                               <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100">{s.materialName}</h4>
@@ -1348,8 +1449,8 @@ const PendingTransactionsPage = () => {
                               <p className="text-[10px] text-slate-550 dark:text-slate-300 font-semibold">Requester: <span className="font-extrabold">{s.requester?.fullName}</span></p>
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
-                              <span className="text-rose-600 dark:text-rose-400">
-                                {activeRole.role === 'department_admin' && activeRole.adminType === 'store' ? "Action Required: Approve Split" : "Tracking: Pending Split Approval"}
+                              <span className={statusTab === 'history' ? 'text-slate-400 font-extrabold' : 'text-rose-600 dark:text-rose-400 font-extrabold'}>
+                                {statusTab === 'history' ? `Status: ${s.status.toUpperCase()}` : (activeRole.role === 'department_admin' && activeRole.adminType === 'store' ? "Action Required: Approve Split" : "Tracking: Pending Split Approval")}
                               </span>
                             </div>
                           </div>
@@ -1357,8 +1458,9 @@ const PendingTransactionsPage = () => {
                       })}
                     </div>
                   </div>
-                )}                {/* Return Requests List */}
-                {statusTab === 'pending' && filteredReturns.length > 0 && (
+                )}
+
+                {(statusTab === 'pending' || statusTab === 'history') && filteredReturns.length > 0 && (
                   <div className="flex flex-col gap-2">
                     <span className="text-[10px] text-slate-400 font-extrabold tracking-widest pl-1 mb-1 block">Return Requests</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1379,7 +1481,7 @@ const PendingTransactionsPage = () => {
                                 <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 tracking-wider font-extrabold">Return Request</span>
                                 <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{r.transactionId}</span>
                               </div>
-                              <Badge variant={r.status === 'completed' ? 'success' : 'warning'}>
+                              <Badge variant={['completed', 'accepted'].includes(r.status) ? 'success' : r.status === 'rejected' ? 'danger' : 'warning'}>
                                 {r.status.toUpperCase().replace('_', ' ')}
                               </Badge>
                             </div>
@@ -1398,12 +1500,13 @@ const PendingTransactionsPage = () => {
                               </p>
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
-                              <span className="text-rose-600 dark:text-rose-400 font-extrabold">
-                                {r.status === 'handler_assigned' && (r.returnHandler?._id === user?._id || r.returnHandler === user?._id) ? "Action Required: Collect returning items" :
-                                  r.status === 'collected' && (r.returnHandler?._id === user?._id || r.returnHandler === user?._id) ? "Action Required: Deliver to Store" :
-                                    r.status === 'store_received' && (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) ? "Action Required: Confirm Return Receipt" :
-                                      (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) && r.status === 'pending' ? "Action Required: Confirm Return Receipt" :
-                                        `Tracking: ${r.status.toUpperCase().replace('_', ' ')}`}
+                              <span className={statusTab === 'history' ? 'text-slate-400 font-extrabold' : 'text-rose-600 dark:text-rose-400 font-extrabold'}>
+                                {statusTab === 'history' ? `Status: ${r.status.toUpperCase().replace('_', ' ')}` :
+                                  (r.status === 'handler_assigned' && (r.returnHandler?._id === user?._id || r.returnHandler === user?._id) ? "Action Required: Collect returning items" :
+                                    r.status === 'collected' && (r.returnHandler?._id === user?._id || r.returnHandler === user?._id) ? "Action Required: Deliver to Store" :
+                                      r.status === 'store_received' && (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) ? "Action Required: Confirm Return Receipt" :
+                                        (activeRole.role === 'super_admin' || (activeRole.role === 'department_admin' && activeRole.adminType === 'store')) && r.status === 'pending' ? "Action Required: Confirm Return Receipt" :
+                                          `Tracking: ${r.status.toUpperCase().replace('_', ' ')}`)}
                               </span>
                             </div>
                           </div>
@@ -1411,8 +1514,9 @@ const PendingTransactionsPage = () => {
                       })}
                     </div>
                   </div>
-                )}                {/* DC/Invoice Conversion Requests List */}
-                {statusTab === 'pending' && filteredCloseRequests.length > 0 && (
+                )}
+                {/* DC/Invoice Conversion Requests List */}
+                {(statusTab === 'pending' || statusTab === 'history') && filteredCloseRequests.length > 0 && (
                   <div className="flex flex-col gap-2">
                     <span className="text-[10px] text-slate-400 font-extrabold tracking-widest pl-1 mb-1 block">Conversion Requests</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1425,8 +1529,8 @@ const PendingTransactionsPage = () => {
                             onClick={() => setSelectedItem(r)}
                             className={`p-4 rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2 border
                           ${isActive
-                                ? 'border-emerald-500 ring-1 ring-emerald-500/20 bg-emerald-50/20 dark:bg-emerald-950/10'
-                                : 'border-emerald-200 dark:border-emerald-900/40 bg-emerald-50/10 dark:bg-emerald-950/5 hover:border-emerald-300 dark:hover:border-emerald-800'}
+                                ? 'border-emerald-500 ring-1 ring-emerald-500/20 bg-emerald-50/20 dark:bg-emerald-955/10'
+                                : 'border-emerald-200 dark:border-emerald-900/40 bg-emerald-50/10 dark:bg-emerald-955/5 hover:border-emerald-300 dark:hover:border-emerald-800'}
                         `}
                           >
                             <div className="flex items-start justify-between gap-3">
@@ -1436,8 +1540,8 @@ const PendingTransactionsPage = () => {
                                 </span>
                                 <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{r.barcode}</span>
                               </div>
-                              <Badge variant="warning">
-                                {r.status === 'pending_store_acceptance' ? 'AWAITING STORE' : 'PENDING'}
+                              <Badge variant={r.status === 'approved' ? 'success' : r.status === 'rejected' ? 'danger' : 'warning'}>
+                                {r.status === 'pending_store_acceptance' ? 'AWAITING STORE' : r.status.toUpperCase().replace('_', ' ')}
                               </Badge>
                             </div>
                             <div>
@@ -1446,16 +1550,17 @@ const PendingTransactionsPage = () => {
                               <p className="text-[10px] text-slate-500 dark:text-slate-300 font-semibold">Requester: <span className="font-extrabold">{r.requester?.fullName}</span></p>
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
-                              <span className="text-rose-600 dark:text-rose-400 font-extrabold">
-                                {r.status === 'pending_store_acceptance' ? (
-                                  (activeRole.role === 'department_admin' && activeRole.adminType === 'store') ? "Action Required: Store Accept" : "Tracking: Pending Store Acceptance"
-                                ) : r.status === 'pending_accounts_approval' ? (
-                                  (activeRole.role === 'department_admin' && activeRole.adminType === 'accounts') ? "Action Required: Upload Invoice" : "Tracking: Pending Accounts Approval"
-                                ) : ['DC FOC', 'Invoice'].includes(r.documentType) ? (
-                                  (activeRole.role === 'department_admin' && activeRole.adminType === 'management' && (r.managementApprover?._id || r.managementApprover || '').toString() === user?._id?.toString()) ? "Action Required: Management Approve" : "Tracking: Pending Management Approval"
-                                ) : (
-                                  activeRole.role === 'team_lead' ? "Action Required: Approve Conversion" : "Tracking: Pending TL Approval"
-                                )}
+                              <span className={statusTab === 'history' ? 'text-slate-400 font-extrabold' : 'text-rose-600 dark:text-rose-400 font-extrabold'}>
+                                {statusTab === 'history' ? `Status: ${r.status.toUpperCase().replace('_', ' ')}` :
+                                  (r.status === 'pending_store_acceptance' ? (
+                                    (activeRole.role === 'department_admin' && activeRole.adminType === 'store') ? "Action Required: Store Accept" : "Tracking: Pending Store Acceptance"
+                                  ) : r.status === 'pending_accounts_approval' ? (
+                                    (activeRole.role === 'department_admin' && activeRole.adminType === 'accounts') ? "Action Required: Upload Invoice" : "Tracking: Pending Accounts Approval"
+                                  ) : ['DC FOC', 'Invoice'].includes(r.documentType) ? (
+                                    (activeRole.role === 'department_admin' && activeRole.adminType === 'management' && (r.managementApprover?._id || r.managementApprover || '').toString() === user?._id?.toString()) ? "Action Required: Management Approve" : "Tracking: Pending Management Approval"
+                                  ) : (
+                                    activeRole.role === 'team_lead' ? "Action Required: Approve Conversion" : "Tracking: Pending TL Approval"
+                                  ))}
                               </span>
                             </div>
                           </div>
@@ -1464,9 +1569,8 @@ const PendingTransactionsPage = () => {
                     </div>
                   </div>
                 )}
-
                 {/* Exchange Requests List */}
-                {statusTab === 'pending' && filteredExchanges.length > 0 && (
+                {(statusTab === 'pending' || statusTab === 'history') && filteredExchanges.length > 0 && (
                   <div className="flex flex-col gap-2">
                     <span className="text-[10px] text-slate-400 font-extrabold tracking-widest pl-1 mb-1 block">Exchange Requests</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1478,8 +1582,8 @@ const PendingTransactionsPage = () => {
                             onClick={() => setSelectedItem(e)}
                             className={`p-4 rounded-xl hover:shadow-md cursor-pointer transition-all relative flex flex-col gap-2 border
                           ${isActive
-                                ? 'border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-100 dark:bg-indigo-950/45'
-                                : 'border-slate-200 dark:border-slate-800 bg-indigo-50 dark:bg-indigo-950/20 hover:bg-indigo-100/50 dark:hover:bg-indigo-950/30'}
+                                ? 'border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-100 dark:bg-indigo-955/45'
+                                : 'border-slate-200 dark:border-slate-800 bg-indigo-50 dark:bg-indigo-955/20 hover:bg-indigo-100/50 dark:hover:bg-indigo-955/30'}
                         `}
                           >
                             <div className="flex items-start justify-between gap-3">
@@ -1487,7 +1591,9 @@ const PendingTransactionsPage = () => {
                                 <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 tracking-wider font-extrabold">Exchange Request</span>
                                 <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 font-mono">{e.oldBarcode} &rarr; {e.newBarcode || 'Store ID'}</span>
                               </div>
-                              <Badge variant="warning">AWAITING STORE</Badge>
+                              <Badge variant={e.status === 'approved' ? 'success' : e.status === 'rejected' ? 'danger' : 'warning'}>
+                                {e.status === 'pending' ? 'AWAITING STORE' : e.status.toUpperCase()}
+                              </Badge>
                             </div>
                             <div>
                               <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 font-sans">Exchange to {e.newDocumentType}</h4>
@@ -1495,8 +1601,9 @@ const PendingTransactionsPage = () => {
                               <p className="text-[10px] text-slate-500 dark:text-slate-300 font-semibold">Requester: <span className="font-extrabold">{e.requester?.fullName}</span></p>
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
-                              <span className="text-rose-600 dark:text-rose-400 font-extrabold">
-                                {(activeRole.role === 'department_admin' && activeRole.adminType === 'store') || activeRole.role === 'super_admin' ? "Action Required: Approve Warranty" : "Tracking: Pending Store Acceptance"}
+                              <span className={statusTab === 'history' ? 'text-slate-400 font-extrabold' : 'text-rose-600 dark:text-rose-400 font-extrabold'}>
+                                {statusTab === 'history' ? `Status: ${e.status.toUpperCase()}` :
+                                  (((activeRole.role === 'department_admin' && activeRole.adminType === 'store') || activeRole.role === 'super_admin') ? "Action Required: Approve Warranty" : "Tracking: Pending Store Acceptance")}
                               </span>
                             </div>
                           </div>
@@ -1569,7 +1676,7 @@ const PendingTransactionsPage = () => {
                 )}
 
                 {/* Barcode Transfers List */}
-                {statusTab === 'pending' && filteredTransfers.length > 0 && (
+                {(statusTab === 'pending' || statusTab === 'history') && filteredTransfers.length > 0 && (
                   <div className="flex flex-col gap-2 mt-4">
                     <span className="text-[10px] text-slate-400 font-extrabold tracking-widest pl-1 mb-1 block">Barcode Transfers</span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1590,7 +1697,9 @@ const PendingTransactionsPage = () => {
                                 <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 tracking-wider font-extrabold">Transfer Request</span>
                                 <span className="text-xs font-extrabold text-indigo-655 dark:text-indigo-400 font-mono">{tr.barcode}</span>
                               </div>
-                              <Badge variant="warning">TRANSFER</Badge>
+                              <Badge variant={tr.status === 'accepted' ? 'success' : tr.status === 'rejected' ? 'danger' : 'warning'}>
+                                {tr.status.toUpperCase()}
+                              </Badge>
                             </div>
 
                             <div>
@@ -1603,8 +1712,9 @@ const PendingTransactionsPage = () => {
                               Type: {tr.type?.toUpperCase()}
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
-                              <span className={`${(tr.toUser?._id === user?._id || tr.toUser === user?._id) ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
-                                {(tr.toUser?._id === user?._id || tr.toUser === user?._id) ? "Action Required: Confirm Ownership" : "Tracking: Pending Recipient Confirmation"}
+                              <span className={statusTab === 'history' ? 'text-slate-400 font-extrabold' : `${(tr.toUser?._id === user?._id || tr.toUser === user?._id) ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
+                                {statusTab === 'history' ? `Status: ${tr.status.toUpperCase()}` :
+                                  ((tr.toUser?._id === user?._id || tr.toUser === user?._id) ? "Action Required: Confirm Ownership" : "Tracking: Pending Recipient Confirmation")}
                               </span>
                             </div>
                           </div>

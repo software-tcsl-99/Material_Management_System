@@ -15,7 +15,7 @@ const createAdmin = async () => {
     console.log('Connected to MongoDB');
 
     // Ensure Management department exists
-    let adminDept = await Department.findOne({ name: 'Management' });
+    let adminDept = await Department.findOne({ code: 'MGT' });
     if (!adminDept) {
       adminDept = await Department.create({ name: 'Management', code: 'MGT' });
     }
@@ -31,8 +31,8 @@ const createAdmin = async () => {
     if (!headOffice) {
       headOffice = await Location.create({
         name: 'Head Office',
-        address: 'Mumbai, Maharashtra',
-        coordinates: { lat: 19.076, lng: 72.8777 },
+        address: 'Kolhapur, Maharashtra',
+        coordinates: { lat: 16.7053, lng: 74.2433 },
       });
     }
 
@@ -41,7 +41,7 @@ const createAdmin = async () => {
     let admin = await User.create({
       employeeId: 'ADMIN001',
       fullName: 'Trucode Company',
-      email: 'admin@mms.com',
+      email: 'admin@ims.com',
       phone: '9999999959',
       password: 'Admin@1234',
       role: 'super_admin',
@@ -57,7 +57,7 @@ const createAdmin = async () => {
     console.log('\n══════════════════════════════════════════');
     console.log('🔐 SUPER ADMIN CREDENTIALS');
     console.log('══════════════════════════════════════════');
-    console.log('  Email:    admin@mms.com');
+    console.log('  Email:    admin@ims.com');
     console.log('  Password: Admin@1234');
     console.log('  Role:     super_admin');
     console.log('══════════════════════════════════════════\n');

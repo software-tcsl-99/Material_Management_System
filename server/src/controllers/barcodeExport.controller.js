@@ -30,7 +30,7 @@ exports.exportBarcodeToExcel = async (req, res) => {
     const price = material?.price || 0;
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Material Management System';
+    workbook.creator = 'Inventory Management System';
     workbook.created = new Date();
 
     const worksheet = workbook.addWorksheet(`Barcode_${bc.barcode}`);

@@ -14,6 +14,9 @@ router.get('/search', requirePermission('barcode:view'), barcodeController.searc
 router.get('/pending/transfers', barcodeController.getPendingTransfers);
 router.get('/list/transfers', barcodeController.getAllTransfers);
 router.get('/list/returns', barcodeController.getAllReturns);
+router.get('/list/splits', barcodeController.getAllSplitRequests);
+router.get('/list/close-requests', barcodeController.getAllCloseRequests);
+router.get('/list/exchange-requests', barcodeController.getAllExchangeRequests);
 router.get('/split-requests/pending', requirePermission('approval:view'), barcodeController.getPendingSplitRequests);
 router.get('/returns/pending', requirePermission('return:view'), barcodeController.getPendingReturns);
 router.get('/close-requests/pending', requirePermission('approval:view'), barcodeController.getPendingCloseRequests);

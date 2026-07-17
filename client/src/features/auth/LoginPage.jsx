@@ -59,10 +59,10 @@ const LoginPage = () => {
         {/* Header */}
         <div className="text-center flex flex-col gap-2">
           <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight bg-gradient-to-r from-indigo-600 via-indigo-400 to-indigo-600 dark:from-indigo-200 dark:via-indigo-400 dark:to-indigo-200 bg-clip-text">
-            MMS Enterprise
+            IMS Enterprise
           </h2>
           <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 font-medium">
-            Material Management portal
+            Inventory Management portal
           </p>
           <h3 className="text-lg sm:text-lg text-slate-900 dark:text-slate-100 font-medium">Login</h3>
         </div>

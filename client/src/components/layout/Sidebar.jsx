@@ -140,12 +140,12 @@ export default function Sidebar() {
       {/* Brand Logo header */}
       <div className="h-16 flex items-center gap-3 px-6 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
         <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center font-bold text-white text-base">
-          M
+          I
         </div>
         <div>
-          <h2 className="text-slate-900 dark:text-white font-bold text-sm leading-none tracking-wide">MMS</h2>
+          <h2 className="text-slate-900 dark:text-white font-bold text-sm leading-none tracking-wide">IMS</h2>
           <span className="text-[10px] font-semibold text-slate-500 tracking-widest mt-0.5 block">
-            Material Platform
+            Inventory Platform
           </span>
         </div>
       </div>

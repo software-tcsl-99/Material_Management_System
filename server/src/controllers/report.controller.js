@@ -344,8 +344,17 @@ exports.getTransactionReport = async (req, res) => {
       delete filter.$and;
 
       const targetHandlerId = req.user.role === 'employee' ? req.user._id : handler;
+      const isGlobalAdmin = req.user.role === 'super_admin' || 
+                           (req.user.role === 'department_admin' && 
+                            ['store', 'management', 'accounts'].includes(req.user.departmentAdminType));
 
       if (targetHandlerId) {
+        if (!isGlobalAdmin && targetHandlerId.toString() !== req.user._id.toString()) {
+          // Keep department filter
+          filter.department = req.user.department?._id || req.user.department;
+        } else {
+          delete filter.department;
+        }
         const ReturnModel = require('../models/Return');
         const returnDocs = await ReturnModel.find({ returnHandler: targetHandlerId });
         const returnTxnIds = returnDocs.map(r => r.transactionId);
@@ -371,6 +380,13 @@ exports.getTransactionReport = async (req, res) => {
         ];
       } else {
         filter.handler = { $ne: null };
+        if (!isGlobalAdmin) {
+          filter.$or = [
+            { department: req.user.department?._id || req.user.department },
+            { handler: req.user._id }
+          ];
+          delete filter.department;
+        }
       }
 
       const transactions = await Transaction.find(filter)
@@ -644,14 +660,35 @@ exports.exportTransactionReport = async (req, res) => {
       sheet.getRow(1).font = { bold: true };
     } else if (reportType === 'handler') {
       const { handler } = req.query;
+      const sheet = workbook.addWorksheet('Handler Sourcing');
+      sheet.columns = [
+        { header: 'Transaction ID', key: 'transactionId', width: 20 },
+        { header: 'Handler Name', key: 'handler', width: 25 },
+        { header: 'Requester', key: 'requester', width: 25 },
+        { header: 'Receiver', key: 'receiver', width: 25 },
+        { header: 'Status', key: 'status', width: 15 },
+        { header: 'Grand Total', key: 'grandTotal', width: 15 },
+        { header: 'Created Date', key: 'createdAt', width: 20 }
+      ];
+      sheet.getRow(1).font = { bold: true };
+
       const filter = await buildReportFilter(req);
 
       delete filter.$or;
       delete filter.$and;
 
       const targetHandlerId = req.user.role === 'employee' ? req.user._id : handler;
+      const isGlobalAdmin = req.user.role === 'super_admin' || 
+                           (req.user.role === 'department_admin' && 
+                            ['store', 'management', 'accounts'].includes(req.user.departmentAdminType));
 
       if (targetHandlerId) {
+        if (!isGlobalAdmin && targetHandlerId.toString() !== req.user._id.toString()) {
+          // Keep department filter
+          filter.department = req.user.department?._id || req.user.department;
+        } else {
+          delete filter.department;
+        }
         const ReturnModel = require('../models/Return');
         const returnDocs = await ReturnModel.find({ returnHandler: targetHandlerId });
         const returnTxnIds = returnDocs.map(r => r.transactionId);
@@ -677,6 +714,13 @@ exports.exportTransactionReport = async (req, res) => {
         ];
       } else {
         filter.handler = { $ne: null };
+        if (!isGlobalAdmin) {
+          filter.$or = [
+            { department: req.user.department?._id || req.user.department },
+            { handler: req.user._id }
+          ];
+          delete filter.department;
+        }
       }
 
       const transactions = await Transaction.find(filter)
@@ -685,17 +729,6 @@ exports.exportTransactionReport = async (req, res) => {
         .populate('handler', 'fullName employeeId')
         .populate('department', 'name')
         .sort({ createdAt: -1 });
-
-      const sheet = workbook.addWorksheet('Handler Sourcing');
-      sheet.columns = [
-        { header: 'Transaction ID', key: 'transactionId', width: 20 },
-        { header: 'Handler Name', key: 'handler', width: 25 },
-        { header: 'Requester', key: 'requester', width: 25 },
-        { header: 'Receiver', key: 'receiver', width: 25 },
-        { header: 'Status', key: 'status', width: 15 },
-        { header: 'Grand Total', key: 'grandTotal', width: 15 },
-        { header: 'Created Date', key: 'createdAt', width: 20 }
-      ];
 
       transactions.forEach(t => {
         const createdAtStr = (t.createdAt && typeof t.createdAt.toLocaleDateString === 'function') ? t.createdAt.toLocaleDateString('en-IN') : 'N/A';
@@ -709,7 +742,6 @@ exports.exportTransactionReport = async (req, res) => {
           createdAt: createdAtStr
         });
       });
-      sheet.getRow(1).font = { bold: true };
     } else {
       // Default: Transaction Report
       const filter = await buildReportFilter(req);
@@ -758,7 +790,7 @@ exports.exportTransactionReport = async (req, res) => {
     }
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=MMS_Report_${reportType}.xlsx`);
+    res.setHeader('Content-Disposition', `attachment; filename=IMS_Report_${reportType}.xlsx`);
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {
@@ -820,7 +852,7 @@ exports.exportDcEmployeeReport = async (req, res) => {
     sheet.getRow(1).font = { bold: true };
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=MMS_DC_Report_${employeeId}.xlsx`);
+    res.setHeader('Content-Disposition', `attachment; filename=IMS_DC_Report_${employeeId}.xlsx`);
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {

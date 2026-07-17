@@ -280,6 +280,7 @@ exports.getTransactions = async (req, res) => {
       filter.$or = [
         { requester: req.user._id },
         { teamLead: req.user._id },
+        { handler: req.user._id },
         { department: req.user.department._id || req.user.department },
       ];
     } else if (req.user.role === 'department_admin') {
@@ -296,6 +297,7 @@ exports.getTransactions = async (req, res) => {
       } else {
         filter.$or = [
           { requester: req.user._id },
+          { handler: req.user._id },
           { department: req.user.department._id || req.user.department },
         ];
       }

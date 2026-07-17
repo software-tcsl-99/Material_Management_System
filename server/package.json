@@ -1,12 +1,13 @@
 {
   "name": "mms-server",
   "version": "1.0.0",
-  "description": "Material Management System - Enterprise Backend",
+  "description": "Inventory Management System - Enterprise Backend",
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
     "seed": "node src/scripts/seed.js",
+    "masters": "node src/scripts/seedMasters.js",
     "admin": "node src/scripts/admin.js",
     "reset": "node src/scripts/reset.js",
     "test": "node src/scripts/test-flows.js"

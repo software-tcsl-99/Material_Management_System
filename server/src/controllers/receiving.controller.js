@@ -289,7 +289,7 @@ const exportReceiptToExcel = async (req, res) => {
     }
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Material Management System';
+    workbook.creator = 'Inventory Management System';
     workbook.created = new Date();
 
     const worksheet = workbook.addWorksheet(`Receipt_${isInternal ? receipt.transaction?.transactionId : receipt.receiptId}`, {

@@ -2998,3 +2998,93 @@ exports.getExchangeRequestsByTransaction = async (req, res) => {
     res.status(500).json({ message: 'Server error.' });
   }
 };
+
+exports.getAllSplitRequests = async (req, res) => {
+  try {
+    const filter = {};
+    if (req.user.role === 'employee') {
+      filter.requester = req.user._id;
+    } else if (req.user.role === 'team_lead') {
+      const User = require('../models/User');
+      const deptUsers = await User.find({ department: req.user.department }).select('_id');
+      const deptUserIds = deptUsers.map(u => u._id);
+      filter.requester = { $in: deptUserIds };
+    } else if (req.user.role === 'department_admin') {
+      if (req.user.departmentAdminType !== 'store' && req.user.departmentAdminType !== 'management' && req.user.departmentAdminType !== 'accounts') {
+        const User = require('../models/User');
+        const deptUsers = await User.find({ department: req.user.department }).select('_id');
+        const deptUserIds = deptUsers.map(u => u._id);
+        filter.requester = { $in: deptUserIds };
+      }
+    }
+    const SplitRequest = require('../models/SplitRequest');
+    const requests = await SplitRequest.find(filter)
+      .populate('requester', 'fullName employeeId')
+      .sort({ createdAt: -1 });
+    res.json({ data: requests });
+  } catch (error) {
+    console.error('Get all split requests error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+exports.getAllCloseRequests = async (req, res) => {
+  try {
+    const filter = {};
+    if (req.user.role === 'employee') {
+      filter.requester = req.user._id;
+    } else if (req.user.role === 'team_lead') {
+      const User = require('../models/User');
+      const deptUsers = await User.find({ department: req.user.department }).select('_id');
+      const deptUserIds = deptUsers.map(u => u._id);
+      filter.requester = { $in: deptUserIds };
+    } else if (req.user.role === 'department_admin') {
+      if (req.user.departmentAdminType !== 'store' && req.user.departmentAdminType !== 'management' && req.user.departmentAdminType !== 'accounts') {
+        const User = require('../models/User');
+        const deptUsers = await User.find({ department: req.user.department }).select('_id');
+        const deptUserIds = deptUsers.map(u => u._id);
+        filter.requester = { $in: deptUserIds };
+      }
+    }
+    const CloseRequest = require('../models/CloseRequest');
+    const requests = await CloseRequest.find(filter)
+      .populate('requester', 'fullName employeeId')
+      .populate('approvedBy', 'fullName employeeId')
+      .populate('managementApprover', 'fullName employeeId')
+      .sort({ createdAt: -1 });
+    res.json({ data: requests });
+  } catch (error) {
+    console.error('Get all close requests error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+exports.getAllExchangeRequests = async (req, res) => {
+  try {
+    const filter = {};
+    if (req.user.role === 'employee') {
+      filter.requester = req.user._id;
+    } else if (req.user.role === 'team_lead') {
+      const User = require('../models/User');
+      const deptUsers = await User.find({ department: req.user.department }).select('_id');
+      const deptUserIds = deptUsers.map(u => u._id);
+      filter.requester = { $in: deptUserIds };
+    } else if (req.user.role === 'department_admin') {
+      if (req.user.departmentAdminType !== 'store' && req.user.departmentAdminType !== 'management' && req.user.departmentAdminType !== 'accounts') {
+        const User = require('../models/User');
+        const deptUsers = await User.find({ department: req.user.department }).select('_id');
+        const deptUserIds = deptUsers.map(u => u._id);
+        filter.requester = { $in: deptUserIds };
+      }
+    }
+    const ExchangeRequest = require('../models/ExchangeRequest');
+    const requests = await ExchangeRequest.find(filter)
+      .populate('requester', 'fullName employeeId')
+      .populate('approvedBy', 'fullName employeeId')
+      .sort({ createdAt: -1 });
+    res.json({ data: requests });
+  } catch (error) {
+    console.error('Get all exchange requests error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
