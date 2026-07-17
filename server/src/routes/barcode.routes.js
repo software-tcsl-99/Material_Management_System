@@ -22,6 +22,7 @@ router.get('/:barcode', requirePermission('barcode:view'), barcodeController.get
 router.post('/transfer', requirePermission('transfer:create'), barcodeController.transferBarcode);
 router.post('/handle-transfer', requirePermission('transfer:create', 'transfer:approve'), barcodeController.handleTransfer);
 router.post('/return', requirePermission('return:create'), barcodeController.returnBarcode);
+router.post('/returns/bulk-accept', requirePermission('return:accept'), barcodeController.bulkAcceptReturns);
 router.put('/return/:returnId/accept', requirePermission('return:accept'), barcodeController.acceptReturn);
 router.put('/return/:returnId/handler-action', barcodeController.handleReturnHandlerAction);
 router.put('/return/:returnId/assign-handler', barcodeController.assignReturnHandler);

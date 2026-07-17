@@ -1207,6 +1207,10 @@ exports.receiveTransaction = async (req, res) => {
       return res.status(404).json({ message: 'Transaction not found.' });
     }
 
+    if (['active', 'received', 'closed'].includes(transaction.status)) {
+      return res.status(400).json({ message: 'Transaction has already been received.' });
+    }
+
     transaction.status = 'active';
     addTimeline(transaction, 'Received', `Materials received in ${materialCondition} condition. ${remarks || ''}`, req.user._id);
     await transaction.save();

@@ -252,6 +252,10 @@ exports.handleTransfer = async (req, res) => {
     const transfer = await Transfer.findById(transferId);
     if (!transfer) return res.status(404).json({ message: 'Transfer not found.' });
 
+    if (['completed', 'rejected', 'cancelled'].includes(transfer.status)) {
+      return res.status(400).json({ message: 'This transfer request has already been processed.' });
+    }
+
     // Check if the actor is Management or Super Admin
     const isManagement = (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management') || req.user.role === 'super_admin';
 
@@ -770,6 +774,233 @@ exports.acceptReturn = async (req, res) => {
 };
 
 /**
+ * Store accepts multiple returns in bulk (creating one Tally voucher per source godown)
+ */
+exports.bulkAcceptReturns = async (req, res) => {
+  try {
+    const { returnIds } = req.body;
+    if (!returnIds || !Array.isArray(returnIds) || returnIds.length === 0) {
+      return res.status(400).json({ message: 'Invalid or empty returnIds.' });
+    }
+
+    const Return = require('../models/Return');
+    const Barcode = require('../models/Barcode');
+    const Transaction = require('../models/Transaction');
+    const User = require('../models/User');
+    const tallyController = require('./tally.controller');
+
+    const acceptedReturns = [];
+    const tallyGroups = {};
+
+    for (const returnId of returnIds) {
+      const returnDoc = await Return.findById(returnId);
+      if (!returnDoc) continue;
+
+      returnDoc.status = 'completed';
+      returnDoc.store = req.user._id;
+      returnDoc.receivedAt = new Date();
+      await returnDoc.save();
+
+      // Update barcode
+      const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
+      if (!bc) continue;
+
+      if (bc.status === 'Exchanged') {
+        bc.status = 'Returned';
+        bc.owner = req.user._id; // Store user
+        bc.history.push({
+          action: 'Returned to Store (Exchange Completed)',
+          user: req.user._id,
+          remarks: 'Store received and confirmed warranty return of old barcode',
+          timestamp: new Date()
+        });
+        bc.ownershipHistory.push({
+          user: req.user._id,
+          action: 'returned',
+          remarks: 'Returned to store (exchanged barcode)',
+        });
+        await bc.save();
+
+        const ExchangeRequest = require('../models/ExchangeRequest');
+        await ExchangeRequest.findOneAndUpdate(
+          { oldBarcode: bc.barcode, status: 'approved' },
+          { returnStatus: 'accepted_by_store' }
+        );
+
+        // Update transaction status & counts for the exchanged barcode
+        const transaction = await Transaction.findOne({ transactionId: bc.transactionId });
+        if (transaction) {
+          transaction.materials = transaction.materials.map(m => {
+            if (m.barcodes) {
+              m.barcodes = m.barcodes.map(b => {
+                const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+                if (bStr === bc.barcode) {
+                  b.status = 'Returned';
+                }
+                return b;
+              });
+            }
+            return m;
+          });
+          transaction.returnedItems = (transaction.returnedItems || 0) + 1;
+
+          // If there is still an active barcode in this transaction, it must remain active (not closed!)
+          const hasActive = await Barcode.findOne({ transactionId: transaction.transactionId, status: 'Active' });
+          if (hasActive) {
+            transaction.status = 'active';
+            transaction.chatLocked = false;
+            transaction.closedAt = undefined;
+            transaction.closedBy = undefined;
+          } else {
+            // Check if all items returned or closed
+            if ((transaction.returnedItems || 0) + (transaction.closedItems || 0) >= transaction.totalItems) {
+              transaction.status = 'closed';
+              transaction.closedAt = new Date();
+              transaction.closedBy = req.user._id;
+              transaction.chatLocked = true;
+              transaction.timeline.push({
+                action: 'Transaction Closed',
+                description: 'All items returned or closed/converted',
+                user: req.user._id,
+              });
+            }
+          }
+          await transaction.save();
+        }
+      } else {
+        bc.status = 'Returned';
+        bc.owner = req.user._id; // Store user
+        bc.history.push({
+          action: 'Returned to Store',
+          user: req.user._id,
+          remarks: 'Store received and confirmed return',
+        });
+        bc.ownershipHistory.push({
+          user: req.user._id,
+          action: 'returned',
+          remarks: 'Returned to store',
+        });
+        await bc.save();
+
+        // Update transaction counts
+        const transaction = await Transaction.findOne({ transactionId: bc.transactionId });
+        if (transaction) {
+          // Update barcode status inside transaction materials loop
+          transaction.materials = transaction.materials.map(m => {
+            if (m.barcodes) {
+              m.barcodes = m.barcodes.map(b => {
+                const bStr = typeof b === 'string' ? b : (b.barcode || b._id?.toString());
+                if (bStr === bc.barcode) {
+                  b.status = 'Returned';
+                }
+                return b;
+              });
+            }
+            return m;
+          });
+          transaction.returnedItems = (transaction.returnedItems || 0) + 1;
+          transaction.activeItems = Math.max(0, (transaction.activeItems || 0) - 1);
+
+          // Check if all items returned or closed
+          if ((transaction.returnedItems || 0) + (transaction.closedItems || 0) >= transaction.totalItems) {
+            transaction.status = 'closed';
+            transaction.closedAt = new Date();
+            transaction.closedBy = req.user._id;
+            transaction.chatLocked = true;
+            transaction.timeline.push({
+              action: 'Transaction Closed',
+              description: 'All items returned or closed/converted',
+              user: req.user._id,
+            });
+          } else {
+            transaction.status = 'partially_returned';
+          }
+
+          await transaction.save();
+        }
+      }
+
+      await createNotification(
+        returnDoc.fromUser,
+        'return_accepted',
+        'Return Accepted',
+        `Return of ${returnDoc.barcode} has been accepted by store`,
+        returnDoc.transactionId,
+        returnDoc.barcode
+      );
+
+      // Group returns by source godown for Tally
+      const fromUserObj = await User.findById(returnDoc.fromUser);
+      const sourceGodown = fromUserObj?.fullName || 'Main Location';
+
+      if (!tallyGroups[sourceGodown]) {
+        tallyGroups[sourceGodown] = {
+          sourceGodown,
+          firstReturnId: returnDoc._id.toString(),
+          materials: {}
+        };
+      }
+
+      // Find material info from the parent transaction
+      const parentTxn = await Transaction.findOne({ transactionId: returnDoc.transactionId || bc.transactionId });
+      let matchedMat = null;
+      if (parentTxn) {
+        matchedMat = parentTxn.materials.find(m =>
+          m.barcodes && m.barcodes.some(b => {
+            const bStr = typeof b === 'string' ? b : (b.barcode || '');
+            return bStr === returnDoc.barcode;
+          })
+        );
+      }
+
+      const matName = matchedMat ? matchedMat.name : bc.materialName;
+      const unit = matchedMat ? matchedMat.unit : 'pcs';
+      const price = matchedMat ? matchedMat.price : 0;
+
+      if (!tallyGroups[sourceGodown].materials[matName]) {
+        tallyGroups[sourceGodown].materials[matName] = {
+          name: matName,
+          quantity: 0,
+          unit,
+          price,
+          barcodes: []
+        };
+      }
+      tallyGroups[sourceGodown].materials[matName].quantity += 1;
+      tallyGroups[sourceGodown].materials[matName].barcodes.push(returnDoc.barcode);
+
+      acceptedReturns.push(returnDoc);
+    }
+
+    // Now post to Tally (one voucher per source godown)
+    for (const group of Object.values(tallyGroups)) {
+      try {
+        const destGodown = 'GOKUL SHIRGAON';
+        const materialForTally = Object.values(group.materials);
+
+        const voucherNum = await tallyController.createTallyGodownTransfer(
+          group.firstReturnId,
+          'return',
+          group.sourceGodown,
+          destGodown,
+          materialForTally
+        );
+        if (voucherNum) {
+          console.log(`Tally bulk return voucher created: ${voucherNum} for godown ${group.sourceGodown}`);
+        }
+      } catch (tallyErr) {
+        console.error(`Failed to create Tally bulk godown transfer voucher for godown ${group.sourceGodown}:`, tallyErr.message);
+      }
+    }
+
+    res.json({ message: 'Returns accepted.', returns: acceptedReturns });
+  } catch (error) {
+    console.error('Bulk accept returns error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
+};
+
+/**
  * Handler actions for return requests (Collect / Deliver)
  */
 exports.handleReturnHandlerAction = async (req, res) => {
@@ -792,7 +1023,7 @@ exports.handleReturnHandlerAction = async (req, res) => {
       returnDoc.collectedAt = new Date();
       returnDoc.returnHandler = req.user._id; // Set current user who collected it as the handler
       returnDoc.previousHandler = null; // Clear previous handler on collection
-      
+
       const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
       if (bc) {
         bc.history.push({
@@ -805,7 +1036,7 @@ exports.handleReturnHandlerAction = async (req, res) => {
     } else if (actionType === 'deliver') {
       returnDoc.status = 'store_received';
       returnDoc.receivedAt = new Date();
-      
+
       const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
       if (bc) {
         bc.history.push({
@@ -827,7 +1058,7 @@ exports.handleReturnHandlerAction = async (req, res) => {
         returnDoc.status = 'rejected';
         returnDoc.returnHandler = null;
       }
-      
+
       const bc = await Barcode.findOne({ barcode: returnDoc.barcode });
       if (bc) {
         bc.history.push({
@@ -843,7 +1074,7 @@ exports.handleReturnHandlerAction = async (req, res) => {
         const parentTxn = await Transaction.findOne({ transactionId: returnDoc.transactionId });
         if (parentTxn) {
           parentTxn.handler = isReverted ? prevHandlerId : null;
-          
+
           if (isReverted) {
             const User = require('../models/User');
             const prevHandlerUser = await User.findById(prevHandlerId);
@@ -899,7 +1130,7 @@ exports.handleReturnHandlerAction = async (req, res) => {
     try {
       const fs = require('fs');
       fs.writeFileSync('error.log', 'Handle return handler action error:\n' + (error.stack || error.message || String(error)));
-    } catch (e) {}
+    } catch (e) { }
     res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
@@ -1112,7 +1343,7 @@ exports.approveSplitRequest = async (req, res) => {
 
       transaction.totalItems = (transaction.totalItems || 0) + 1;
       transaction.activeItems = (transaction.activeItems || 0) + 1;
-      
+
       transaction.timeline.push({
         action: 'Split Approved',
         description: reason || `Store approved split. New barcode ${newBarcode} registered and active.`,
@@ -1123,30 +1354,34 @@ exports.approveSplitRequest = async (req, res) => {
       // Post Tally Autofill Stock Journal for split barcode
       try {
         const tallyController = require('./tally.controller');
-        const requesterGodown = godown || requesterUser.fullName || 'Main Location';
+        const isStoreGodown = (gName) => {
+          const clean = (gName || '').trim().toLowerCase();
+          return !clean || clean.includes('gokul') || clean.includes('shirgaon') || clean.includes('main') || clean.includes('primary') || clean.includes('store');
+        };
+
+        const employeeGodown = requesterUser.fullName || 'Main Location';
+        const requesterGodown = employeeGodown;
         const materialInfo = {
           materialName: materialName || parentBc.materialName,
           unit: unit || parentMaterial?.unit || 'pcs',
           price: (price !== undefined && price !== null ? Number(price) : (rate !== undefined && rate !== null ? Number(rate) : (parentMaterial?.price || 0)))
         };
-        
+
         let parentUnit = parentMaterial?.unit || 'pcs';
         let parentPrice = parentMaterial?.price || 0;
-        let parentGodown = 'GOKUL SHIRGAON';
+        let parentGodown = employeeGodown;
         if (parentBc.owner) {
           const ownerUser = parentBc.owner;
-          if (ownerUser.role === 'department_admin' && ownerUser.departmentAdminType === 'store') {
-            parentGodown = 'GOKUL SHIRGAON';
-          } else {
-            parentGodown = ownerUser.fullName || 'GOKUL SHIRGAON';
+          if (ownerUser.role !== 'department_admin' || ownerUser.departmentAdminType !== 'store') {
+            parentGodown = ownerUser.fullName || employeeGodown;
           }
         }
         let parentTallyName = parentBc.materialName;
-        
+
         try {
           const tallyDetails = await tallyController.getBarcodeTallyDetails(parentBc.barcode);
           if (tallyDetails) {
-            if (tallyDetails.godown) {
+            if (tallyDetails.godown && !isStoreGodown(tallyDetails.godown)) {
               parentGodown = tallyDetails.godown;
               console.log(`Resolved live Tally godown for parent barcode ${parentBc.barcode}: ${parentGodown}`);
             }
@@ -1187,7 +1422,7 @@ exports.approveSplitRequest = async (req, res) => {
         // Revert DB updates for transactional integrity
         try {
           await Barcode.deleteOne({ _id: newBcDoc._id });
-          
+
           parentBc.history.pop();
           await parentBc.save();
 
@@ -1460,7 +1695,7 @@ exports.getStoreAvailableBarcodes = async (req, res) => {
     ]);
 
     const parser2 = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
-    
+
     // Parse Stock Items
     let stockItems = [];
     if (stockRes.data) {
@@ -1554,12 +1789,12 @@ exports.getStoreAvailableBarcodes = async (req, res) => {
         }
 
         const cleanGodown = godownName ? godownName.trim().toLowerCase() : '';
-        const isStoreGodown = !cleanGodown || 
-                              cleanGodown.includes('gokul') || 
-                              cleanGodown.includes('shirgaon') || 
-                              cleanGodown.includes('main') || 
-                              cleanGodown.includes('primary') || 
-                              cleanGodown.includes('store');
+        const isStoreGodown = !cleanGodown ||
+          cleanGodown.includes('gokul') ||
+          cleanGodown.includes('shirgaon') ||
+          cleanGodown.includes('main') ||
+          cleanGodown.includes('primary') ||
+          cleanGodown.includes('store');
 
         if (isStoreGodown && batchName && batchName.trim() && batchName.trim().toLowerCase() !== 'primary batch') {
           const bcStr = batchName.trim();
@@ -1606,7 +1841,7 @@ exports.getStoreAvailableBarcodes = async (req, res) => {
 
         if (entryMatName) {
           const cleanEntryName = entryMatName.trim().toLowerCase();
-          
+
           // Match matching stock item names
           let nameMatches = cleanEntryName === targetName || cleanEntryName.includes(targetName) || targetName.includes(cleanEntryName);
           if (!nameMatches && targetWords.length > 0 && targetWords.every(word => cleanEntryName.includes(word))) {
@@ -1631,8 +1866,8 @@ exports.getStoreAvailableBarcodes = async (req, res) => {
 
     if (barcodesList.length > 0) {
       const Barcode = require('../models/Barcode');
-      const activeBcs = await Barcode.find({ 
-        status: { $in: ['Active', 'pending_acceptance'] } 
+      const activeBcs = await Barcode.find({
+        status: { $in: ['Active', 'pending_acceptance'] }
       }).select('barcode');
       const activeBcSet = new Set(activeBcs.map(b => b.barcode));
 
@@ -1736,7 +1971,7 @@ exports.getPendingTransfers = async (req, res) => {
 exports.getPendingReturns = async (req, res) => {
   try {
     const isStore = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store');
-    
+
     let filter = {};
     if (isStore) {
       // Store only sees returns that are pending (direct) or store_received (delivered by handler)
@@ -1918,6 +2153,9 @@ exports.createCloseRequest = async (req, res) => {
 
     const { managementApprover, customerName } = req.body;
 
+    const isBypassed = documentType === 'DC Internal' && (req.user.role === 'team_lead' || req.user.role === 'department_admin' || req.user.role === 'super_admin');
+    const initialStatus = isBypassed ? 'pending_store_acceptance' : 'pending';
+
     const CloseRequest = require('../models/CloseRequest');
     const closeReq = await CloseRequest.create({
       transactionId: bc.transactionId,
@@ -1928,7 +2166,7 @@ exports.createCloseRequest = async (req, res) => {
       requester: req.user._id,
       managementApprover: ['DC FOC', 'Invoice'].includes(documentType) ? managementApprover : undefined,
       customerName: documentType === 'DC FOC' ? customerName : undefined,
-      status: 'pending'
+      status: initialStatus
     });
 
     bc.closeRequest = {
@@ -1938,7 +2176,7 @@ exports.createCloseRequest = async (req, res) => {
       requester: req.user._id,
       managementApprover: ['DC FOC', 'Invoice'].includes(documentType) ? managementApprover : undefined,
       customerName: documentType === 'DC FOC' ? customerName : undefined,
-      status: 'pending'
+      status: initialStatus
     };
 
     bc.history.push({
@@ -2034,10 +2272,10 @@ exports.handleCloseRequest = async (req, res) => {
           return res.status(403).json({ message: 'Only the Team Lead of the requester\'s department can approve this DC Internal request.' });
         }
       } else if (closeReq.documentType === 'DC FOC' || closeReq.documentType === 'Invoice') {
-        if (req.user.role !== 'super_admin' && 
-            (req.user.role !== 'department_admin' || 
-             req.user.departmentAdminType !== 'management' || 
-             closeReq.managementApprover?.toString() !== req.user._id.toString())) {
+        if (req.user.role !== 'super_admin' &&
+          (req.user.role !== 'department_admin' ||
+            req.user.departmentAdminType !== 'management' ||
+            closeReq.managementApprover?.toString() !== req.user._id.toString())) {
           return res.status(403).json({ message: 'Only the selected Management approver can approve this conversion request.' });
         }
       } else {
@@ -2271,6 +2509,55 @@ exports.handleCloseRequest = async (req, res) => {
             console.error('Failed to create Tally Delivery Note voucher:', tallyErr.message);
             return res.status(400).json({ message: `Tally integration error: ${tallyErr.message}` });
           }
+        } else if (closeReq.documentType === 'DC Internal') {
+          try {
+            const tallyController = require('./tally.controller');
+            const User = require('../models/User');
+            const fromUserObj = await User.findById(closeReq.requester);
+
+            const employeeGodown = fromUserObj?.fullName || 'Main Location';
+
+            const matchedMat = bc.materialName || 'Unknown Material';
+
+            const Transaction = require('../models/Transaction');
+            const parentTxn = await Transaction.findOne({ transactionId: bc.transactionId });
+            let matchedUnit = bc.unit || 'pcs';
+            let matchedPrice = bc.price || 0;
+            if (parentTxn) {
+              const mMat = parentTxn.materials.find(m =>
+                m.barcodes && m.barcodes.some(b => {
+                  const bStr = typeof b === 'string' ? b : (b.barcode || '');
+                  return bStr === closeReq.barcode;
+                })
+              );
+              if (mMat) {
+                matchedUnit = mMat.unit || matchedUnit;
+                matchedPrice = mMat.price || matchedPrice;
+              }
+            }
+
+            const materialForTally = [{
+              name: matchedMat,
+              quantity: 1,
+              unit: matchedUnit,
+              price: matchedPrice,
+              barcodes: [closeReq.barcode]
+            }];
+
+            const narrationText = `DC Internal ${closeReq.documentNumber || ''}`;
+
+            tallyVoucherNum = await tallyController.createTallyGodownTransfer(
+              narrationText,
+              'return',
+              employeeGodown,
+              employeeGodown,
+              materialForTally
+            );
+            console.log(`Tally DC Internal Transfer voucher created: ${tallyVoucherNum} for barcode ${closeReq.barcode}`);
+          } catch (tallyErr) {
+            console.error('Failed to create Tally Godown Transfer for DC Internal:', tallyErr.message);
+            return res.status(400).json({ message: `Tally integration error: ${tallyErr.message}` });
+          }
         }
 
         closeReq.status = 'approved';
@@ -2278,6 +2565,7 @@ exports.handleCloseRequest = async (req, res) => {
         closeReq.approvedAt = new Date();
 
         bc.status = 'Closed';
+        bc.owner = req.user._id; // Remove completely from employee and assign to the store admin
         bc.closeRequest.status = 'approved';
         bc.history.push({
           action: 'Closed',
@@ -2347,6 +2635,7 @@ exports.handleCloseRequest = async (req, res) => {
 exports.createExchangeRequest = async (req, res) => {
   try {
     const { oldBarcode, warrantyReason } = req.body;
+    const ExchangeRequest = require('../models/ExchangeRequest');
     const normalizedOld = oldBarcode ? oldBarcode.trim().toUpperCase() : '';
 
     if (!normalizedOld || !warrantyReason) {
@@ -2661,7 +2950,7 @@ exports.handleExchangeRequest = async (req, res) => {
       );
     } else if (action === 'reject') {
       exchangeReq.status = 'rejected';
-      
+
       oldBc.history.push({
         action: 'Exchange Rejected',
         user: req.user._id,
@@ -2685,8 +2974,8 @@ exports.handleExchangeRequest = async (req, res) => {
     await exchangeReq.save();
     const Transaction = require('../models/Transaction');
     const originalTxn = await Transaction.findOne({ transactionId: exchangeReq.transactionId });
-    res.json({ 
-      message: `Exchange request successfully processed.`, 
+    res.json({
+      message: `Exchange request successfully processed.`,
       data: exchangeReq,
       transactionDbId: originalTxn ? originalTxn._id : null
     });

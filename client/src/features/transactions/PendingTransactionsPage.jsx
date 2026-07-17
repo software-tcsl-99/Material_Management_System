@@ -777,9 +777,8 @@ const PendingTransactionsPage = () => {
     setSubmitting(true);
     try {
       if (selectedItem.items && selectedItem.items.length > 0) {
-        for (const item of selectedItem.items) {
-          await api.put(`/barcodes/return/${item._id}/accept`);
-        }
+        const returnIds = selectedItem.items.map(item => item._id);
+        await api.post('/barcodes/returns/bulk-accept', { returnIds });
       } else {
         await api.put(`/barcodes/return/${selectedItem._id}/accept`);
       }

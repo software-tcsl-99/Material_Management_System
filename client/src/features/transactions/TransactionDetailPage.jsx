@@ -2080,7 +2080,9 @@ const TransactionDetailPage = () => {
                         const bcStr = bc.barcode || bc;
                         const bcDetail = barcodes.find(b => b.barcode === bcStr);
                         const status = bcDetail?.status || bc.status || 'Active';
-                        const ownerName = bcDetail?.owner?.fullName || bc.owner?.fullName || txn.requester?.fullName || 'Requester';
+                        const ownerName = (bcDetail?.status?.toUpperCase() === 'CLOSED' && bcDetail?.closeRequest?.documentType === 'DC FOC' && bcDetail?.closeRequest?.customerName)
+                          ? bcDetail.closeRequest.customerName
+                          : (bcDetail?.owner?.fullName || bc.owner?.fullName || txn.requester?.fullName || 'Requester');
 
                         return (
                           <div

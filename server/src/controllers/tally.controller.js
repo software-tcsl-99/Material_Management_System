@@ -315,10 +315,8 @@ exports.createTallyStockJournal = async (transactionId, destinationGodown, mater
     }
 
     // 2. Format Date (YYYYMMDD) - Always use the 1st day of the month for Tally Educational Mode date compatibility
-    const today = new Date();
-    const YYYY = today.getFullYear();
-    const MM = String(today.getMonth() + 1).padStart(2, '0');
-    const dateStr = `${YYYY}${MM}01`;
+    const dateStr = process.env.TALLY_TEST_DATE || '20260301';
+    const esc = (str) => (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     // 3. Build XML voucher lines
     let consumptionLines = '';
@@ -345,16 +343,18 @@ exports.createTallyStockJournal = async (transactionId, destinationGodown, mater
             <BATCHALLOCATIONS.LIST>
               <BATCHNAME>${escapedBc}</BATCHNAME>
               <GODOWNNAME>GOKUL SHIRGAON</GODOWNNAME>
+              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
               <RATE>${price}</RATE>
               <AMOUNT>${price}</AMOUNT>
-              <ACTUALQTY>-1 ${unit}</ACTUALQTY>
-              <BILLEDQTY>-1 ${unit}</BILLEDQTY>
+              <ACTUALQTY>1 ${unit}</ACTUALQTY>
+              <BILLEDQTY>1 ${unit}</BILLEDQTY>
             </BATCHALLOCATIONS.LIST>`;
 
             batchInLines += `
             <BATCHALLOCATIONS.LIST>
               <BATCHNAME>${escapedBc}</BATCHNAME>
               <GODOWNNAME>${destinationGodown.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</GODOWNNAME>
+              <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
               <RATE>${price}</RATE>
               <AMOUNT>-${price}</AMOUNT>
               <ACTUALQTY>1 ${unit}</ACTUALQTY>
@@ -368,16 +368,18 @@ exports.createTallyStockJournal = async (transactionId, destinationGodown, mater
         <BATCHALLOCATIONS.LIST>
           <BATCHNAME>Primary Batch</BATCHNAME>
           <GODOWNNAME>GOKUL SHIRGAON</GODOWNNAME>
+          <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
           <RATE>${price}</RATE>
           <AMOUNT>${amount}</AMOUNT>
-          <ACTUALQTY>-${qty} ${unit}</ACTUALQTY>
-          <BILLEDQTY>-${qty} ${unit}</BILLEDQTY>
+          <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
+          <BILLEDQTY>${qty} ${unit}</BILLEDQTY>
         </BATCHALLOCATIONS.LIST>`;
 
         batchInLines = `
         <BATCHALLOCATIONS.LIST>
           <BATCHNAME>Primary Batch</BATCHNAME>
           <GODOWNNAME>${destinationGodown.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</GODOWNNAME>
+          <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
           <RATE>${price}</RATE>
           <AMOUNT>-${amount}</AMOUNT>
           <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
@@ -389,10 +391,11 @@ exports.createTallyStockJournal = async (transactionId, destinationGodown, mater
       consumptionLines += `
       <INVENTORYENTRIESOUT.LIST>
         <STOCKITEMNAME>${name}</STOCKITEMNAME>
+        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
         <RATE>${price}</RATE>
         <AMOUNT>${amount}</AMOUNT>
-        <ACTUALQTY>-${qty} ${unit}</ACTUALQTY>
-        <BILLEDQTY>-${qty} ${unit}</BILLEDQTY>
+        <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
+        <BILLEDQTY>${qty} ${unit}</BILLEDQTY>
         ${batchOutLines}
       </INVENTORYENTRIESOUT.LIST>`;
 
@@ -400,6 +403,7 @@ exports.createTallyStockJournal = async (transactionId, destinationGodown, mater
       productionLines += `
       <INVENTORYENTRIESIN.LIST>
         <STOCKITEMNAME>${name}</STOCKITEMNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
         <RATE>${price}</RATE>
         <AMOUNT>-${amount}</AMOUNT>
         <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
@@ -427,6 +431,9 @@ exports.createTallyStockJournal = async (transactionId, destinationGodown, mater
             <VOUCHER VCHTYPE="Gokul Shirgaon Godown Transfer" ACTION="Create">
               <DATE>${dateStr}</DATE>
               <VOUCHERTYPENAME>Gokul Shirgaon Godown Transfer</VOUCHERTYPENAME>
+              <CLASSNAME>Gokul Shirgaon Godown Transfer</CLASSNAME>
+              <DESTINATIONGODOWN>${esc(destinationGodown)}</DESTINATIONGODOWN>
+              <ISTRANSFER>Yes</ISTRANSFER>
               <NARRATION>Material movement dispatch for transaction ${transactionId}</NARRATION>
               ${productionLines}
               ${consumptionLines}
@@ -569,10 +576,7 @@ exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, 
     }
 
     // 2. Format Date (YYYYMMDD) - Use 1st day of the month for Tally Educational Mode compatibility
-    const today = new Date();
-    const YYYY = today.getFullYear();
-    const MM = String(today.getMonth() + 1).padStart(2, '0');
-    const dateStr = `${YYYY}${MM}01`;
+    const dateStr = process.env.TALLY_TEST_DATE || '20260301';
 
     // 3. Escape XML helper
     const esc = (str) => (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -602,16 +606,18 @@ exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, 
             <BATCHALLOCATIONS.LIST>
               <BATCHNAME>${escapedBc}</BATCHNAME>
               <GODOWNNAME>${esc(sourceGodown)}</GODOWNNAME>
+              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
               <RATE>${price}</RATE>
               <AMOUNT>${price}</AMOUNT>
-              <ACTUALQTY>-1 ${unit}</ACTUALQTY>
-              <BILLEDQTY>-1 ${unit}</BILLEDQTY>
+              <ACTUALQTY>1 ${unit}</ACTUALQTY>
+              <BILLEDQTY>1 ${unit}</BILLEDQTY>
             </BATCHALLOCATIONS.LIST>`;
 
             batchInLines += `
             <BATCHALLOCATIONS.LIST>
               <BATCHNAME>${escapedBc}</BATCHNAME>
               <GODOWNNAME>${esc(destinationGodown)}</GODOWNNAME>
+              <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
               <RATE>${price}</RATE>
               <AMOUNT>-${price}</AMOUNT>
               <ACTUALQTY>1 ${unit}</ACTUALQTY>
@@ -624,16 +630,18 @@ exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, 
         <BATCHALLOCATIONS.LIST>
           <BATCHNAME>Primary Batch</BATCHNAME>
           <GODOWNNAME>${esc(sourceGodown)}</GODOWNNAME>
+          <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
           <RATE>${price}</RATE>
           <AMOUNT>${amount}</AMOUNT>
-          <ACTUALQTY>-${qty} ${unit}</ACTUALQTY>
-          <BILLEDQTY>-${qty} ${unit}</BILLEDQTY>
+          <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
+          <BILLEDQTY>${qty} ${unit}</BILLEDQTY>
         </BATCHALLOCATIONS.LIST>`;
 
         batchInLines = `
         <BATCHALLOCATIONS.LIST>
           <BATCHNAME>Primary Batch</BATCHNAME>
           <GODOWNNAME>${esc(destinationGodown)}</GODOWNNAME>
+          <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
           <RATE>${price}</RATE>
           <AMOUNT>-${amount}</AMOUNT>
           <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
@@ -645,10 +653,11 @@ exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, 
       consumptionLines += `
       <INVENTORYENTRIESOUT.LIST>
         <STOCKITEMNAME>${name}</STOCKITEMNAME>
+        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
         <RATE>${price}</RATE>
         <AMOUNT>${amount}</AMOUNT>
-        <ACTUALQTY>-${qty} ${unit}</ACTUALQTY>
-        <BILLEDQTY>-${qty} ${unit}</BILLEDQTY>
+        <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
+        <BILLEDQTY>${qty} ${unit}</BILLEDQTY>
         ${batchOutLines}
       </INVENTORYENTRIESOUT.LIST>`;
 
@@ -656,6 +665,7 @@ exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, 
       productionLines += `
       <INVENTORYENTRIESIN.LIST>
         <STOCKITEMNAME>${name}</STOCKITEMNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
         <RATE>${price}</RATE>
         <AMOUNT>-${amount}</AMOUNT>
         <ACTUALQTY>${qty} ${unit}</ACTUALQTY>
@@ -687,6 +697,9 @@ exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, 
             <VOUCHER VCHTYPE="Gokul Shirgaon Godown Transfer" ACTION="Create">
               <DATE>${dateStr}</DATE>
               <VOUCHERTYPENAME>Gokul Shirgaon Godown Transfer</VOUCHERTYPENAME>
+              <CLASSNAME>Gokul Shirgaon Godown Transfer</CLASSNAME>
+              <DESTINATIONGODOWN>${esc(destinationGodown)}</DESTINATIONGODOWN>
+              <ISTRANSFER>Yes</ISTRANSFER>
               <NARRATION>${narrationText}</NARRATION>
               ${productionLines}
               ${consumptionLines}
@@ -772,6 +785,140 @@ exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, 
  * @param {string} requesterGodown - The godown name where the material holder has the stock
  * @returns {string|undefined} - The Tally voucher number if successfully created
  */
+/**
+ * Resolves a material name to the closest matching Stock Item name in Tally Prime
+ */
+const resolveTallyItemName = async (inputName) => {
+  if (!inputName) return null;
+  const cleanInput = inputName.trim().toLowerCase();
+  
+  try {
+    const liveTallyUrl = process.env.TALLY_LIVE_URL || 'http://localhost:9000';
+    if (!liveTallyUrl) return { name: inputName, unit: 'pcs' };
+
+    // 1. Fetch active company name
+    const COMP_QUERY = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>ActiveCompanies</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="ActiveCompanies" ISINITIALIZE="Yes">
+                <TYPE>Company</TYPE>
+                <FETCH>Name</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    const compResponse = await axios.post(liveTallyUrl, COMP_QUERY, {
+      headers: { 'Content-Type': 'text/xml' },
+      timeout: 1500
+    });
+
+    const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
+    const parsedComp = await parser.parseStringPromise(compResponse.data);
+    const activeCompanyObj = parsedComp?.ENVELOPE?.BODY?.DATA?.COLLECTION?.COMPANY;
+    let companyName = '';
+    if (activeCompanyObj) {
+      if (typeof activeCompanyObj === 'string') {
+        companyName = activeCompanyObj;
+      } else if (typeof activeCompanyObj === 'object') {
+        if (activeCompanyObj.NAME) {
+          companyName = typeof activeCompanyObj.NAME === 'object' ? activeCompanyObj.NAME._ : activeCompanyObj.NAME;
+        } else if (activeCompanyObj.$ && activeCompanyObj.$.NAME) {
+          companyName = activeCompanyObj.$.NAME;
+        }
+      }
+    }
+
+    if (!companyName) return { name: inputName, unit: 'pcs' };
+
+    // 2. Fetch all stock items from Tally
+    const xmlPayload = `
+    <ENVELOPE>
+      <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>StockItemsCollection</ID>
+      </HEADER>
+      <BODY>
+        <DESC>
+          <STATICVARIABLES>
+            <SVCURRENTCOMPANY>${companyName.trim()}</SVCURRENTCOMPANY>
+            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          </STATICVARIABLES>
+          <TDL>
+            <TDLMESSAGE>
+              <COLLECTION NAME="StockItemsCollection" ISINITIALIZE="Yes">
+                <TYPE>StockItem</TYPE>
+                <FETCH>Name, BaseUnits</FETCH>
+              </COLLECTION>
+            </TDLMESSAGE>
+          </TDL>
+        </DESC>
+      </BODY>
+    </ENVELOPE>`;
+
+    const response = await axios.post(liveTallyUrl, xmlPayload, {
+      headers: { 'Content-Type': 'application/xml' },
+      timeout: 2000
+    });
+
+    const parsedData = await parser.parseStringPromise(response.data);
+    const rawItems = parsedData?.ENVELOPE?.BODY?.DATA?.COLLECTION?.STOCKITEM || [];
+    const stockItems = Array.isArray(rawItems) ? rawItems : [rawItems];
+
+    const items = stockItems.map(item => {
+      let name = '';
+      if (item.$ && item.$.NAME) name = item.$.NAME;
+      else if (item.NAME) name = typeof item.NAME === 'string' ? item.NAME : (item.NAME._ || '');
+      
+      let unit = 'pcs';
+      if (item.BASEUNITS) {
+        unit = typeof item.BASEUNITS === 'object' ? (item.BASEUNITS._ || 'pcs') : item.BASEUNITS;
+        if (unit === 'Not Applicable') unit = 'pcs';
+      }
+      return { name: name.trim(), unit };
+    }).filter(i => i.name);
+
+    // 3. Find matches (Preferring TC prefixed items for finished goods)
+    if (!cleanInput.startsWith('tc ')) {
+      const tcMatch = items.find(i => i.name.toLowerCase() === `tc ${cleanInput}`);
+      if (tcMatch) return tcMatch;
+    }
+
+    // Exact match
+    const exact = items.find(i => i.name.toLowerCase() === cleanInput);
+    if (exact) return exact;
+
+    // Substring match
+    const subMatch = items.find(i => i.name.toLowerCase().includes(cleanInput));
+    if (subMatch) return subMatch;
+
+    // Substring reverse match
+    const revMatch = items.find(i => cleanInput.includes(i.name.toLowerCase()));
+    if (revMatch) return revMatch;
+
+  } catch (err) {
+    console.warn('Failed to resolve stock item name from Tally:', err.message);
+  }
+
+  return { name: inputName, unit: 'pcs' };
+};
+
 exports.createTallySplitStockJournal = async (splitId, parentBc, newBcDoc, parentMaterial, requesterGodown, parentGodown) => {
   try {
     const liveTallyUrl = process.env.TALLY_LIVE_URL || 'http://localhost:9000';
@@ -830,17 +977,28 @@ exports.createTallySplitStockJournal = async (splitId, parentBc, newBcDoc, paren
     }
 
     // 2. Format Date (YYYYMMDD) - Use 1st day of the month for Tally Educational Mode date compatibility
-    const today = new Date();
-    const YYYY = today.getFullYear();
-    const MM = String(today.getMonth() + 1).padStart(2, '0');
-    const dateStr = `${YYYY}${MM}01`;
+    const dateStr = process.env.TALLY_TEST_DATE || '20260301';
 
     // 3. Escape XML helper
     const esc = (str) => (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     const parentName = esc(parentBc.materialName);
     const parentBarcode = esc(parentBc.barcode);
-    const childName = esc(newBcDoc.materialName || parentBc.materialName);
+
+    // Resolve child name using live Tally items list to prevent silent dropping in Tally Prime
+    let childTallyName = newBcDoc.materialName || parentBc.materialName;
+    let childTallyUnit = parentMaterial?.unit || 'pcs';
+    try {
+      const resolved = await resolveTallyItemName(childTallyName);
+      if (resolved) {
+        childTallyName = resolved.name;
+        childTallyUnit = resolved.unit || childTallyUnit;
+        console.log(`Resolved live Tally stock item name for child barcode ${newBcDoc.barcode}: ${childTallyName} (${childTallyUnit})`);
+      }
+    } catch (err) {
+      console.warn(`Failed to resolve Tally item name for child barcode ${newBcDoc.barcode}:`, err.message);
+    }
+    const childName = esc(childTallyName);
     const childBarcode = esc(newBcDoc.barcode);
 
     // Parent unit and price details (fallback to child's info if not explicitly set on parentBc)
@@ -849,7 +1007,7 @@ exports.createTallySplitStockJournal = async (splitId, parentBc, newBcDoc, paren
     const pAmount = pPrice;
 
     // Child unit and price details (from frontend form input)
-    const cUnit = esc(parentMaterial?.unit || 'pcs');
+    const cUnit = esc(childTallyUnit);
     const cPrice = parentMaterial?.price || 0;
     const cAmount = cPrice;
 
@@ -1328,26 +1486,50 @@ exports.createTallyExchangeStockJournal = async (exchangeId, oldBc, newBcDoc, pa
     }
 
     // 2. Format Date (YYYYMMDD) - Use 1st day of the month for Tally Educational Mode date compatibility
-    const today = new Date();
-    const YYYY = today.getFullYear();
-    const MM = String(today.getMonth() + 1).padStart(2, '0');
-    const dateStr = `${YYYY}${MM}01`;
+    const dateStr = process.env.TALLY_TEST_DATE || '20260301';
 
     // 3. Escape XML helper
     const esc = (str) => (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-    const oldName = esc(oldBc.materialName);
+    // Resolve old item name using live Tally items list to prevent silent dropping in Tally Prime
+    let oldTallyName = oldBc.materialName;
+    let oldTallyUnit = oldBc.unit || parentMaterial?.unit || 'Nos';
+    try {
+      const resolved = await resolveTallyItemName(oldTallyName);
+      if (resolved) {
+        oldTallyName = resolved.name;
+        oldTallyUnit = resolved.unit || oldTallyUnit;
+        console.log(`Resolved live Tally stock item name for exchange old barcode ${oldBc.barcode}: ${oldTallyName} (${oldTallyUnit})`);
+      }
+    } catch (err) {
+      console.warn(`Failed to resolve Tally item name for exchange old barcode ${oldBc.barcode}:`, err.message);
+    }
+    const oldName = esc(oldTallyName);
     const oldBarcode = esc(oldBc.barcode);
-    const newName = esc(newBcDoc.materialName || oldBc.materialName);
+
+    // Resolve new item name using live Tally items list to prevent silent dropping in Tally Prime
+    let newTallyName = newBcDoc.materialName || oldBc.materialName;
+    let newTallyUnit = parentMaterial?.unit || 'Nos';
+    try {
+      const resolved = await resolveTallyItemName(newTallyName);
+      if (resolved) {
+        newTallyName = resolved.name;
+        newTallyUnit = resolved.unit || newTallyUnit;
+        console.log(`Resolved live Tally stock item name for exchange child barcode ${newBcDoc.barcode}: ${newTallyName} (${newTallyUnit})`);
+      }
+    } catch (err) {
+      console.warn(`Failed to resolve Tally item name for exchange child barcode ${newBcDoc.barcode}:`, err.message);
+    }
+    const newName = esc(newTallyName);
     const newBarcode = esc(newBcDoc.barcode);
 
     // Old unit and price details
-    const oUnit = esc(oldBc.unit || parentMaterial?.unit || 'Nos');
+    const oUnit = esc(oldTallyUnit);
     const oPrice = oldBc.price !== undefined && oldBc.price !== null ? oldBc.price : (parentMaterial?.price || 0);
     const oAmount = oPrice;
 
     // New unit and price details
-    const nUnit = esc(newBcDoc.unit || parentMaterial?.unit || 'Nos');
+    const nUnit = esc(newTallyUnit);
     const nPrice = newBcDoc.price !== undefined && newBcDoc.price !== null ? newBcDoc.price : (parentMaterial?.price || 0);
     const nAmount = nPrice;
 

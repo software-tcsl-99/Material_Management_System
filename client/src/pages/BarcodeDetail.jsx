@@ -683,7 +683,9 @@ export default function BarcodeDetail() {
               <div>
                 <span className="text-[9px] text-slate-400 font-extrabold tracking-wider block mb-1">Shares / Owner</span>
                 <span className="font-extrabold text-slate-800 dark:text-slate-200 text-xs">
-                  {bc.owner?.fullName || 'Stores'}
+                  {bc.status?.toUpperCase() === 'CLOSED' && bc.closeRequest?.documentType === 'DC FOC' && bc.closeRequest?.customerName
+                    ? bc.closeRequest.customerName
+                    : (bc.owner?.fullName || 'Stores')}
                 </span>
               </div>
               <div>
