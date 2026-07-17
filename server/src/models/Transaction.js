@@ -193,11 +193,19 @@ transactionSchema.pre('save', async function (next) {
   if (!this.transactionId) {
     const now = new Date();
     const year = now.getFullYear();
-    // Count all transactions in current year for sequential numbering
-    const count = await mongoose.model('Transaction').countDocuments({
-      createdAt: { $gte: new Date(year, 0, 1) },
-    });
-    this.transactionId = `TXN-${year}${String(count + 1).padStart(4, '0')}`;
+    // Find the latest transaction created in the current year with TXN-YYYYNNNN format
+    const latestTxn = await mongoose.model('Transaction').findOne({
+      transactionId: new RegExp(`^TXN-${year}`),
+    }).sort({ transactionId: -1 });
+
+    let nextNum = 1;
+    if (latestTxn && latestTxn.transactionId) {
+      const match = latestTxn.transactionId.match(/(\d+)$/);
+      if (match) {
+        nextNum = parseInt(match[1], 10) + 1;
+      }
+    }
+    this.transactionId = `TXN-${year}${String(nextNum).padStart(4, '0')}`;
   }
   next();
 });

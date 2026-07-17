@@ -46,6 +46,24 @@ exports.createTransaction = async (req, res) => {
       isSimplified
     } = req.body;
 
+    const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
+
+    // Validate IDs
+    if (teamLeadId && !isValidObjectId(teamLeadId)) {
+      return res.status(400).json({ message: 'Invalid Team Lead ID format.' });
+    }
+    if (managementApproverId && !isValidObjectId(managementApproverId)) {
+      return res.status(400).json({ message: 'Invalid Management Approver ID format.' });
+    }
+    if (storeId && !isValidObjectId(storeId)) {
+      return res.status(400).json({ message: 'Invalid Store ID format.' });
+    }
+
+    const deptId = req.user.department?._id || req.user.department;
+    if (!deptId || !isValidObjectId(deptId)) {
+      return res.status(400).json({ message: 'User does not belong to a valid department.' });
+    }
+
     if (!materials || materials.length === 0) {
       return res.status(400).json({ message: 'At least one material is required.' });
     }
@@ -104,7 +122,7 @@ exports.createTransaction = async (req, res) => {
     if (!finalTLId && !isBypassed) {
       const User = require('../models/User');
       const deptTL = await User.findOne({
-        department: req.user.department._id || req.user.department,
+        department: deptId,
         role: 'team_lead',
         status: 'active'
       });
@@ -115,7 +133,7 @@ exports.createTransaction = async (req, res) => {
 
     const transaction = await Transaction.create({
       requester: req.user._id,
-      department: req.user.department._id || req.user.department,
+      department: deptId,
       teamLead: isBypassed ? null : finalTLId,
       managementApprover: managementApproverId || null,
       store: storeId || null,
