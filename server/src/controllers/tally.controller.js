@@ -791,7 +791,7 @@ exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, 
 const resolveTallyItemName = async (inputName) => {
   if (!inputName) return null;
   const cleanInput = inputName.trim().toLowerCase();
-  
+
   try {
     const liveTallyUrl = process.env.TALLY_LIVE_URL || 'http://localhost:9000';
     if (!liveTallyUrl) return { name: inputName, unit: 'pcs' };
@@ -885,7 +885,7 @@ const resolveTallyItemName = async (inputName) => {
       let name = '';
       if (item.$ && item.$.NAME) name = item.$.NAME;
       else if (item.NAME) name = typeof item.NAME === 'string' ? item.NAME : (item.NAME._ || '');
-      
+
       let unit = 'pcs';
       if (item.BASEUNITS) {
         unit = typeof item.BASEUNITS === 'object' ? (item.BASEUNITS._ || 'pcs') : item.BASEUNITS;
@@ -1021,15 +1021,15 @@ exports.createTallySplitStockJournal = async (splitId, parentBc, newBcDoc, paren
       <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
       <RATE>${pPrice}</RATE>
       <AMOUNT>${pAmount}</AMOUNT>
-      <ACTUALQTY>-1 ${pUnit}</ACTUALQTY>
-      <BILLEDQTY>-1 ${pUnit}</BILLEDQTY>
+      <ACTUALQTY>1 ${pUnit}</ACTUALQTY>
+      <BILLEDQTY>1 ${pUnit}</BILLEDQTY>
       <BATCHALLOCATIONS.LIST>
         <BATCHNAME>${parentBarcode}</BATCHNAME>
         <GODOWNNAME>${sourceGodown}</GODOWNNAME>
         <RATE>${pPrice}</RATE>
         <AMOUNT>${pAmount}</AMOUNT>
-        <ACTUALQTY>-1 ${pUnit}</ACTUALQTY>
-        <BILLEDQTY>-1 ${pUnit}</BILLEDQTY>
+        <ACTUALQTY>1 ${pUnit}</ACTUALQTY>
+        <BILLEDQTY>1 ${pUnit}</BILLEDQTY>
       </BATCHALLOCATIONS.LIST>
     </INVENTORYENTRIESOUT.LIST>`;
 
@@ -1297,7 +1297,7 @@ exports.getBarcodeTallyDetails = async (barcodeStr) => {
           } else if (alloc.batchname) {
             batchName = typeof alloc.batchname === 'object' ? alloc.batchname._ : alloc.batchname;
           }
-          
+
           if (batchName && batchName.trim().toLowerCase() === barcodeStr.toLowerCase().trim()) {
             let godownName = '';
             if (alloc.GODOWNNAME) {
@@ -1542,15 +1542,15 @@ exports.createTallyExchangeStockJournal = async (exchangeId, oldBc, newBcDoc, pa
       <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
       <RATE>${oPrice}</RATE>
       <AMOUNT>${oAmount}</AMOUNT>
-      <ACTUALQTY>-1 ${oUnit}</ACTUALQTY>
-      <BILLEDQTY>-1 ${oUnit}</BILLEDQTY>
+      <ACTUALQTY>1 ${oUnit}</ACTUALQTY>
+      <BILLEDQTY>1 ${oUnit}</BILLEDQTY>
       <BATCHALLOCATIONS.LIST>
         <BATCHNAME>${oldBarcode}</BATCHNAME>
         <GODOWNNAME>${godown}</GODOWNNAME>
         <RATE>${oPrice}</RATE>
         <AMOUNT>${oAmount}</AMOUNT>
-        <ACTUALQTY>-1 ${oUnit}</ACTUALQTY>
-        <BILLEDQTY>-1 ${oUnit}</BILLEDQTY>
+        <ACTUALQTY>1 ${oUnit}</ACTUALQTY>
+        <BILLEDQTY>1 ${oUnit}</BILLEDQTY>
       </BATCHALLOCATIONS.LIST>
     </INVENTORYENTRIESOUT.LIST>`;
 
