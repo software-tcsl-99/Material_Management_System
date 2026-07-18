@@ -480,17 +480,8 @@ const TransactionDetailPage = () => {
   };
 
   // Handler collect from store
-  const handleCollectFromStore = async () => {
-    try {
-      await api.patch(`/transactions/${id}/handler-action`, {
-        actionType: 'collect',
-        remarks: 'Handler collected materials from store.'
-      });
-      alert('Materials collected. Status updated to handler assigned.');
-      fetchData();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Collection failed.');
-    }
+  const handleCollectFromStore = () => {
+    navigate(`/transactions/${id}/receive?mode=handler-pickup`);
   };
 
   // Handler reject job assignment
@@ -1600,7 +1591,7 @@ const TransactionDetailPage = () => {
                 <Button
                   size="sm"
                   variant="success"
-                  onClick={() => setReceiveModal(true)}
+                  onClick={() => navigate(`/transactions/${id}/receive`)}
                 >
                   Confirm Receipt
                 </Button>

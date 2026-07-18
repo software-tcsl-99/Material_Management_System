@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertCircle, ArrowLeft, Camera, Check } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Camera, Check, Paperclip, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import GeoCamera from '../components/geo-camera/GeoCamera';
@@ -23,12 +23,9 @@ export default function ReturnMultiple() {
     }
   }, []);
 
-  const [reason, setReason] = useState('');
-  const [condition, setCondition] = useState('good');
-  const [remarks, setRemarks] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
-  const [capturedPhoto, setCapturedPhoto] = useState(null);
-  const [photoMeta, setPhotoMeta] = useState(null);
+  const [cameraBarcode, setCameraBarcode] = useState(null);
+  const [barcodeEvidence, setBarcodeEvidence] = useState({});
 
   const [employees, setEmployees] = useState([]);
   const [returnMethod, setReturnMethod] = useState('direct'); // 'direct' or 'handler'
@@ -107,9 +104,35 @@ export default function ReturnMultiple() {
     }
   });
 
-  const handleCapturePhoto = (dataUrl, metadata) => {
-    setCapturedPhoto(dataUrl);
-    setPhotoMeta(metadata);
+  const updateEvidence = (barcode, changes) => {
+    setBarcodeEvidence(current => ({
+      ...current,
+      [barcode]: { reason: '', condition: 'good', remarks: '', photos: [], documents: [], ...current[barcode], ...changes }
+    }));
+  };
+
+  const handleCapturePhoto = (uploadData) => {
+    if (!cameraBarcode || !uploadData?.url) return;
+    const current = barcodeEvidence[cameraBarcode] || { photos: [] };
+    updateEvidence(cameraBarcode, {
+      photos: [...(current.photos || []), { url: uploadData.url, capturedAt: new Date().toISOString() }],
+      gps: uploadData.metadata ? { lat: uploadData.metadata.lat, lng: uploadData.metadata.lng, address: uploadData.metadata.address } : undefined
+    });
+    setCameraOpen(false);
+    setCameraBarcode(null);
+  };
+
+  const handleAttachment = async (barcode, file) => {
+    if (!file) return;
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const { data } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const current = barcodeEvidence[barcode] || { documents: [] };
+      updateEvidence(barcode, { documents: [...(current.documents || []), { name: file.name, url: data.url, type: file.type || 'document', size: file.size, uploadedAt: new Date().toISOString() }] });
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to upload attachment.');
+    }
   };
 
   const handleToggleSelect = (bcCode) => {
@@ -133,24 +156,29 @@ export default function ReturnMultiple() {
       alert('Please select at least one barcode to return.');
       return;
     }
-    if (!reason) {
-      alert('Please select a reason.');
-      return;
-    }
     if (returnMethod === 'handler' && !handlerId) {
       alert('Please select a sourcing handler.');
       return;
     }
 
-    const payloads = Array.from(selectedBarcodes).map(barcode => ({
+    const payloads = Array.from(selectedBarcodes).map(barcode => {
+      const evidence = barcodeEvidence[barcode] || {};
+      return {
       barcode,
-      reason,
-      condition,
-      remarks,
+      reason: evidence.reason,
+      condition: evidence.condition,
+      remarks: evidence.remarks,
       returnHandler: returnMethod === 'handler' ? handlerId : undefined,
-      gps: photoMeta ? { lat: photoMeta.lat, lng: photoMeta.lng, address: photoMeta.address } : undefined,
-      photos: capturedPhoto ? [{ url: capturedPhoto, capturedAt: new Date() }] : undefined
-    }));
+      gps: evidence.gps,
+      photos: evidence.photos || [],
+      documents: evidence.documents || []
+    };
+    });
+    const incomplete = payloads.find(item => !item.reason || !item.remarks?.trim() || !item.photos?.length);
+    if (incomplete) {
+      alert(`Each selected barcode needs a reason, remark, and GeoCamera photo. Missing: ${incomplete.barcode}`);
+      return;
+    }
 
     returnMutation.mutate(payloads);
   };
@@ -232,55 +260,27 @@ export default function ReturnMultiple() {
           )}
         </div>
 
-        {/* Reason */}
-        <div>
-          <label className="block text-slate-500 font-bold tracking-wider mb-1.5 text-[10px]">
-            Return Reason *
-          </label>
-          <select
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            required
-            className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-xl px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-primary text-slate-800 dark:text-white"
-          >
-            <option value="">Select Reason...</option>
-            <option value="Job Completed">Job Completed</option>
-            <option value="Defective/Damaged">Defective/Damaged</option>
-            <option value="Incorrect Material">Incorrect Material</option>
-            <option value="Excess Stock">Excess Stock</option>
-          </select>
-        </div>
-
-        {/* Condition & Remarks */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-slate-500 font-bold tracking-wider mb-1.5 text-[10px]">
-              Material Condition *
-            </label>
-            <select
-              value={condition}
-              onChange={(e) => setCondition(e.target.value)}
-              className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-955 dark:border-slate-800 rounded-xl px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-primary text-slate-800 dark:text-white"
-            >
-              <option value="good">Good Condition (Usable)</option>
-              <option value="damaged">Damaged / Needs QC Sourcing</option>
-              <option value="wasted">Scrap / Wasted</option>
-            </select>
+        {selectedBarcodes.size > 0 && (
+          <div className="space-y-3">
+            <div><h3 className="font-extrabold text-slate-800 dark:text-slate-200 tracking-wider">Per-Barcode Return Details</h3><p className="text-[10px] text-slate-400 mt-1">Record a separate reason, condition, remark, GeoCamera proof, and attachment for every returned barcode.</p></div>
+            {Array.from(selectedBarcodes).map(barcode => {
+              const bc = activeOwnedBarcodes.find(item => item.barcode === barcode);
+              const evidence = barcodeEvidence[barcode] || { reason: '', condition: 'good', remarks: '', photos: [], documents: [] };
+              return (
+                <div key={barcode} className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 bg-slate-50/50 dark:bg-slate-950/20 space-y-3">
+                  <div><p className="font-mono font-extrabold text-slate-850 dark:text-white">{barcode}</p><p className="text-[10px] text-slate-400 font-semibold">{bc?.materialName || 'Material'}</p></div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <select value={evidence.reason} onChange={(e) => updateEvidence(barcode, { reason: e.target.value })} required className="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold"><option value="">Select return reason *</option><option value="Job Completed">Job Completed</option><option value="Defective/Damaged">Defective/Damaged</option><option value="Incorrect Material">Incorrect Material</option><option value="Excess Stock">Excess Stock</option></select>
+                    <select value={evidence.condition} onChange={(e) => updateEvidence(barcode, { condition: e.target.value })} className="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold"><option value="good">Good Condition (Usable)</option><option value="damaged">Damaged / Needs QC</option><option value="defective">Defective</option></select>
+                  </div>
+                  <textarea value={evidence.remarks} onChange={(e) => updateEvidence(barcode, { remarks: e.target.value })} required rows="2" placeholder="Return remark / reason details *" className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold resize-none" />
+                  <div className="flex flex-wrap gap-2"><button type="button" onClick={() => { setCameraBarcode(barcode); setCameraOpen(true); }} className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold"><Camera className="w-4 h-4 text-primary" /> GeoCamera Photo *</button><label className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold cursor-pointer"><Paperclip className="w-4 h-4 text-primary" /> Add Attachment<input type="file" className="hidden" onChange={(e) => handleAttachment(barcode, e.target.files?.[0])} /></label></div>
+                  {(evidence.photos.length > 0 || evidence.documents.length > 0) && <div className="flex flex-wrap gap-2">{evidence.photos.map((item, index) => <div key={`p-${index}`} className="relative"><img src={item.url} alt="Return proof" className="w-16 h-16 object-cover rounded-lg" /><button type="button" onClick={() => updateEvidence(barcode, { photos: evidence.photos.filter((_, i) => i !== index) })} className="absolute -top-1 -right-1 bg-rose-500 text-white rounded-full p-0.5"><Trash2 className="w-3 h-3" /></button></div>)}{evidence.documents.map((document, index) => <div key={`d-${index}`} className="flex items-center gap-1 text-[10px] bg-white border border-slate-200 px-2 py-1 rounded-lg"><Paperclip className="w-3 h-3" />{document.name}<button type="button" onClick={() => updateEvidence(barcode, { documents: evidence.documents.filter((_, i) => i !== index) })}><Trash2 className="w-3 h-3 text-rose-500" /></button></div>)}</div>}
+                </div>
+              );
+            })}
           </div>
-
-          <div>
-            <label className="block text-slate-500 font-bold tracking-wider mb-1.5 text-[10px]">
-              Remarks / Remarks
-            </label>
-            <input
-              type="text"
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-              placeholder="Additional comments..."
-              className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-955 dark:border-slate-800 rounded-xl px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-primary text-slate-800 dark:text-white"
-            />
-          </div>
-        </div>
+        )}
 
         {/* Return Method */}
         <div>
@@ -383,31 +383,6 @@ export default function ReturnMultiple() {
             </div>
           </div>
         )}
-
-        {/* Live Photo Attachment */}
-        <div className="space-y-2">
-          <label className="block text-[10px] font-bold text-slate-500">Live Photo with Metadata Overlay</label>
-          {capturedPhoto ? (
-            <div className="relative border border-slate-200 rounded-2xl overflow-hidden aspect-video w-64 bg-slate-100">
-              <img src={capturedPhoto} alt="Captured preview" className="w-full h-full object-cover" />
-              <button
-                type="button"
-                onClick={() => setCapturedPhoto(null)}
-                className="absolute top-2 right-2 bg-black/60 hover:bg-black text-white p-1 rounded-full text-xs"
-              >
-                Clear
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setCameraOpen(true)}
-              className="flex items-center gap-1.5 px-4 py-2 border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 rounded-xl transition"
-            >
-              <Camera className="w-4 h-4 text-primary" /> Open GeoCamera
-            </button>
-          )}
-        </div>
 
         {/* Submit */}
         <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3">

@@ -1,18 +1,20 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertCircle, ArrowLeft, Camera } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Camera, Paperclip, Trash2 } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import GeoCamera from '../components/geo-camera/GeoCamera';
 import api from '../lib/api';
 
 export default function ReceivingForm() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [condition, setCondition] = useState('good');
-  const [remarks, setRemarks] = useState('');
+  const [searchParams] = useSearchParams();
+  const mode = searchParams.get('mode') || 'receive';
+  const requestedReturnIds = searchParams.get('returnIds')?.split(',').filter(Boolean) || [];
   const [cameraOpen, setCameraOpen] = useState(false);
-  const [capturedPhoto, setCapturedPhoto] = useState(null);
-  const [photoMeta, setPhotoMeta] = useState(null);
+  const [cameraBarcode, setCameraBarcode] = useState(null);
+  const [barcodeEvidence, setBarcodeEvidence] = useState({});
+  const [commonRemark, setCommonRemark] = useState('');
 
   // Fetch transaction details
   const { data: txnData, isLoading, error } = useQuery({
@@ -25,32 +27,121 @@ export default function ReceivingForm() {
 
   const receiveMutation = useMutation({
     mutationFn: async (payload) => {
+      if (mode === 'handler-pickup') {
+        return api.patch(`/transactions/${id}/handler-action`, { actionType: 'collect', ...payload });
+      }
+      if (mode === 'store-return') {
+        return Promise.all(payload.receipts.map(receipt => api.put(`/barcodes/return/${receipt.returnId}/accept`, { receipt })));
+      }
       return api.patch(`/transactions/${id}/receive`, payload);
     },
     onSuccess: () => {
-      alert('Materials successfully received!');
+      alert(mode === 'handler-pickup' ? 'Handler collection recorded successfully!' : mode === 'store-return' ? 'Returned materials accepted by store!' : 'Materials successfully received!');
       navigate(`/transactions/${txnData.transactionId}`);
     }
   });
 
+  const { data: barcodes = [] } = useQuery({
+    queryKey: ['transactionReceivingBarcodes', txnData?.transactionId],
+    queryFn: async () => {
+      const { data } = await api.get(`/barcodes/transaction/${txnData.transactionId}`);
+      return data.barcodes || [];
+    },
+    enabled: !!txnData?.transactionId
+  });
+
+  const { data: returnRequests = [] } = useQuery({
+    queryKey: ['receivingReturnRequests', txnData?.transactionId, requestedReturnIds.join(',')],
+    queryFn: async () => {
+      const { data } = await api.get('/barcodes/list/returns');
+      const allReturns = data.returns || data.data || [];
+      return allReturns.filter(returnRequest =>
+        requestedReturnIds.length
+          ? requestedReturnIds.includes(returnRequest._id)
+          : returnRequest.transactionId === txnData.transactionId && returnRequest.status === 'store_received'
+      );
+    },
+    enabled: mode === 'store-return' && !!txnData?.transactionId
+  });
+
+  const formItems = mode === 'store-return'
+    ? returnRequests.map(returnRequest => ({
+      barcode: returnRequest.barcode,
+      materialName: barcodes.find(barcode => barcode.barcode === returnRequest.barcode)?.materialName || 'Returned Material',
+      owner: returnRequest.fromUser,
+      returnId: returnRequest._id
+    }))
+    : barcodes;
+
+  const formTitle = mode === 'handler-pickup'
+    ? 'Handler Material Collection'
+    : mode === 'store-return'
+      ? 'Receive Returned Materials'
+      : 'Receive Materials';
+
+  const updateEvidence = (barcode, changes) => {
+    setBarcodeEvidence(current => ({
+      ...current,
+      [barcode]: {
+        condition: 'good',
+        photos: [],
+        documents: [],
+        ...current[barcode],
+        ...changes
+      }
+    }));
+  };
+
   const handleCapturePhoto = (uploadData) => {
-    setCapturedPhoto(uploadData.url);
-    setPhotoMeta(uploadData.metadata);
+    if (!cameraBarcode || !uploadData?.url) return;
+    const current = barcodeEvidence[cameraBarcode] || { photos: [] };
+    updateEvidence(cameraBarcode, {
+      photos: [...(current.photos || []), { url: uploadData.url, capturedAt: new Date().toISOString() }],
+      gps: uploadData.metadata ? { lat: uploadData.metadata.lat, lng: uploadData.metadata.lng, address: uploadData.metadata.address } : undefined
+    });
     setCameraOpen(false);
+    setCameraBarcode(null);
+  };
+
+  const handleAttachment = async (barcode, file) => {
+    if (!file) return;
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const { data } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const current = barcodeEvidence[barcode] || { documents: [] };
+      updateEvidence(barcode, {
+        documents: [...(current.documents || []), {
+          name: file.name,
+          url: data.url,
+          type: file.type || 'document',
+          size: file.size,
+          uploadedAt: new Date().toISOString()
+        }]
+      });
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to upload attachment.');
+    }
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!capturedPhoto) {
-      alert('GEO-tagged verification photo is mandatory to accept delivery.');
+    if (!formItems.length) {
+      alert(mode === 'store-return' ? 'No return materials are ready for store receipt.' : 'No dispatched barcodes were found for this transaction.');
       return;
     }
+    if (!commonRemark.trim()) {
+      alert('Please enter the common receiving remark before proceeding.');
+      return;
+    }
+    const receipts = formItems.map(item => ({ barcode: item.barcode, returnId: item.returnId, remarks: commonRemark.trim(), ...(barcodeEvidence[item.barcode] || {}) }));
+    const missingEvidence = receipts.find(receipt => !receipt.photos?.length);
+    if (missingEvidence) return alert(`A GeoCamera photo is required for barcode ${missingEvidence.barcode}.`);
 
     const payload = {
-      materialCondition: condition,
-      remarks,
-      receiverGeo: { lat: photoMeta.lat, lng: photoMeta.lng, address: photoMeta.address },
-      photo: capturedPhoto
+      materialCondition: 'per_barcode',
+      remarks: mode === 'handler-pickup' ? 'Per-barcode handler collection verification completed.' : 'Per-barcode receiving verification completed.',
+      receipts
     };
 
     receiveMutation.mutate(payload);
@@ -79,7 +170,7 @@ export default function ReceivingForm() {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-lg font-extrabold text-slate-800">Receive Materials</h1>
+          <h1 className="text-lg font-extrabold text-slate-800">{formTitle}</h1>
           <p className="text-xs text-slate-500 font-semibold tracking-wider">
             Transaction ID: {txnData.transactionId}
           </p>
@@ -87,67 +178,46 @@ export default function ReceivingForm() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Dispatched items list summary */}
-        <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-2">
-          <h3 className="text-xs font-extrabold text-slate-800 tracking-wider">Dispatched Items checklist</h3>
-          <div className="divide-y divide-slate-100 text-xs font-bold text-slate-700">
-            {txnData.materials?.map((m, idx) => (
-              <div key={idx} className="py-2 flex justify-between">
-                <span>{m.name}</span>
-                <span className="text-slate-400">Qty: {m.quantity}</span>
-              </div>
-            ))}
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-xs font-extrabold text-slate-800 tracking-wider">Per-Barcode {mode === 'handler-pickup' ? 'Collection' : 'Receiving'} Verification</h3>
+            <p className="text-[10px] text-slate-400 mt-1">Each material needs its own condition, GeoCamera proof, and optional attachment.</p>
           </div>
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-bold text-slate-500">Common Receiving Remark / Purpose *</label>
+            <textarea value={commonRemark} onChange={(e) => setCommonRemark(e.target.value)} required rows="3" placeholder="Add one common remark for all listed materials..." className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 outline-none resize-none" />
+          </div>
+          {formItems.map(bc => {
+            const evidence = barcodeEvidence[bc.barcode] || { condition: 'good', photos: [], documents: [] };
+            return (
+              <div key={bc.barcode} className="border border-slate-200 rounded-2xl p-4 space-y-3 bg-slate-50/50">
+                <div className="flex justify-between gap-3 text-xs">
+                  <div><p className="font-mono font-extrabold text-slate-800">{bc.barcode}</p><p className="text-slate-500 font-semibold">{bc.materialName}</p></div>
+                  <span className="text-[10px] text-slate-400">Owner: {bc.owner?.fullName || txnData.requester?.fullName || 'Requester'}</span>
+                </div>
+                <div className="relative">
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Material Condition</label>
+                  <select value={evidence.condition} onChange={(e) => updateEvidence(bc.barcode, { condition: e.target.value })} className="w-full appearance-none bg-white border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-700 outline-none focus:border-primary">
+                    <option value="good">Good / Perfect Condition</option><option value="damaged">Minor Box Damage</option><option value="needs_repair">Unit Defective</option>
+                  </select>
+                  <span className="pointer-events-none absolute right-3 bottom-2.5 text-slate-400 text-[10px]">▼</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setCameraBarcode(bc.barcode); setCameraOpen(true); }} className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold"><Camera className="w-4 h-4 text-primary" /> GeoCamera Photo *</button>
+                  <label className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold cursor-pointer"><Paperclip className="w-4 h-4 text-primary" /> Add Attachment<input type="file" className="hidden" onChange={(e) => handleAttachment(bc.barcode, e.target.files?.[0])} /></label>
+                </div>
+                {(evidence.photos.length > 0 || evidence.documents.length > 0) && <div className="flex flex-wrap gap-2">{evidence.photos.map((item, index) => <div key={`p-${index}`} className="relative"><img src={item.url} alt="Receiving proof" className="w-16 h-16 object-cover rounded-lg" /><button type="button" onClick={() => updateEvidence(bc.barcode, { photos: evidence.photos.filter((_, i) => i !== index) })} className="absolute -top-1 -right-1 bg-rose-500 text-white rounded-full p-0.5"><Trash2 className="w-3 h-3" /></button></div>)}{evidence.documents.map((document, index) => <div key={`d-${index}`} className="flex items-center gap-1 text-[10px] bg-white border border-slate-200 px-2 py-1 rounded-lg"><Paperclip className="w-3 h-3" />{document.name}<button type="button" onClick={() => updateEvidence(bc.barcode, { documents: evidence.documents.filter((_, i) => i !== index) })}><Trash2 className="w-3 h-3 text-rose-500" /></button></div>)}</div>}
+              </div>
+            );
+          })}
         </div>
 
-        <div>
-          <label className="block text-[10px] font-bold text-slate-500 mb-1.5">Physical Condition</label>
-          <select
-            value={condition}
-            onChange={(e) => setCondition(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 outline-none"
-          >
-            <option value="good">Good / Perfect Condition</option>
-            <option value="damaged">Minor Box Damage</option>
-            <option value="needs_repair">Unit Defective</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-[10px] font-bold text-slate-500 mb-1.5">Remarks / Verification notes</label>
-          <textarea
-            value={remarks}
-            onChange={(e) => setRemarks(e.target.value)}
-            placeholder="Add any remarks..."
-            rows={3}
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 outline-none resize-none"
+        {cameraOpen && (
+          <GeoCamera
+            onCapture={handleCapturePhoto}
+            onClose={() => setCameraOpen(false)}
           />
-        </div>
-
-        {/* Live Photo Attachment */}
-        <div className="space-y-2">
-          <label className="block text-[10px] font-bold text-slate-500">GEO-Tagged Delivery Verification Photo (Mandatory)</label>
-          {capturedPhoto ? (
-            <div className="relative border border-slate-200 rounded-2xl overflow-hidden aspect-video w-64 bg-slate-100">
-              <img src={capturedPhoto} alt="Captured preview" className="w-full h-full object-cover" />
-              <button
-                type="button"
-                onClick={() => setCapturedPhoto(null)}
-                className="absolute top-2 right-2 bg-black/60 hover:bg-black text-white p-1 rounded-full text-xs"
-              >
-                Clear
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setCameraOpen(true)}
-              className="flex items-center gap-1.5 px-4 py-2 border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 rounded-xl transition"
-            >
-              <Camera className="w-4 h-4 text-primary" /> Capture Verification Photo
-            </button>
-          )}
-        </div>
+        )}
 
         {/* Submit */}
         <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
@@ -162,17 +232,11 @@ export default function ReceivingForm() {
             type="submit"
             className="px-6 py-2.5 bg-primary hover:bg-primary-dark text-white text-xs font-bold rounded-xl transition shadow-md shadow-primary/10"
           >
-            Accept Materials & Sign Delivery
+            {mode === 'handler-pickup' ? 'Accept & Collect Materials' : mode === 'store-return' ? 'Accept Returned Materials' : 'Accept Materials & Sign Delivery'}
           </button>
         </div>
       </form>
 
-      {cameraOpen && (
-        <GeoCamera
-          onCapture={handleCapturePhoto}
-          onClose={() => setCameraOpen(false)}
-        />
-      )}
     </div>
   );
 }

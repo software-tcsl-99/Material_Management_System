@@ -1223,7 +1223,7 @@ exports.getPendingSplitRequests = async (req, res) => {
  */
 exports.approveSplitRequest = async (req, res) => {
   try {
-    const { requestId, newBarcode, materialName, quantity, unit, price, rate, godown, action, reason } = req.body;
+    const { requestId, newBarcode, materialName, quantity, unit, price, rate, godown, action, reason, storeRemark } = req.body;
 
     const isStore = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'store');
     if (!isStore) {
@@ -1237,6 +1237,7 @@ exports.approveSplitRequest = async (req, res) => {
 
     if (action === 'reject') {
       splitReq.status = 'rejected';
+      splitReq.storeRemark = storeRemark || reason || 'Rejected by store';
       await splitReq.save();
 
       // Update parent barcode history
@@ -1245,7 +1246,7 @@ exports.approveSplitRequest = async (req, res) => {
         parentBc.history.push({
           action: 'Split Rejected',
           user: req.user._id,
-          remarks: reason || 'Rejected by store',
+          remarks: storeRemark || reason || 'Rejected by store',
         });
         await parentBc.save();
       }
@@ -1254,7 +1255,7 @@ exports.approveSplitRequest = async (req, res) => {
         splitReq.requester,
         'split_rejected',
         'Split Request Rejected',
-        `Store rejected your split request for barcode ${splitReq.barcode}: ${reason || ''}`,
+        `Store rejected your split request for barcode ${splitReq.barcode}: ${storeRemark || reason || ''}`,
         splitReq.transactionId,
         splitReq.barcode
       );
@@ -1284,7 +1285,10 @@ exports.approveSplitRequest = async (req, res) => {
     splitReq.approvedAt = new Date();
     splitReq.newBarcode = newBarcode;
     splitReq.newQuantity = quantity || 1;
+    splitReq.storeRemark = storeRemark || '';
     await splitReq.save();
+
+    const remarkText = storeRemark ? `Store Remark: ${storeRemark}` : (reason || '');
 
     // Create the NEW Barcode document
     const newBcDoc = await Barcode.create({
@@ -1301,12 +1305,12 @@ exports.approveSplitRequest = async (req, res) => {
         user: splitReq.requester,
         department: requesterUser.department,
         action: 'split_created',
-        remarks: `Split approved by store. New material active.`,
+        remarks: `Split approved by store. New material active.${storeRemark ? ` Store Remark: ${storeRemark}` : ''}`,
       }],
       history: [{
         action: 'Split Child Created',
         user: req.user._id,
-        remarks: reason || `Created from split approval of parent ${parentBc.barcode}`,
+        remarks: remarkText || `Created from split approval of parent ${parentBc.barcode}`,
       }],
     });
 
@@ -1314,7 +1318,7 @@ exports.approveSplitRequest = async (req, res) => {
     parentBc.history.push({
       action: 'Split Approved',
       user: req.user._id,
-      remarks: reason || `Split approved. New child barcode ${newBarcode} created.`,
+      remarks: storeRemark ? `Split approved by store. Store Remark: ${storeRemark}` : (reason || `Split approved. New child barcode ${newBarcode} created.`),
     });
     await parentBc.save();
 
@@ -1346,7 +1350,7 @@ exports.approveSplitRequest = async (req, res) => {
 
       transaction.timeline.push({
         action: 'Split Approved',
-        description: reason || `Store approved split. New barcode ${newBarcode} registered and active.`,
+        description: storeRemark ? `Store approved split. Store Remark: ${storeRemark}` : (reason || `Store approved split. New barcode ${newBarcode} registered and active.`),
         user: req.user._id,
       });
       await transaction.save();
@@ -2254,7 +2258,7 @@ exports.getPendingCloseRequests = async (req, res) => {
 exports.handleCloseRequest = async (req, res) => {
   try {
     const { requestId } = req.params;
-    const { action, rejectionReason } = req.body;
+    const { action, rejectionReason, storeRemark } = req.body;
 
     const CloseRequest = require('../models/CloseRequest');
     const closeReq = await CloseRequest.findById(requestId).populate('requester');
@@ -2563,6 +2567,7 @@ exports.handleCloseRequest = async (req, res) => {
         closeReq.status = 'approved';
         closeReq.approvedBy = req.user._id;
         closeReq.approvedAt = new Date();
+        closeReq.storeRemark = storeRemark || '';
 
         bc.status = 'Closed';
         bc.owner = req.user._id; // Remove completely from employee and assign to the store admin
@@ -2570,7 +2575,7 @@ exports.handleCloseRequest = async (req, res) => {
         bc.history.push({
           action: 'Closed',
           user: req.user._id,
-          remarks: `Store accepted and closed RDC, converting to ${closeReq.documentType} (${closeReq.documentNumber})${tallyVoucherNum ? ` (Tally DN: ${tallyVoucherNum})` : ''}`
+          remarks: `Store accepted and closed RDC, converting to ${closeReq.documentType} (${closeReq.documentNumber})${storeRemark ? `. Store Remark: ${storeRemark}` : ''}${tallyVoucherNum ? ` (Tally DN: ${tallyVoucherNum})` : ''}`
         });
         await bc.save();
 
@@ -2610,7 +2615,7 @@ exports.handleCloseRequest = async (req, res) => {
 
           txn.timeline.push({
             action: 'Closed',
-            remarks: `Barcode ${bc.barcode} closed via Store approval for ${closeReq.documentType} (${closeReq.documentNumber})`,
+            remarks: `Barcode ${bc.barcode} closed via Store approval for ${closeReq.documentType} (${closeReq.documentNumber})${storeRemark ? `. Store Remark: ${storeRemark}` : ''}`,
             user: req.user._id,
             timestamp: new Date()
           });
@@ -2656,12 +2661,16 @@ exports.createExchangeRequest = async (req, res) => {
       return res.status(403).json({ message: 'You are not the owner of this barcode.' });
     }
 
+    const { newBarcode, photos, gps } = req.body;
     const exchangeReq = await ExchangeRequest.create({
       transactionId: oldBc.transactionId,
       oldBarcode: normalizedOld,
       materialName: oldBc.materialName,
       requester: req.user._id,
       warrantyReason,
+      newBarcode: newBarcode ? newBarcode.trim().toUpperCase() : undefined,
+      photos: photos || [],
+      gps,
       status: 'pending',
     });
 
@@ -2699,7 +2708,7 @@ exports.getPendingExchangeRequests = async (req, res) => {
 exports.handleExchangeRequest = async (req, res) => {
   try {
     const { requestId } = req.params;
-    const { action, reason } = req.body; // 'accept' or 'reject'
+    const { action, reason, storeRemark } = req.body; // 'accept' or 'reject'
 
     const ExchangeRequest = require('../models/ExchangeRequest');
     const exchangeReq = await ExchangeRequest.findById(requestId);
@@ -2728,18 +2737,19 @@ exports.handleExchangeRequest = async (req, res) => {
       exchangeReq.newBarcode = normalizedNew;
       exchangeReq.approvedBy = req.user._id;
       exchangeReq.approvedAt = new Date();
+      exchangeReq.storeRemark = storeRemark || '';
 
       // 1. Mark old barcode status to 'Exchanged'
       oldBc.status = 'Exchanged';
       oldBc.history.push({
         action: 'Exchanged',
         user: req.user._id,
-        remarks: `Exchanged for new barcode ${normalizedNew}. Warranty reason accepted.`,
+        remarks: storeRemark ? `Exchanged for new barcode ${normalizedNew}. Store Remark: ${storeRemark}` : `Exchanged for new barcode ${normalizedNew}. Warranty reason accepted.`,
         timestamp: new Date()
       });
       oldBc.history.push({
         action: 'Barcode Exchanged',
-        remarks: `Barcode ${exchangeReq.oldBarcode} exchanged with new barcode ${normalizedNew} under warranty.`,
+        remarks: `Barcode ${exchangeReq.oldBarcode} exchanged with new barcode ${normalizedNew} under warranty.${storeRemark ? ` Store Remark: ${storeRemark}` : ''}`,
         user: req.user._id,
         timestamp: new Date()
       });
@@ -2793,7 +2803,7 @@ exports.handleExchangeRequest = async (req, res) => {
         // Add timeline entry to original transaction
         originalTxn.timeline.push({
           action: 'Barcode Exchanged',
-          description: `Barcode ${exchangeReq.oldBarcode} exchanged with new barcode ${normalizedNew} under warranty.`,
+          description: `Barcode ${exchangeReq.oldBarcode} exchanged with new barcode ${normalizedNew} under warranty.${storeRemark ? ` Store Remark: ${storeRemark}` : ''}`,
           user: req.user._id,
           timestamp: new Date()
         });
@@ -2819,11 +2829,11 @@ exports.handleExchangeRequest = async (req, res) => {
         history: [{
           action: 'Exchange Child Created',
           user: req.user._id,
-          remarks: `Created from exchange approval. Replaced old barcode ${exchangeReq.oldBarcode}`,
+          remarks: `Created from exchange approval. Replaced old barcode ${exchangeReq.oldBarcode}.${storeRemark ? ` Store Remark: ${storeRemark}` : ''}`,
           timestamp: new Date()
         }, {
           action: 'Barcode Exchanged',
-          remarks: `Barcode ${exchangeReq.oldBarcode} exchanged with new barcode ${normalizedNew} under warranty.`,
+          remarks: `Barcode ${exchangeReq.oldBarcode} exchanged with new barcode ${normalizedNew} under warranty.${storeRemark ? ` Store Remark: ${storeRemark}` : ''}`,
           user: req.user._id,
           timestamp: new Date()
         }]
@@ -2950,11 +2960,12 @@ exports.handleExchangeRequest = async (req, res) => {
       );
     } else if (action === 'reject') {
       exchangeReq.status = 'rejected';
+      exchangeReq.storeRemark = storeRemark || reason || 'No reason specified';
 
       oldBc.history.push({
         action: 'Exchange Rejected',
         user: req.user._id,
-        remarks: `Exchange request rejected by store. Reason: ${reason || 'No reason specified'}`,
+        remarks: `Exchange request rejected by store. Reason: ${storeRemark || reason || 'No reason specified'}`,
       });
       await oldBc.save();
 
@@ -2963,7 +2974,7 @@ exports.handleExchangeRequest = async (req, res) => {
         exchangeReq.requester,
         'exchange_rejected',
         'Exchange Request Rejected',
-        `Store rejected exchange for ${exchangeReq.oldBarcode}. Reason: ${reason || 'No reason specified'}`,
+        `Store rejected exchange for ${exchangeReq.oldBarcode}. Reason: ${storeRemark || reason || 'No reason specified'}`,
         exchangeReq.transactionId,
         exchangeReq.oldBarcode
       );

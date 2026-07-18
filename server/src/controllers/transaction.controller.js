@@ -257,7 +257,12 @@ exports.getTransactions = async (req, res) => {
     // Role-based filtering
     if (req.user.role === 'employee') {
       const Barcode = require('../models/Barcode');
-      const userBarcodes = await Barcode.find({ owner: req.user._id });
+      const userBarcodes = await Barcode.find({
+        $or: [
+          { owner: req.user._id },
+          { 'ownershipHistory.user': req.user._id }
+        ]
+      });
       const txnIds = userBarcodes.map(b => b.transactionId);
 
       // Find active return requests where the user is the return handler
@@ -268,13 +273,24 @@ exports.getTransactions = async (req, res) => {
       });
       const activeReturnTxnIds = activeReturns.map(r => r.transactionId);
 
+      // Find active barcode transfers where the user is recipient or sender
+      const TransferModel = require('../models/Transfer');
+      const activeTransfers = await TransferModel.find({
+        $or: [
+          { toUser: req.user._id },
+          { fromUser: req.user._id }
+        ],
+        status: { $in: ['pending', 'approved', 'completed'] }
+      });
+      const transferTxnIds = activeTransfers.map(t => t.transactionId);
+
       filter.$or = [
         { requester: req.user._id },
         // For dispatch handler, only show if delivery is still active/in-progress
         { handler: req.user._id, status: { $in: ['store_accepted', 'handler_assigned', 'dispatched'] } },
         // For pending handler transfer targets
         { 'pendingHandlerTransfer.toHandler': req.user._id, 'pendingHandlerTransfer.status': 'pending' },
-        { transactionId: { $in: [...txnIds, ...activeReturnTxnIds] } }
+        { transactionId: { $in: [...txnIds, ...activeReturnTxnIds, ...transferTxnIds] } }
       ];
     } else if (req.user.role === 'team_lead') {
       filter.$or = [
@@ -369,6 +385,17 @@ exports.getTransactions = async (req, res) => {
       });
       const activeReturnTxnIds = new Set(activeReturnsForUser.map(r => r.transactionId));
 
+      // Fetch completed, pending, or approved barcode transfers for the user (recipient or sender)
+      const TransferModel = require('../models/Transfer');
+      const transfersForUser = await TransferModel.find({
+        $or: [
+          { toUser: req.user._id },
+          { fromUser: req.user._id }
+        ],
+        status: { $in: ['pending', 'approved', 'completed'] }
+      });
+      const userTransferTxnIds = new Set(transfersForUser.map(t => t.transactionId));
+
       filteredTransactions = filteredTransactions.filter(txn => {
         const isRequester = (txn.requester?._id || txn.requester)?.toString() === req.user._id.toString();
         if (isRequester) {
@@ -386,11 +413,16 @@ exports.getTransactions = async (req, res) => {
           return true;
         }
 
+        // Keep if there is a transfer associated with this user
+        if (userTransferTxnIds.has(txn.transactionId)) {
+          return true;
+        }
+
         if (activePostDispatch.includes(txn.status)) {
           const txnBarcodes = barcodesForTxns.filter(b => b.transactionId === txn.transactionId);
           const hasActiveMaterial = txnBarcodes.some(b => 
-            (b.owner?._id || b.owner)?.toString() === req.user._id.toString() &&
-            ['Active', 'pending_acceptance'].includes(b.status)
+            (b.owner?._id || b.owner)?.toString() === req.user._id.toString() ||
+            b.ownershipHistory?.some(h => h.user?.toString() === req.user._id.toString())
           );
           if (!hasActiveMaterial) {
             return false;
@@ -481,9 +513,18 @@ exports.getTransaction = async (req, res) => {
       const activePostDispatch = ['dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'];
       if (activePostDispatch.includes(transaction.status)) {
         const hasActiveMaterial = barcodes.some(b => 
-          (b.owner?._id || b.owner)?.toString() === req.user._id.toString() &&
-          ['Active', 'pending_acceptance'].includes(b.status)
+          (b.owner?._id || b.owner)?.toString() === req.user._id.toString() ||
+          b.ownershipHistory?.some(h => h.user?.toString() === req.user._id.toString())
         );
+
+        const TransferModel = require('../models/Transfer');
+        const hasTransfer = await TransferModel.exists({
+          transactionId: transaction.transactionId,
+          $or: [
+            { toUser: req.user._id },
+            { fromUser: req.user._id }
+          ]
+        });
 
         const hasActiveReturnAssignment = returns.some(r => 
           (r.returnHandler?._id || r.returnHandler)?.toString() === req.user._id.toString() &&
@@ -493,7 +534,7 @@ exports.getTransaction = async (req, res) => {
         const isPendingDispatchHandler = (transaction.handler?._id || transaction.handler)?.toString() === req.user._id.toString() &&
           ['store_accepted', 'handler_assigned'].includes(transaction.status);
 
-        if (!hasActiveMaterial && !hasActiveReturnAssignment && !isPendingDispatchHandler) {
+        if (!hasActiveMaterial && !hasTransfer && !hasActiveReturnAssignment && !isPendingDispatchHandler) {
           dynamicChatLocked = true;
         }
       }

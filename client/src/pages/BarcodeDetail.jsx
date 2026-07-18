@@ -34,10 +34,6 @@ export default function BarcodeDetail() {
   const [selectedCustomerName, setSelectedCustomerName] = useState('');
 
   // Exchange Request modal states
-  const [exchangeModalOpen, setExchangeModalOpen] = useState(false);
-  const [exchangeNewBarcode, setExchangeNewBarcode] = useState('');
-  const [exchangeWarrantyReason, setExchangeWarrantyReason] = useState('');
-  const [exchangeSubmitting, setExchangeSubmitting] = useState(false);
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [viewAllModalOpen, setViewAllModalOpen] = useState(false);
@@ -581,13 +577,13 @@ export default function BarcodeDetail() {
                   </Button>
                 )}
                 <Button size="sm" variant="outline" onClick={() => {
-                   setBarcodeCloseDocType('DC Internal');
-                   setBarcodeCloseDocNumber('');
-                   setBarcodeCloseRemarks('');
-                   setSelectedManagementId('');
-                   setSelectedCustomerName('');
-                   setBarcodeCloseModal(true);
-                 }}>
+                  setBarcodeCloseDocType('DC Internal');
+                  setBarcodeCloseDocNumber('');
+                  setBarcodeCloseRemarks('');
+                  setSelectedManagementId('');
+                  setSelectedCustomerName('');
+                  setBarcodeCloseModal(true);
+                }}>
                   Convert to DC
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => {
@@ -598,7 +594,7 @@ export default function BarcodeDetail() {
                 }}>
                   Convert to Invoice
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setExchangeModalOpen(true)}>
+                <Button size="sm" variant="outline" onClick={() => navigate(`/barcodes/${barcode}/exchange`)}>
                   Exchange Barcode
                 </Button>
                 <Button size="sm" onClick={() => navigate(`/barcodes/${barcode}/transfer`)}>
@@ -1257,45 +1253,6 @@ export default function BarcodeDetail() {
           </div>
         );
       })()}
-
-      {/* Exchange Barcode Modal */}
-      {exchangeModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 dark:bg-slate-955/80 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800 dark:text-white tracking-wider">Exchange Barcode</h3>
-                <p className="text-[10px] text-slate-400 font-bold mt-1">Old Barcode: {barcode}</p>
-              </div>
-              <button onClick={() => setExchangeModalOpen(false)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-650">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleExchangeSubmit} className="flex flex-col gap-4 text-xs font-semibold text-slate-600">
-
-              <div>
-                <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Under Warranty Form: Failure Reason *</label>
-                <textarea
-                  value={exchangeWarrantyReason}
-                  onChange={(e) => setExchangeWarrantyReason(e.target.value)}
-                  required
-                  placeholder="Please describe why this item requires exchange (warranty details/failure reason)..."
-                  rows="3"
-                  className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
-                />
-              </div>
-
-              <div className="flex gap-2 justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
-                <Button variant="ghost" type="button" onClick={() => setExchangeModalOpen(false)}>Cancel</Button>
-                <Button variant="primary" type="submit" disabled={exchangeSubmitting}>
-                  {exchangeSubmitting ? 'Submitting...' : 'Submit Exchange'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* View All Photos, Remarks & Documents Modal */}
       {viewAllModalOpen && (

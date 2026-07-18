@@ -111,6 +111,12 @@ const barcodeSchema = new mongoose.Schema(
       documentType: { type: String, enum: ['DC Internal', 'DC FOC', 'Invoice'] },
       documentNumber: { type: String },
       remarks: { type: String },
+      gps: {
+        lat: Number,
+        lng: Number,
+        address: String,
+      },
+      photos: [{ url: String, capturedAt: { type: Date, default: Date.now } }],
       requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       managementApprover: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       customerName: { type: String },

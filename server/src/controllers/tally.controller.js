@@ -675,8 +675,8 @@ exports.createTallyGodownTransfer = async (narrationId, flowType, sourceGodown, 
     }
 
     const narrationText = flowType === 'transfer'
-      ? `Barcode transfer ${narrationId} from ${sourceGodown} to ${destinationGodown}`
-      : `Return to store ${narrationId} from ${sourceGodown} to ${destinationGodown}`;
+      ? `Barcode transfer by ${sourceGodown} to ${destinationGodown} (ID: ${narrationId})`
+      : `Return to store by ${sourceGodown} to ${destinationGodown} (ID: ${narrationId})`;
 
     const xmlPayload = `
     <ENVELOPE>
@@ -1087,7 +1087,7 @@ exports.createTallySplitStockJournal = async (splitId, parentBc, newBcDoc, paren
             <VOUCHER VCHTYPE="Autofill Stock Journal" ACTION="Create">
               <DATE>${dateStr}</DATE>
               <VOUCHERTYPENAME>Autofill Stock Journal</VOUCHERTYPENAME>
-              <NARRATION>Split barcode splitId ${splitId} from parent ${parentBc.barcode} to child ${newBcDoc.barcode}</NARRATION>
+              <NARRATION>Split barcode by ${requesterGodown} from parent ${parentBc.barcode} to child ${newBcDoc.barcode} (splitId: ${splitId})</NARRATION>
               ${productionLines}
               ${consumptionLines}
             </VOUCHER>
@@ -1608,7 +1608,7 @@ exports.createTallyExchangeStockJournal = async (exchangeId, oldBc, newBcDoc, pa
             <VOUCHER VCHTYPE="Autofill Stock Journal" ACTION="Create">
               <DATE>${dateStr}</DATE>
               <VOUCHERTYPENAME>Autofill Stock Journal</VOUCHERTYPENAME>
-              <NARRATION>Exchange barcode exchangeId ${exchangeId} from old ${oldBc.barcode} to new ${newBcDoc.barcode}</NARRATION>
+              <NARRATION>Exchange barcode by ${employeeGodown} from old ${oldBc.barcode} to new ${newBcDoc.barcode} (exchangeId: ${exchangeId})</NARRATION>
               ${productionLines}
               ${consumptionLines}
             </VOUCHER>

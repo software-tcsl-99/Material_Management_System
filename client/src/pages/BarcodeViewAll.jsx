@@ -2,25 +2,25 @@ import { useQuery } from '@tanstack/react-query';
 import {
   AlertCircle,
   ArrowLeft,
+  Calendar,
   ChevronRight,
   FileText,
   Image as ImageIcon,
   MapPin,
   MessageSquare,
   Paperclip,
-  User,
-  Calendar
+  User
 } from 'lucide-react';
-import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Button from '../components/ui/Button';
-import Badge from '../components/ui/Badge';
 import api from '../lib/api';
 
 export default function BarcodeViewAll() {
   const { barcode } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') || 'photos';
+  const requestedTab = searchParams.get('tab') || 'photos';
+  const activeTab = ['photos', 'remarks', 'attachments'].includes(requestedTab) ? requestedTab : 'photos';
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['barcodeDetail', barcode],
@@ -80,14 +80,14 @@ export default function BarcodeViewAll() {
           action: 'Barcode Exchange Completed (Old Barcode Closed)',
           user: ex.approvedBy || { fullName: 'Store Admin' },
           timestamp: ex.approvedAt || ex.updatedAt,
-          remarks: `Old barcode ${ex.oldBarcode} exchanged for new barcode ${ex.newBarcode || 'Pending'} under warranty.`
+          remarks: `Old barcode ${ex.oldBarcode} exchanged for new barcode ${ex.newBarcode || 'Pending'} under warranty.${ex.storeRemark ? ` Store Remark: ${ex.storeRemark}` : ''}`
         });
       } else if (barcode === ex.newBarcode) {
         timelineHistory.push({
           action: 'Barcode Exchange Completed (Replacement Active)',
           user: ex.approvedBy || { fullName: 'Store Admin' },
           timestamp: ex.approvedAt || ex.updatedAt,
-          remarks: `New replacement barcode ${ex.newBarcode} activated for old barcode ${ex.oldBarcode} under warranty.`
+          remarks: `New replacement barcode ${ex.newBarcode} activated for old barcode ${ex.oldBarcode} under warranty.${ex.storeRemark ? ` Store Remark: ${ex.storeRemark}` : ''}`
         });
       }
     } else if (ex.status === 'rejected') {
@@ -95,7 +95,7 @@ export default function BarcodeViewAll() {
         action: 'Barcode Exchange Rejected',
         user: ex.approvedBy || { fullName: 'Store Admin' },
         timestamp: ex.updatedAt,
-        remarks: `Exchange request for old barcode ${ex.oldBarcode} was rejected by store.`
+        remarks: `Exchange request for old barcode ${ex.oldBarcode} was rejected by store.${ex.storeRemark ? ` Store Remark: ${ex.storeRemark}` : ''}`
       });
     }
   });
@@ -156,7 +156,7 @@ export default function BarcodeViewAll() {
   const addPhoto = (url, lat, lng, address, date, source) => {
     if (!url || typeof url !== 'string' || seenPhotoUrls.has(url)) return;
     seenPhotoUrls.add(url);
-    
+
     let cleanLat = parseFloat(lat);
     let cleanLng = parseFloat(lng);
     if (isNaN(cleanLat) || isNaN(cleanLng)) {
@@ -252,6 +252,102 @@ export default function BarcodeViewAll() {
     }
   });
 
+  splits.forEach((split, index) => {
+    split.photos?.forEach(photo => {
+      const url = typeof photo === 'string' ? photo : photo.url;
+      const date = typeof photo === 'object' ? photo.capturedAt : undefined;
+      addPhoto(url, split.gps?.lat, split.gps?.lng, split.gps?.address, date || split.createdAt, `Split Request #${splits.length - index}`);
+    });
+  });
+
+  exchanges.forEach((exchange, index) => {
+    exchange.photos?.forEach(photo => {
+      const url = typeof photo === 'string' ? photo : photo.url;
+      const date = typeof photo === 'object' ? photo.capturedAt : undefined;
+      addPhoto(url, exchange.gps?.lat, exchange.gps?.lng, exchange.gps?.address, date || exchange.createdAt, `Exchange Request #${exchanges.length - index}`);
+    });
+  });
+
+  const closeRequests = data?.closeRequests || [];
+  closeRequests.forEach((closeRequest, index) => {
+    closeRequest.photos?.forEach(photo => {
+      const url = typeof photo === 'string' ? photo : photo.url;
+      const date = typeof photo === 'object' ? photo.capturedAt : undefined;
+      addPhoto(url, closeRequest.gps?.lat, closeRequest.gps?.lng, closeRequest.gps?.address, date || closeRequest.createdAt, `${closeRequest.documentType || 'Conversion'} Request #${closeRequests.length - index}`);
+    });
+  });
+
+  const barcodeFormHistory = (bc?.history || []).filter(log => ['receiving', 'store_dispatch', 'handler_collection', 'store_return_receipt'].includes(log.metadata?.requestType));
+
+  const formRequests = [
+    ...transfers.map(transfer => ({
+      id: `transfer-${transfer._id}`,
+      action: 'Transfer',
+      material: bc?.materialName,
+      employee: `${transfer.fromUser?.fullName || 'Unknown'} → ${transfer.toUser?.fullName || 'Unknown'}`,
+      reason: transfer.remarks,
+      status: transfer.status,
+      date: transfer.createdAt,
+      photo: transfer.photos?.[0]?.url || transfer.photos?.[0]
+    })),
+    ...splits.map(split => ({
+      id: `split-${split._id}`,
+      action: 'Split',
+      material: split.requestedMaterialName || split.materialName,
+      employee: split.requester?.fullName || 'Unknown',
+      reason: split.reason,
+      status: split.status,
+      date: split.createdAt,
+      photo: split.photos?.[0]?.url || split.photos?.[0]
+    })),
+    ...returns.map(returnRequest => ({
+      id: `return-${returnRequest._id}`,
+      action: 'Return',
+      material: bc?.materialName,
+      employee: returnRequest.fromUser?.fullName || 'Unknown',
+      reason: `${returnRequest.reason || ''}${returnRequest.remarks ? ` — ${returnRequest.remarks}` : ''}`,
+      status: returnRequest.status,
+      date: returnRequest.createdAt,
+      photo: returnRequest.photos?.[0]?.url || returnRequest.photos?.[0]
+    })),
+    ...exchanges.map(exchange => ({
+      id: `exchange-${exchange._id}`,
+      action: 'Exchange',
+      material: exchange.materialName,
+      employee: exchange.requester?.fullName || 'Unknown',
+      reason: exchange.warrantyReason,
+      status: exchange.status,
+      date: exchange.createdAt,
+      photo: exchange.photos?.[0]?.url || exchange.photos?.[0]
+    })),
+    ...closeRequests.map(closeRequest => ({
+      id: `close-${closeRequest._id}`,
+      action: closeRequest.documentType || 'Conversion',
+      material: bc?.materialName,
+      employee: closeRequest.requester?.fullName || 'Unknown',
+      reason: closeRequest.remarks,
+      status: closeRequest.status,
+      date: closeRequest.createdAt,
+      photo: closeRequest.photos?.[0]?.url || closeRequest.photos?.[0],
+      documentNumber: closeRequest.documentNumber
+    })),
+    ...barcodeFormHistory.map(log => ({
+      id: `history-${log._id || `${log.action}-${log.timestamp}`}`,
+      action: ({
+        receiving: 'Receiving',
+        store_dispatch: 'Store Dispatch',
+        handler_collection: 'Handler Collection',
+        store_return_receipt: 'Store Return Receipt'
+      })[log.metadata.requestType] || 'Material Update',
+      material: bc?.materialName,
+      employee: log.user?.fullName || 'Unknown',
+      reason: log.remarks,
+      status: log.metadata.condition || 'completed',
+      date: log.timestamp,
+      photo: log.photo || log.metadata?.photos?.[0]?.url || log.metadata?.photos?.[0]
+    }))
+  ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
   // Aggregate all attachments/documents from different forms and stages
   const allAttachments = [];
   const seenDocUrls = new Set();
@@ -280,7 +376,12 @@ export default function BarcodeViewAll() {
     });
   }
 
-  const closeRequests = data?.closeRequests || [];
+  returns.forEach((returnRequest, index) => {
+    returnRequest.documents?.forEach(document => {
+      addAttachment(document.name, document.url, document.type, document.size, document.uploadedAt || returnRequest.createdAt, `Return Request #${returns.length - index}`);
+    });
+  });
+
   closeRequests.forEach((cr, index) => {
     if (cr.invoiceUrl) {
       const fileName = cr.invoiceUrl.split('/').pop() || `Invoice_Close_Request_${index + 1}.pdf`;
@@ -347,33 +448,30 @@ export default function BarcodeViewAll() {
           <div className="flex border-b border-slate-200 dark:border-slate-800 gap-1.5 p-1 bg-slate-50 dark:bg-slate-950/30 rounded-2xl w-fit">
             <button
               onClick={() => handleTabChange('photos')}
-              className={`flex items-center gap-2 px-4.5 py-2.5 rounded-xl text-xs font-bold transition ${
-                activeTab === 'photos'
-                  ? 'bg-white dark:bg-slate-900 text-blue-650 dark:text-blue-400 shadow-sm border border-slate-200/50 dark:border-slate-800'
-                  : 'text-slate-550 hover:text-slate-700 dark:hover:text-slate-350 hover:bg-slate-100/50 dark:hover:bg-slate-800/30'
-              }`}
+              className={`flex items-center gap-2 px-4.5 py-2.5 rounded-xl text-xs font-bold transition ${activeTab === 'photos'
+                ? 'bg-white dark:bg-slate-900 text-blue-650 dark:text-blue-400 shadow-sm border border-slate-200/50 dark:border-slate-800'
+                : 'text-slate-550 hover:text-slate-700 dark:hover:text-slate-350 hover:bg-slate-100/50 dark:hover:bg-slate-800/30'
+                }`}
             >
               <ImageIcon className="w-4 h-4" />
               Photos ({allPhotos.length})
             </button>
             <button
               onClick={() => handleTabChange('remarks')}
-              className={`flex items-center gap-2 px-4.5 py-2.5 rounded-xl text-xs font-bold transition ${
-                activeTab === 'remarks'
-                  ? 'bg-white dark:bg-slate-900 text-blue-650 dark:text-blue-400 shadow-sm border border-slate-200/50 dark:border-slate-800'
-                  : 'text-slate-550 hover:text-slate-700 dark:hover:text-slate-350 hover:bg-slate-100/50 dark:hover:bg-slate-800/30'
-              }`}
+              className={`flex items-center gap-2 px-4.5 py-2.5 rounded-xl text-xs font-bold transition ${activeTab === 'remarks'
+                ? 'bg-white dark:bg-slate-900 text-blue-650 dark:text-blue-400 shadow-sm border border-slate-200/50 dark:border-slate-800'
+                : 'text-slate-550 hover:text-slate-700 dark:hover:text-slate-350 hover:bg-slate-100/50 dark:hover:bg-slate-800/30'
+                }`}
             >
               <MessageSquare className="w-4 h-4" />
               Remarks ({remarksList.length})
             </button>
             <button
               onClick={() => handleTabChange('attachments')}
-              className={`flex items-center gap-2 px-4.5 py-2.5 rounded-xl text-xs font-bold transition ${
-                activeTab === 'attachments'
-                  ? 'bg-white dark:bg-slate-900 text-blue-650 dark:text-blue-400 shadow-sm border border-slate-200/50 dark:border-slate-800'
-                  : 'text-slate-550 hover:text-slate-700 dark:hover:text-slate-350 hover:bg-slate-100/50 dark:hover:bg-slate-800/30'
-              }`}
+              className={`flex items-center gap-2 px-4.5 py-2.5 rounded-xl text-xs font-bold transition ${activeTab === 'attachments'
+                ? 'bg-white dark:bg-slate-900 text-blue-650 dark:text-blue-400 shadow-sm border border-slate-200/50 dark:border-slate-800'
+                : 'text-slate-550 hover:text-slate-700 dark:hover:text-slate-350 hover:bg-slate-100/50 dark:hover:bg-slate-800/30'
+                }`}
             >
               <Paperclip className="w-4 h-4" />
               Attachments ({allAttachments.length})
@@ -397,7 +495,7 @@ export default function BarcodeViewAll() {
                           <img src={p.url} alt={`Scan ${idx + 1}`} className="w-full h-full object-cover" />
                         </div>
                         <div className="flex flex-col gap-1 text-xs">
-                          <span className="text-[10px] text-slate-400 font-extrabold tracking-wider uppercase flex items-center gap-2">
+                          <span className="text-[10px] text-slate-400 font-extrabold tracking-wider flex items-center gap-2">
                             <span>Photo #{idx + 1}</span>
                             <span className="bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-1.5 py-0.5 rounded font-mono text-[9px] normal-case">
                               {p.source}
@@ -449,7 +547,7 @@ export default function BarcodeViewAll() {
                       <div key={idx} className="bg-slate-50/50 dark:bg-slate-955/20 border border-slate-100 dark:border-slate-800 p-4.5 rounded-2xl flex flex-col gap-2.5">
                         <div className="flex justify-between items-start gap-4">
                           <div>
-                            <span className="inline-block text-[10px] font-extrabold bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-2 py-0.5 rounded uppercase tracking-wider font-mono">
+                            <span className="inline-block text-[10px] font-extrabold bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-2 py-0.5 rounded tracking-wider font-mono">
                               {log.action}
                             </span>
                             <div className="flex items-center gap-1.5 text-[10px] text-slate-505 font-semibold mt-1">

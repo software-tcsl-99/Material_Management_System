@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, Send, Trash } from 'lucide-react';
+import { ArrowLeft, Camera, Plus, Send, Trash } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import GeoCamera from '../components/geo-camera/GeoCamera';
+import TallyMaterialAutocomplete from '../components/ui/TallyMaterialAutocomplete';
 import api from '../lib/api';
 
 export default function SplitMaterial() {
@@ -10,7 +12,11 @@ export default function SplitMaterial() {
   const queryClient = useQueryClient();
   const [reason, setReason] = useState('');
   const [requestedMaterialName, setRequestedMaterialName] = useState('');
-  const [extraSplits, setExtraSplits] = useState([]); // array of strings (material names)
+  const [isOtherPrimaryMaterial, setIsOtherPrimaryMaterial] = useState(false);
+  const [extraSplits, setExtraSplits] = useState([]);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [capturedPhoto, setCapturedPhoto] = useState(null);
+  const [photoMeta, setPhotoMeta] = useState(null);
 
   // Fetch barcode detail
   const { data: detailData, isLoading } = useQuery({
@@ -41,7 +47,10 @@ export default function SplitMaterial() {
       await api.post('/barcodes/split-request', {
         barcode: payload.barcode,
         reason: payload.reason,
-        requestedMaterialName: payload.requestedMaterialName
+        requestedMaterialName: payload.requestedMaterialName,
+        batchId: payload.batchId,
+        gps: payload.gps,
+        photos: payload.photos
       });
 
       // Create extra split requests
@@ -51,7 +60,10 @@ export default function SplitMaterial() {
             api.post('/barcodes/split-request', {
               barcode: item.barcode,
               reason: item.reason,
-              requestedMaterialName: item.requestedMaterialName
+              requestedMaterialName: item.requestedMaterialName,
+              batchId: payload.batchId,
+              gps: payload.gps,
+              photos: payload.photos
             })
           )
         );
@@ -74,10 +86,18 @@ export default function SplitMaterial() {
       alert('Please enter a reason or remark for the split.');
       return;
     }
+    if (!requestedMaterialName.trim()) {
+      alert('Please select the split material from Tally or choose Other Material.');
+      return;
+    }
+    if (!capturedPhoto) {
+      alert('Please capture a GeoCamera photo before sending the split request.');
+      return;
+    }
 
     // Validate extra splits have names entered
     for (let i = 0; i < extraSplits.length; i++) {
-      if (!extraSplits[i].trim()) {
+      if (!extraSplits[i].name.trim()) {
         alert(`Please enter a material name for extra split row #${i + 1}`);
         return;
       }
@@ -86,17 +106,20 @@ export default function SplitMaterial() {
     splitRequestMutation.mutate({
       barcode,
       reason,
-      requestedMaterialName,
-      extraSplits: extraSplits.map(name => ({
+      requestedMaterialName: requestedMaterialName.trim(),
+      batchId: `${barcode}-${Date.now()}`,
+      gps: photoMeta ? { lat: photoMeta.lat, lng: photoMeta.lng, address: photoMeta.address } : undefined,
+      photos: [{ url: capturedPhoto, capturedAt: new Date().toISOString() }],
+      extraSplits: extraSplits.map(item => ({
         barcode: barcode,
         reason: reason,
-        requestedMaterialName: name.trim()
+        requestedMaterialName: item.name.trim()
       }))
     });
   };
 
   const addSplitRow = () => {
-    setExtraSplits([...extraSplits, '']);
+    setExtraSplits([...extraSplits, { name: '', isOther: false }]);
   };
 
   const removeSplitRow = (index) => {
@@ -105,8 +128,24 @@ export default function SplitMaterial() {
 
   const updateSplitRow = (index, value) => {
     const updated = [...extraSplits];
-    updated[index] = value;
+    updated[index] = { ...updated[index], name: value };
     setExtraSplits(updated);
+  };
+
+  const setExtraSplitOther = (index, isOther) => {
+    const updated = [...extraSplits];
+    updated[index] = { ...updated[index], isOther, name: '' };
+    setExtraSplits(updated);
+  };
+
+  const handleCapturePhoto = (uploadData) => {
+    if (uploadData && typeof uploadData === 'object' && uploadData.url) {
+      setCapturedPhoto(uploadData.url);
+      setPhotoMeta(uploadData.metadata);
+    } else {
+      setCapturedPhoto(uploadData);
+    }
+    setCameraOpen(false);
   };
 
   if (isLoading) {
@@ -167,18 +206,36 @@ export default function SplitMaterial() {
           </div>
 
           <div className="space-y-2">
-            <label className="block text-[10px] font-bold text-slate-500 tracking-wider">Requested New Material Name (Optional)</label>
-            <input
-              type="text"
-              value={requestedMaterialName}
-              onChange={(e) => setRequestedMaterialName(e.target.value)}
-              className="w-full text-sm bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3.5 py-2.5 font-semibold"
-              placeholder="e.g. Split Material Sub-type Name (leaves parent name if blank)"
-            />
+            <label className="block text-[10px] font-bold text-slate-500 tracking-wider">Split Material Name *</label>
+            {isOtherPrimaryMaterial ? (
+              <input
+                type="text"
+                value={requestedMaterialName}
+                onChange={(e) => setRequestedMaterialName(e.target.value)}
+                required
+                className="w-full text-sm bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3.5 py-2.5 font-semibold"
+                placeholder="Type material name not available in Tally"
+              />
+            ) : (
+              <TallyMaterialAutocomplete
+                value={requestedMaterialName}
+                onChange={(name) => setRequestedMaterialName(name)}
+                placeholder="Select material from Tally..."
+                className="px-3.5 py-2.5 rounded-xl"
+                required
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => { setIsOtherPrimaryMaterial(!isOtherPrimaryMaterial); setRequestedMaterialName(''); }}
+              className="text-[10px] font-bold text-blue-600 hover:underline"
+            >
+              {isOtherPrimaryMaterial ? 'Choose from Tally instead' : 'Material not in Tally? Choose Other Material'}
+            </button>
           </div>
 
           {/* Extra Materials List nested inside Primary Split Item Box */}
-          {extraSplits.map((name, index) => {
+          {extraSplits.map((item, index) => {
             return (
               <div key={index} className="border border-purple-100/70 dark:border-purple-900/40 bg-purple-50/10 dark:bg-purple-950/10 rounded-xl p-4 space-y-3 relative">
                 <button
@@ -193,14 +250,31 @@ export default function SplitMaterial() {
 
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-slate-500 tracking-wider">Requested New Material Name *</label>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => updateSplitRow(index, e.target.value)}
-                    required
-                    className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
-                    placeholder="e.g. Split Material Sub-type Name"
-                  />
+                  {item.isOther ? (
+                    <input
+                      type="text"
+                      value={item.name}
+                      onChange={(e) => updateSplitRow(index, e.target.value)}
+                      required
+                      className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
+                      placeholder="Type material name not available in Tally"
+                    />
+                  ) : (
+                    <TallyMaterialAutocomplete
+                      value={item.name}
+                      onChange={(name) => updateSplitRow(index, name)}
+                      placeholder="Select material from Tally..."
+                      className="px-3 py-2.5 rounded-lg"
+                      required
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setExtraSplitOther(index, !item.isOther)}
+                    className="text-[10px] font-bold text-blue-600 hover:underline"
+                  >
+                    {item.isOther ? 'Choose from Tally instead' : 'Material not in Tally? Choose Other Material'}
+                  </button>
                 </div>
               </div>
             );
@@ -232,6 +306,20 @@ export default function SplitMaterial() {
           />
         </div>
 
+        <div className="space-y-2">
+          <label className="block text-[10px] font-bold text-slate-555">GeoCamera Photo *</label>
+          {capturedPhoto ? (
+            <div className="relative border border-slate-200 rounded-2xl overflow-hidden aspect-video w-64 bg-slate-100">
+              <img src={capturedPhoto} alt="Split request proof" className="w-full h-full object-cover" />
+              <button type="button" onClick={() => { setCapturedPhoto(null); setPhotoMeta(null); }} className="absolute top-2 right-2 bg-black/60 hover:bg-black text-white p-1 rounded-full text-xs">Clear</button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setCameraOpen(true)} className="flex items-center gap-1.5 px-4 py-2 border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 rounded-xl transition">
+              <Camera className="w-4 h-4 text-primary" /> Open GeoCamera
+            </button>
+          )}
+        </div>
+
         {/* Submit */}
         <div className="pt-2 flex justify-end">
           <button
@@ -244,6 +332,7 @@ export default function SplitMaterial() {
           </button>
         </div>
       </form>
+      {cameraOpen && <GeoCamera onCapture={handleCapturePhoto} onClose={() => setCameraOpen(false)} />}
     </div>
   );
 }

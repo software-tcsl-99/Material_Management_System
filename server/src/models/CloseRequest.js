@@ -7,6 +7,12 @@ const closeRequestSchema = new mongoose.Schema(
     documentType: { type: String, required: true }, // 'DC Internal' or 'DC FOC'
     documentNumber: { type: String, required: true },
     remarks: { type: String, default: '' },
+    gps: {
+      lat: Number,
+      lng: Number,
+      address: String,
+    },
+    photos: [{ url: String, capturedAt: { type: Date, default: Date.now } }],
     requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     status: {
       type: String,
@@ -19,6 +25,7 @@ const closeRequestSchema = new mongoose.Schema(
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedAt: { type: Date },
     rejectionReason: { type: String, default: '' },
+    storeRemark: { type: String, default: '' },
   },
   { timestamps: true }
 );

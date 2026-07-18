@@ -22,6 +22,13 @@ const returnSchema = new mongoose.Schema(
       address: String,
     },
     photos: [{ url: String, capturedAt: Date }],
+    documents: [{
+      name: String,
+      url: String,
+      type: String,
+      size: Number,
+      uploadedAt: { type: Date, default: Date.now },
+    }],
     collectedAt: { type: Date },
     receivedAt: { type: Date },
   },

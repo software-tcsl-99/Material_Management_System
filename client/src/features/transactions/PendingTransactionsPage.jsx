@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import GeoCamera from '../../components/geo-camera/GeoCamera';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
@@ -43,6 +44,33 @@ const PendingTransactionsPage = () => {
   const [actionRemarks, setActionRemarks] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [transferPhoto, setTransferPhoto] = useState('/images/mock-transfer.jpg');
+  const [selectedBarcodeData, setSelectedBarcodeData] = useState(null);
+  const [loadingBarcodeData, setLoadingBarcodeData] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+
+  useEffect(() => {
+    const bcId = selectedItem?.barcode || selectedItem?.oldBarcode;
+    if (selectedItem && bcId) {
+      const fetchBarcodeInfo = async () => {
+        setLoadingBarcodeData(true);
+        try {
+          const res = await api.get(`/barcodes/${bcId}`);
+          setSelectedBarcodeData(res.data.barcode);
+        } catch (err) {
+          console.error("Error fetching barcode info for preview:", err);
+          setSelectedBarcodeData(null);
+        } finally {
+          setLoadingBarcodeData(false);
+        }
+      };
+      fetchBarcodeInfo();
+      if (selectedItem.oldBarcode) {
+        setExchangeNewBarcode(selectedItem.newBarcode || '');
+      }
+    } else {
+      setSelectedBarcodeData(null);
+    }
+  }, [selectedItem]);
   const handleTransferPhotoUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -473,7 +501,7 @@ const PendingTransactionsPage = () => {
 
   // Filter pending transfers
   const filteredTransfers = pendingTransfers.filter(tr => {
-    const isPending = tr.status === 'pending';
+    const isPending = ['pending', 'approved'].includes(tr.status);
     if (statusTab === 'pending' ? !isPending : isPending) return false;
     if (statusTab === 'history') {
       const isRequester = tr.fromUser?._id === user?._id || tr.fromUser === user?._id;
@@ -821,28 +849,19 @@ const PendingTransactionsPage = () => {
     }
   };
 
-  const handleAcceptReturnRequest = async () => {
-    setActionError('');
-    setSubmitting(true);
-    try {
-      if (selectedItem.items && selectedItem.items.length > 0) {
-        const returnIds = selectedItem.items.map(item => item._id);
-        await api.post('/barcodes/returns/bulk-accept', { returnIds });
-      } else {
-        await api.put(`/barcodes/return/${selectedItem._id}/accept`);
-      }
-      alert('Return request accepted successfully!');
-      const targetTxnId = selectedItem?.transactionId;
-      setSelectedItem(null);
-      fetchApprovals();
-      if (targetTxnId) {
-        navigate(`/transactions/${targetTxnId}`);
-      }
-    } catch (err) {
-      setActionError(err.response?.data?.message || 'Failed to accept return request.');
-    } finally {
-      setSubmitting(false);
+  const handleAcceptReturnRequest = () => {
+    const targetTxn = txns.find(t => t.transactionId === selectedItem?.transactionId);
+    const txnMongoId = targetTxn?._id;
+    if (!txnMongoId) {
+      alert("Transaction not found for this return request.");
+      return;
     }
+
+    const returnIdsStr = selectedItem.items && selectedItem.items.length > 0
+      ? selectedItem.items.map(item => item._id).join(',')
+      : selectedItem._id;
+
+    navigate(`/transactions/${txnMongoId}/receive?mode=store-return&returnIds=${returnIdsStr}`);
   };
 
   const handleCloseRequestAction = async (action, requestId) => {
@@ -1296,14 +1315,14 @@ const PendingTransactionsPage = () => {
 
 
   const showPricing = true;
-  const pendingTransfersCount = pendingTransfers.filter(tr => tr.status === 'pending').length;
+  const pendingTransfersCount = pendingTransfers.filter(tr => ['pending', 'approved'].includes(tr.status)).length;
   const pendingSplitsCount = pendingSplits.filter(s => s.status === 'pending').length;
   const pendingReturnsCount = pendingReturns.filter(r => ['pending', 'initiated', 'handler_assigned', 'collected', 'store_received'].includes(r.status)).length;
   const pendingCloseCount = pendingCloseRequests.filter(cr => ['pending', 'pending_store_acceptance', 'pending_accounts_approval'].includes(cr.status)).length;
   const pendingExchangesCount = pendingExchanges.filter(e => e.status === 'pending').length;
 
   const historyTransfersCount = pendingTransfers.filter(tr => {
-    if (tr.status === 'pending') return false;
+    if (['pending', 'approved'].includes(tr.status)) return false;
     const isRequester = tr.fromUser?._id === user?._id || tr.fromUser === user?._id;
     const isRecipient = tr.toUser?._id === user?._id || tr.toUser === user?._id;
     const isApprover = tr.approvedBy?._id === user?._id || tr.approvedBy === user?._id;
@@ -2235,6 +2254,51 @@ const PendingTransactionsPage = () => {
                         </div>
                       </div>
 
+                      {loadingBarcodeData ? (
+                        <div className="flex items-center justify-center p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100">
+                          <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-indigo-600 mr-2" />
+                          <span className="text-xs text-slate-500 font-semibold">Fetching old material information...</span>
+                        </div>
+                      ) : selectedBarcodeData ? (
+                        <div className="bg-indigo-50/30 dark:bg-indigo-950/10 p-4 rounded-xl border border-indigo-100 dark:border-indigo-900/40 space-y-2">
+                          <h4 className="text-[10px] text-indigo-600 dark:text-indigo-400 font-extrabold uppercase tracking-wider">Fetched Material Details</h4>
+                          <div className="grid grid-cols-2 gap-3 text-[11px]">
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block">Material Name</span>
+                              <span className="font-extrabold text-slate-800 dark:text-slate-200">{selectedBarcodeData.materialName}</span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block">Current Status</span>
+                              <span className="font-extrabold text-slate-800 dark:text-slate-200">{selectedBarcodeData.status}</span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block">Current Owner</span>
+                              <span className="font-extrabold text-slate-800 dark:text-slate-200">{selectedBarcodeData.owner?.fullName || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block">Transfer Count</span>
+                              <span className="font-extrabold text-slate-800 dark:text-slate-200">{selectedBarcodeData.transferCount || 0}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {selectedItem.photos && selectedItem.photos.length > 0 && (
+                        <div>
+                          <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Warranty Verification Photos</h4>
+                          <div className="flex gap-2 flex-wrap">
+                            {selectedItem.photos.map((ph, idx) => (
+                              <img
+                                key={idx}
+                                src={ph.url}
+                                alt={`Warranty Proof ${idx + 1}`}
+                                className="w-16 h-16 object-cover rounded-lg border border-slate-200"
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {canApprove && (
                         <div className="bg-slate-50 dark:bg-slate-955 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
                           <div>
@@ -2317,48 +2381,102 @@ const PendingTransactionsPage = () => {
                         </div>
                       </div>
 
-                      <div className="mt-auto border-t border-slate-100 dark:border-slate-800 pt-5 flex flex-col gap-4">
-                        {selectedItem.barcode && (
-                          <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
-                            <label className="block text-xs font-bold text-slate-500 tracking-wider">Transfer Verification Photo *</label>
-                            <div className="flex items-center gap-3">
-                              <img src={transferPhoto} alt="Verification" className="w-16 h-16 object-cover rounded-lg border border-slate-200" />
-                              <div className="flex flex-col gap-1.5">
-                                <label className="inline-flex items-center justify-center px-4 py-2 border border-slate-350 text-slate-700 dark:text-slate-200 font-bold rounded-lg cursor-pointer text-xs hover:bg-slate-100 dark:hover:bg-slate-800">
-                                  Upload Actual Photo
-                                  <input
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={handleTransferPhotoUpload}
-                                    className="hidden"
-                                  />
-                                </label>
+                      {loadingBarcodeData ? (
+                        <div className="flex items-center justify-center p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100">
+                          <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-indigo-600 mr-2" />
+                          <span className="text-xs text-slate-500 font-semibold">Fetching material information...</span>
+                        </div>
+                      ) : selectedBarcodeData ? (
+                        <div className="bg-indigo-50/30 dark:bg-indigo-950/10 p-4 rounded-xl border border-indigo-100 dark:border-indigo-900/40 space-y-2">
+                          <h4 className="text-[10px] text-indigo-600 dark:text-indigo-400 font-extrabold tracking-wider">Fetched Material Details</h4>
+                          <div className="grid grid-cols-2 gap-3 text-[11px]">
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block">Material Name</span>
+                              <span className="font-extrabold text-slate-800 dark:text-slate-200">{selectedBarcodeData.materialName}</span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block">Current Status</span>
+                              <span className="font-extrabold text-slate-800 dark:text-slate-200">{selectedBarcodeData.status}</span>
+                            </div>
+                            {selectedBarcodeData.parentBarcode && (
+                              <div>
+                                <span className="text-[9px] text-slate-400 font-bold block">Parent Barcode</span>
+                                <span className="font-extrabold text-slate-800 dark:text-slate-200">{selectedBarcodeData.parentBarcode}</span>
                               </div>
+                            )}
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block">Transfer Count</span>
+                              <span className="font-extrabold text-slate-800 dark:text-slate-200">{selectedBarcodeData.transferCount || 0}</span>
                             </div>
                           </div>
+                        </div>
+                      ) : null}
+
+                      <div className="mt-auto border-t border-slate-100 dark:border-slate-800 pt-5 flex flex-col gap-4">
+                        {statusTab === 'history' ? (
+                          <div className="flex items-center justify-between shrink-0">
+                            <div className="flex items-center gap-2 p-1.5 px-4 bg-slate-100 dark:bg-slate-800 rounded-lg text-slate-500 font-bold text-xs tracking-wider animate-fade-in">
+                              Status: {selectedItem.status.toUpperCase()}
+                            </div>
+                            <Button variant="outline" onClick={() => { setSelectedItem(null); setActionRemarks(''); }}>
+                              Close
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            {selectedItem.barcode && (
+                              <div className="bg-slate-50 dark:bg-slate-955 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
+                                <label className="block text-xs font-bold text-slate-500 tracking-wider">Transfer Verification Photo *</label>
+                                <div className="flex items-center gap-3">
+                                  <img src={transferPhoto} alt="Verification" className="w-16 h-16 object-cover rounded-lg border border-slate-200" />
+                                  <div className="flex flex-col gap-1.5">
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setCameraOpen(true)}
+                                        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-indigo-250 hover:bg-indigo-50 text-indigo-700 dark:text-indigo-200 font-bold rounded-lg text-xs"
+                                      >
+                                        <Camera className="w-3.5 h-3.5" />
+                                        Capture Live Image
+                                      </button>
+                                      <label className="inline-flex items-center justify-center px-3 py-2 border border-slate-350 text-slate-700 dark:text-slate-200 font-bold rounded-lg cursor-pointer text-xs hover:bg-slate-100 dark:hover:bg-slate-800">
+                                        Upload Photo
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          onChange={handleTransferPhotoUpload}
+                                          className="hidden"
+                                        />
+                                      </label>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            <div>
+                              <label className="block text-xs font-bold text-slate-500 tracking-wider mb-2">Remarks on action</label>
+                              <textarea
+                                value={actionRemarks}
+                                onChange={(e) => setActionRemarks(e.target.value)}
+                                placeholder="Add decision remarks..."
+                                rows="2"
+                                className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-indigo-500 dark:text-white px-3 py-2 font-semibold"
+                              />
+                            </div>
+
+                            {actionError && <p className="text-xs text-rose-500 font-bold">{actionError}</p>}
+
+                            <div className="flex gap-3 justify-end">
+                              <Button variant="outline" className="text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => handleTransferAction(selectedItem._id, 'reject')} disabled={submitting}>
+                                Reject Transfer
+                              </Button>
+                              <Button variant="success" onClick={() => handleTransferAction(selectedItem._id, 'accept')} disabled={submitting}>
+                                Accept Transfer
+                              </Button>
+                            </div>
+                          </>
                         )}
-
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 tracking-wider mb-2">Remarks on action</label>
-                          <textarea
-                            value={actionRemarks}
-                            onChange={(e) => setActionRemarks(e.target.value)}
-                            placeholder="Add decision remarks..."
-                            rows="2"
-                            className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-indigo-500 dark:text-white px-3 py-2 font-semibold"
-                          />
-                        </div>
-
-                        {actionError && <p className="text-xs text-rose-500 font-bold">{actionError}</p>}
-
-                        <div className="flex gap-3 justify-end">
-                          <Button variant="outline" className="text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => handleTransferAction(selectedItem._id, 'reject')} disabled={submitting}>
-                            Reject Transfer
-                          </Button>
-                          <Button variant="success" onClick={() => handleTransferAction(selectedItem._id, 'accept')} disabled={submitting}>
-                            Accept Transfer
-                          </Button>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -2967,6 +3085,20 @@ const PendingTransactionsPage = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {cameraOpen && (
+        <GeoCamera
+          onCapture={(uploadData) => {
+            if (uploadData && typeof uploadData === 'object' && uploadData.url) {
+              setTransferPhoto(uploadData.url);
+            } else {
+              setTransferPhoto(uploadData);
+            }
+            setCameraOpen(false);
+          }}
+          onClose={() => setCameraOpen(false)}
+        />
       )}
     </div>
   );

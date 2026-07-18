@@ -66,12 +66,21 @@ export default function TransferMaterial() {
     } else {
       setCapturedPhoto(uploadData);
     }
+    setCameraOpen(false);
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!toUserId) {
       alert('Please select a recipient.');
+      return;
+    }
+    if (!remarks.trim()) {
+      alert('Please enter a remark or reason for the transfer.');
+      return;
+    }
+    if (!capturedPhoto) {
+      alert('Please capture a GeoCamera photo before sending the transfer request.');
       return;
     }
 
@@ -160,7 +169,7 @@ export default function TransferMaterial() {
 
         {/* Live Photo Attachment */}
         <div className="space-y-2">
-          <label className="block text-[10px] font-bold text-slate-555">Live Photo with Metadata Overlay</label>
+          <label className="block text-[10px] font-bold text-slate-555">Live Photo with Metadata Overlay *</label>
           {capturedPhoto ? (
             <div className="relative border border-slate-200 rounded-2xl overflow-hidden aspect-video w-64 bg-slate-100">
               <img src={capturedPhoto} alt="Captured preview" className="w-full h-full object-cover" />
