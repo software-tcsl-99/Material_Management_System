@@ -37,7 +37,7 @@ export default function ExchangeBarcodePage() {
   const isExchangePending = exchanges.some(e => e.status === 'pending');
   const isTransferPending = transfers.some(t => t.status === 'pending');
   const isReturnPending = returns.some(r => ['pending', 'handler_assigned', 'collected', 'store_received'].includes(r.status));
-  const isClosePending = bc?.closeRequest && ['pending_accounts_approval', 'pending_store_acceptance'].includes(bc.closeRequest.status);
+  const isClosePending = bc?.closeRequest && bc.closeRequest.documentNumber && ['pending', 'pending_accounts_approval', 'pending_store_acceptance'].includes(bc.closeRequest.status);
 
   const hasPendingAction = isSplitPending || isExchangePending || isTransferPending || isReturnPending || isClosePending;
 
@@ -45,6 +45,10 @@ export default function ExchangeBarcodePage() {
     e.preventDefault();
     if (!exchangeRemarks.trim()) {
       alert('Please enter remarks / failure reason.');
+      return;
+    }
+    if (!exchangePhoto) {
+      alert('Please capture a GeoCamera photo before submitting.');
       return;
     }
     if (hasNewBarcode === 'yes' && !exchangeNewBarcode.trim()) {

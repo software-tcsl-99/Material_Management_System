@@ -128,7 +128,7 @@ const checkBarcodePendingActions = async (barcodeStr) => {
  */
 exports.transferBarcode = async (req, res) => {
   try {
-    const { barcode, toUserId, remarks, requiresApproval, gps, photos } = req.body;
+    const { barcode, toUserId, remarks, requiresApproval, gps, photos, managementApprover } = req.body;
     const normalizedBarcode = barcode ? barcode.trim().toUpperCase() : '';
 
     const bc = await Barcode.findOne({ barcode: normalizedBarcode }).populate('owner');
@@ -170,6 +170,7 @@ exports.transferBarcode = async (req, res) => {
       toDepartment: toUser.department._id || toUser.department,
       type: isCrossDept ? 'cross_department' : 'internal',
       requiresApproval: isCrossDept || requiresApproval,
+      managementApprover: isCrossDept ? managementApprover : undefined,
       status: 'pending', // Always pending first
       remarks,
       gps,
@@ -707,7 +708,11 @@ exports.acceptReturn = async (req, res) => {
             user: req.user._id,
           });
         } else {
-          transaction.status = 'partially_returned';
+          if (transaction.activeItems === 1) {
+            transaction.status = 'partially_returned';
+          } else {
+            transaction.status = 'active';
+          }
         }
 
         await transaction.save();
@@ -913,7 +918,11 @@ exports.bulkAcceptReturns = async (req, res) => {
               user: req.user._id,
             });
           } else {
-            transaction.status = 'partially_returned';
+            if (transaction.activeItems === 1) {
+              transaction.status = 'partially_returned';
+            } else {
+              transaction.status = 'active';
+            }
           }
 
           await transaction.save();
@@ -1936,11 +1945,22 @@ exports.getPendingTransfers = async (req, res) => {
     const isManagement = req.user.role === 'super_admin' || (req.user.role === 'department_admin' && req.user.departmentAdminType === 'management');
 
     if (isManagement) {
-      // Management/Super Admin sees cross-department transfers pending management approval
-      // OR transfers specifically sent to them
+      const isSuper = req.user.role === 'super_admin';
+      const mgtCrossDeptFilter = isSuper
+        ? { type: 'cross_department', status: 'pending' }
+        : { 
+            type: 'cross_department', 
+            status: 'pending', 
+            $or: [
+              { managementApprover: req.user._id },
+              { managementApprover: null },
+              { managementApprover: { $exists: false } }
+            ]
+          };
+
       query = {
         $or: [
-          { type: 'cross_department', status: 'pending' },
+          mgtCrossDeptFilter,
           { toUser: req.user._id, status: 'pending', type: 'internal' },
           { toUser: req.user._id, status: 'approved', type: 'cross_department' }
         ]
@@ -2132,10 +2152,10 @@ exports.assignReturnHandler = async (req, res) => {
  */
 exports.createCloseRequest = async (req, res) => {
   try {
-    const { barcode, documentType, documentNumber, remarks } = req.body;
+    const { barcode, documentType, remarks } = req.body;
 
-    if (!barcode || !documentType || !documentNumber) {
-      return res.status(400).json({ message: 'Barcode, Document Type, and Document Number are required.' });
+    if (!barcode || !documentType) {
+      return res.status(400).json({ message: 'Barcode and Document Type are required.' });
     }
 
     const Barcode = require('../models/Barcode');
@@ -2155,7 +2175,7 @@ exports.createCloseRequest = async (req, res) => {
 
 
 
-    const { managementApprover, customerName } = req.body;
+    const { managementApprover, customerName, photos, gps, documents } = req.body;
 
     const isBypassed = documentType === 'DC Internal' && (req.user.role === 'team_lead' || req.user.role === 'department_admin' || req.user.role === 'super_admin');
     const initialStatus = isBypassed ? 'pending_store_acceptance' : 'pending';
@@ -2165,28 +2185,32 @@ exports.createCloseRequest = async (req, res) => {
       transactionId: bc.transactionId,
       barcode,
       documentType,
-      documentNumber,
       remarks,
       requester: req.user._id,
       managementApprover: ['DC FOC', 'Invoice'].includes(documentType) ? managementApprover : undefined,
       customerName: documentType === 'DC FOC' ? customerName : undefined,
-      status: initialStatus
+      status: initialStatus,
+      photos,
+      gps,
+      documents
     });
 
     bc.closeRequest = {
       documentType,
-      documentNumber,
       remarks,
       requester: req.user._id,
       managementApprover: ['DC FOC', 'Invoice'].includes(documentType) ? managementApprover : undefined,
       customerName: documentType === 'DC FOC' ? customerName : undefined,
-      status: initialStatus
+      status: initialStatus,
+      photos,
+      gps,
+      documents
     };
 
     bc.history.push({
       action: 'Close Requested',
       user: req.user._id,
-      remarks: `Requested conversion to ${documentType} (${documentNumber}). ${remarks || ''}`
+      remarks: `Requested conversion to ${documentType}. ${remarks || ''}`
     });
     await bc.save();
 
@@ -2195,7 +2219,7 @@ exports.createCloseRequest = async (req, res) => {
     if (txn) {
       txn.timeline.push({
         action: 'Close Requested',
-        description: `Barcode ${barcode} close/conversion request created for ${documentType} (${documentNumber})`,
+        description: `Barcode ${barcode} close/conversion request created for ${documentType}`,
         user: req.user._id,
         timestamp: new Date()
       });
@@ -2414,11 +2438,10 @@ exports.handleCloseRequest = async (req, res) => {
           return res.status(400).json({ message: 'Invoice number or URL is required for approval.' });
         }
 
-        const resolvedInvoiceNumber = invoiceNumber || closeReq.documentNumber;
+        const resolvedInvoiceNumber = invoiceNumber || '';
 
         closeReq.status = 'approved';
         if (invoiceUrl) closeReq.invoiceUrl = invoiceUrl;
-        if (invoiceNumber) closeReq.documentNumber = invoiceNumber;
         closeReq.approvedBy = req.user._id;
         closeReq.approvedAt = new Date();
 
@@ -2505,8 +2528,7 @@ exports.handleCloseRequest = async (req, res) => {
             const tallyDcFocController = require('./tallyDcFoc.controller');
             tallyVoucherNum = await tallyDcFocController.postTallyDeliveryNote(
               closeReq.barcode,
-              closeReq.customerName || 'Consumer',
-              closeReq.documentNumber
+              closeReq.customerName || 'Consumer'
             );
             console.log(`Tally Delivery Note created: ${tallyVoucherNum} for barcode ${closeReq.barcode}`);
           } catch (tallyErr) {
@@ -2548,7 +2570,7 @@ exports.handleCloseRequest = async (req, res) => {
               barcodes: [closeReq.barcode]
             }];
 
-            const narrationText = `DC Internal ${closeReq.documentNumber || ''}`;
+            const narrationText = `DC Internal`;
 
             tallyVoucherNum = await tallyController.createTallyGodownTransfer(
               narrationText,
@@ -2575,7 +2597,7 @@ exports.handleCloseRequest = async (req, res) => {
         bc.history.push({
           action: 'Closed',
           user: req.user._id,
-          remarks: `Store accepted and closed RDC, converting to ${closeReq.documentType} (${closeReq.documentNumber})${storeRemark ? `. Store Remark: ${storeRemark}` : ''}${tallyVoucherNum ? ` (Tally DN: ${tallyVoucherNum})` : ''}`
+          remarks: `Store accepted and closed RDC, converting to ${closeReq.documentType}${storeRemark ? `. Store Remark: ${storeRemark}` : ''}${tallyVoucherNum ? ` (Tally DN: ${tallyVoucherNum})` : ''}`
         });
         await bc.save();
 
@@ -2611,11 +2633,17 @@ exports.handleCloseRequest = async (req, res) => {
               description: 'All items returned or closed/converted',
               user: req.user._id,
             });
+          } else {
+            if (txn.activeItems === 1) {
+              txn.status = 'partially_returned';
+            } else {
+              txn.status = 'active';
+            }
           }
 
           txn.timeline.push({
             action: 'Closed',
-            remarks: `Barcode ${bc.barcode} closed via Store approval for ${closeReq.documentType} (${closeReq.documentNumber})${storeRemark ? `. Store Remark: ${storeRemark}` : ''}`,
+            remarks: `Barcode ${bc.barcode} closed via Store approval for ${closeReq.documentType}${storeRemark ? `. Store Remark: ${storeRemark}` : ''}`,
             user: req.user._id,
             timestamp: new Date()
           });

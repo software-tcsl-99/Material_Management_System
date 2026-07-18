@@ -104,6 +104,14 @@ export default function ReturnMaterial() {
       alert('Please select a sourcing handler.');
       return;
     }
+    if (!remarks || !remarks.trim()) {
+      alert('Remarks / Details are required.');
+      return;
+    }
+    if (!capturedPhoto) {
+      alert('Please capture a GeoCamera photo before submitting.');
+      return;
+    }
 
     const payload = {
       barcode,

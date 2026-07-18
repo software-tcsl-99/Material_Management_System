@@ -78,7 +78,7 @@ export default function Header() {
           className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition"
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
-          {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          {theme === 'dark' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
         </button>
 
         {/* Notifications Icon */}

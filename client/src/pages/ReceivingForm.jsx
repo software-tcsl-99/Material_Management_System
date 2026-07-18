@@ -33,10 +33,22 @@ export default function ReceivingForm() {
       if (mode === 'store-return') {
         return Promise.all(payload.receipts.map(receipt => api.put(`/barcodes/return/${receipt.returnId}/accept`, { receipt })));
       }
+      if (mode === 'transfer-accept') {
+        const transferId = searchParams.get('transferId');
+        const r = payload.receipts[0];
+        const transferPayload = {
+          transferId,
+          action: 'accept',
+          reason: r.remarks || 'Transfer accepted',
+          photos: r.photos || [],
+          gps: r.gps || { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
+        };
+        return api.post('/barcodes/handle-transfer', transferPayload);
+      }
       return api.patch(`/transactions/${id}/receive`, payload);
     },
     onSuccess: () => {
-      alert(mode === 'handler-pickup' ? 'Handler collection recorded successfully!' : mode === 'store-return' ? 'Returned materials accepted by store!' : 'Materials successfully received!');
+      alert(mode === 'handler-pickup' ? 'Handler collection recorded successfully!' : mode === 'store-return' ? 'Returned materials accepted by store!' : mode === 'transfer-accept' ? 'Transfer accepted successfully!' : 'Materials successfully received!');
       navigate(`/transactions/${txnData.transactionId}`);
     }
   });
@@ -64,6 +76,7 @@ export default function ReceivingForm() {
     enabled: mode === 'store-return' && !!txnData?.transactionId
   });
 
+  const targetBarcode = searchParams.get('barcode');
   const formItems = mode === 'store-return'
     ? returnRequests.map(returnRequest => ({
       barcode: returnRequest.barcode,
@@ -71,13 +84,17 @@ export default function ReceivingForm() {
       owner: returnRequest.fromUser,
       returnId: returnRequest._id
     }))
-    : barcodes;
+    : mode === 'transfer-accept'
+      ? barcodes.filter(b => b.barcode === targetBarcode)
+      : barcodes;
 
   const formTitle = mode === 'handler-pickup'
     ? 'Handler Material Collection'
     : mode === 'store-return'
       ? 'Receive Returned Materials'
-      : 'Receive Materials';
+      : mode === 'transfer-accept'
+        ? 'Accept Material Transfer'
+        : 'Receive Materials';
 
   const updateEvidence = (barcode, changes) => {
     setBarcodeEvidence(current => ({
@@ -224,19 +241,18 @@ export default function ReceivingForm() {
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="px-5 py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-600 text-xs font-bold rounded-xl transition"
+            className="px-5 py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-600 text-xs font-bold rounded-xl transition cursor-pointer"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-6 py-2.5 bg-primary hover:bg-primary-dark text-white text-xs font-bold rounded-xl transition shadow-md shadow-primary/10"
+            className="px-6 py-2.5 bg-primary hover:bg-primary-dark text-white text-xs font-bold rounded-xl transition shadow-md shadow-primary/10 cursor-pointer"
           >
-            {mode === 'handler-pickup' ? 'Accept & Collect Materials' : mode === 'store-return' ? 'Accept Returned Materials' : 'Accept Materials & Sign Delivery'}
+            {mode === 'handler-pickup' ? 'Accept & Collect Materials' : mode === 'store-return' ? 'Accept Returned Materials' : mode === 'transfer-accept' ? 'Confirm & Accept Transfer' : 'Accept Materials & Sign Delivery'}
           </button>
         </div>
       </form>
-
     </div>
   );
 }

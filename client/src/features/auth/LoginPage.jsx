@@ -51,9 +51,15 @@ const LoginPage = () => {
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-slate-50 dark:bg-slate-950 px-4 sm:px-6 lg:px-8 relative overflow-hidden transition-colors duration-300">
-      {/* Dynamic Gradients in Background */}
-      <div className="absolute top-0 -left-4 w-72 h-72 sm:w-96 sm:h-96 bg-indigo-600/10 dark:bg-indigo-600/20 rounded-full blur-3xl" />
-      <div className="absolute bottom-0 -right-4 w-72 h-72 sm:w-96 sm:h-96 bg-purple-600/10 dark:bg-purple-600/20 rounded-full blur-3xl" />
+      {/* Material Movement Background Image */}
+      <div className="absolute inset-0 z-0 select-none pointer-events-none">
+        <img
+          src="/material_movement_bg.png"
+          alt="Material Movement Logistics"
+          className="w-full h-full object-cover opacity-90 dark:opacity-90 mix-blend-luminosity filter blur-[1px]"
+        />
+        <div className="absolute inset-0 bg-gradient-to-tr from-slate-50 via-transparent to-slate-50 dark:from-slate-950 dark:via-transparent dark:to-slate-950" />
+      </div>
 
       <div className="w-full max-w-[400px] p-6 sm:p-8 glass border border-slate-200/80 dark:border-white/10 relative z-10 bg-white/80 dark:bg-slate-950/40 shadow-2xl rounded-2xl flex flex-col gap-6 backdrop-blur-md">
         {/* Header */}

@@ -23,15 +23,7 @@ export default function BarcodeDetail() {
   const [acceptPhoto, setAcceptPhoto] = useState('/images/mock-accept.jpg');
   const [accepting, setAccepting] = useState(false);
 
-  // Close Request modal states
-  const [barcodeCloseModal, setBarcodeCloseModal] = useState(false);
-  const [barcodeCloseDocType, setBarcodeCloseDocType] = useState('DC Internal');
-  const [barcodeCloseDocNumber, setBarcodeCloseDocNumber] = useState('');
-  const [barcodeCloseRemarks, setBarcodeCloseRemarks] = useState('');
-  const [barcodeCloseSubmitting, setBarcodeCloseSubmitting] = useState(false);
-  const [managementUsers, setManagementUsers] = useState([]);
-  const [selectedManagementId, setSelectedManagementId] = useState('');
-  const [selectedCustomerName, setSelectedCustomerName] = useState('');
+
 
   // Exchange Request modal states
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
@@ -76,22 +68,7 @@ export default function BarcodeDetail() {
     }
   });
 
-  const { data: tallyCustomersData } = useQuery({
-    queryKey: ['tallyCustomers'],
-    queryFn: async () => {
-      const res = await api.get('/barcodes/tally/customers');
-      return res.data.customers || [];
-    },
-    enabled: barcodeCloseModal && barcodeCloseDocType === 'DC FOC'
-  });
 
-  useEffect(() => {
-    api.get('/employees?limit=1000&allDepartments=true').then(res => {
-      const empList = res.data.employees || res.data.data || [];
-      const mgtList = empList.filter(e => e.role === 'department_admin' && e.departmentAdminType === 'management' && e._id !== userData?._id && e.role !== 'super_admin');
-      setManagementUsers(mgtList.map(m => ({ value: m._id, label: `${m.fullName} (${m.employeeId})` })));
-    }).catch(err => console.error(err));
-  }, [userData]);
 
   const fetchChat = async (txnId) => {
     if (!txnId) return;
@@ -435,62 +412,7 @@ export default function BarcodeDetail() {
     }
   };
 
-  const handleBarcodeCloseSubmit = async (e) => {
-    e.preventDefault();
-    if (!barcodeCloseDocNumber.trim()) {
-      alert('Please enter a document number.');
-      return;
-    }
-    if (['DC FOC', 'Invoice'].includes(barcodeCloseDocType) && !selectedManagementId) {
-      alert('Please select a management approver.');
-      return;
-    }
-    if (barcodeCloseDocType === 'DC FOC' && !selectedCustomerName) {
-      alert('Please select a customer.');
-      return;
-    }
-    setBarcodeCloseSubmitting(true);
-    try {
-      await api.post('/barcodes/close-request', {
-        barcode,
-        documentType: barcodeCloseDocType,
-        documentNumber: barcodeCloseDocNumber,
-        remarks: barcodeCloseRemarks,
-        managementApprover: ['DC FOC', 'Invoice'].includes(barcodeCloseDocType) ? selectedManagementId : undefined,
-        customerName: barcodeCloseDocType === 'DC FOC' ? selectedCustomerName : undefined
-      });
-      alert('Close request submitted successfully!');
-      setBarcodeCloseModal(false);
-      refetch();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Failed to submit close request.');
-    } finally {
-      setBarcodeCloseSubmitting(false);
-    }
-  };
 
-  const handleExchangeSubmit = async (e) => {
-    e.preventDefault();
-    if (!exchangeWarrantyReason.trim()) {
-      alert('Please enter a warranty / failure reason.');
-      return;
-    }
-    setExchangeSubmitting(true);
-    try {
-      await api.post('/barcodes/exchange-request', {
-        oldBarcode: barcode,
-        warrantyReason: exchangeWarrantyReason
-      });
-      alert('Exchange request submitted successfully!');
-      setExchangeModalOpen(false);
-      setExchangeWarrantyReason('');
-      refetch();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Failed to submit exchange request.');
-    } finally {
-      setExchangeSubmitting(false);
-    }
-  };
 
   const material = bc?.transaction?.materials?.find(m =>
     m.barcodes?.some(b => b.barcode === barcode || b === barcode)
@@ -577,20 +499,12 @@ export default function BarcodeDetail() {
                   </Button>
                 )}
                 <Button size="sm" variant="outline" onClick={() => {
-                  setBarcodeCloseDocType('DC Internal');
-                  setBarcodeCloseDocNumber('');
-                  setBarcodeCloseRemarks('');
-                  setSelectedManagementId('');
-                  setSelectedCustomerName('');
-                  setBarcodeCloseModal(true);
+                  navigate(`/barcodes/${barcode}/convert?defaultType=DC`);
                 }}>
                   Convert to DC
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => {
-                  setBarcodeCloseDocType('Invoice');
-                  setBarcodeCloseDocNumber('');
-                  setBarcodeCloseRemarks('');
-                  setBarcodeCloseModal(true);
+                  navigate(`/barcodes/${barcode}/convert?defaultType=Invoice`);
                 }}>
                   Convert to Invoice
                 </Button>
@@ -702,7 +616,7 @@ export default function BarcodeDetail() {
               <div className="flex flex-col items-start gap-1">
                 <span className="text-[9px] text-slate-400 font-extrabold tracking-wider block">Status</span>
                 <Badge variant={bc.status?.toUpperCase() === 'RETURNED' ? 'secondary' : bc.status?.toUpperCase() === 'CANCELLED' ? 'danger' : bc.status?.toUpperCase() === 'ACTIVE' ? 'primary' : 'success'}>
-                  {bc.status?.toUpperCase() === 'ACTIVE' ? 'Active (Transferred)' : bc.status?.toUpperCase()}
+                  {bc.status}
                 </Badge>
               </div>
             </div>
@@ -1130,129 +1044,7 @@ export default function BarcodeDetail() {
         </>
       )}
 
-      {/* Barcode Close / DC Conversion Modal */}
-      {barcodeCloseModal && (() => {
-        const materialName = material?.name || bc?.materialName || 'Unknown Material';
-        const isInvoice = barcodeCloseDocType === 'Invoice';
-        return (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
-              <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                    {isInvoice ? 'Convert Barcode to Invoice' : 'Convert DC Type'}
-                  </h3>
-                  <p className="text-[10px] text-slate-400 font-bold tracking-wider mt-0.5">
-                    {isInvoice ? 'Invoice Conversion Request (Accounts Approval)' : 'Challan type migration event'}
-                  </p>
-                </div>
-                <button onClick={() => setBarcodeCloseModal(false)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-650">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
 
-              <form onSubmit={handleBarcodeCloseSubmit} className="mt-4 flex flex-col gap-4 text-xs">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <span className="block text-slate-500 font-bold tracking-wider mb-1">Target Barcode</span>
-                    <span className="block font-mono font-bold text-blue-650 dark:text-blue-450 text-xs mt-0.5">{barcode}</span>
-                  </div>
-                  <div>
-                    <span className="block text-slate-500 font-bold tracking-wider mb-1">Material</span>
-                    <span className="block font-sans font-extrabold text-slate-850 dark:text-slate-205 text-xs mt-0.5 truncate">{materialName}</span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Target Document Type *</label>
-                  {isInvoice ? (
-                    <input
-                      type="text"
-                      value="Invoice"
-                      disabled
-                      className="w-full text-xs bg-slate-100 dark:bg-slate-800 border border-slate-250 dark:border-slate-800 rounded-lg px-3 py-2.5 font-bold focus:outline-none cursor-not-allowed text-slate-500"
-                    />
-                  ) : (
-                    <select
-                      value={barcodeCloseDocType}
-                      onChange={(e) => setBarcodeCloseDocType(e.target.value)}
-                      className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
-                    >
-                      <option value="DC Internal">DC Internal</option>
-                      <option value="DC FOC">DC FOC</option>
-                    </select>
-                  )}
-                </div>
-
-                {['DC FOC', 'Invoice'].includes(barcodeCloseDocType) && (
-                  <div>
-                    <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Choose Management Approver *</label>
-                    <select
-                      value={selectedManagementId}
-                      onChange={(e) => setSelectedManagementId(e.target.value)}
-                      required
-                      className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
-                    >
-                      <option value="">Select Management Admin...</option>
-                      {managementUsers.map(u => (
-                        <option key={u.value} value={u.value}>{u.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {barcodeCloseDocType === 'DC FOC' && (
-                  <div>
-                    <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Select Tally Customer *</label>
-                    <select
-                      value={selectedCustomerName}
-                      onChange={(e) => setSelectedCustomerName(e.target.value)}
-                      required
-                      className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
-                    >
-                      <option value="">Select Customer...</option>
-                      {tallyCustomersData?.map(cust => (
-                        <option key={cust} value={cust}>{cust}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-slate-500 font-bold tracking-wider mb-1.5">New Document Number *</label>
-                  <input
-                    type="text"
-                    value={barcodeCloseDocNumber}
-                    onChange={(e) => setBarcodeCloseDocNumber(e.target.value)}
-                    required
-                    placeholder={isInvoice ? "e.g. INV-20260012" : "e.g. DC-10092"}
-                    className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Remarks / Reason *</label>
-                  <textarea
-                    value={barcodeCloseRemarks}
-                    onChange={(e) => setBarcodeCloseRemarks(e.target.value)}
-                    required
-                    placeholder={isInvoice ? "Invoice conversion reason for Accounts Admin approval..." : "Conversion reason for TL approval..."}
-                    rows="2.5"
-                    className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
-                  />
-                </div>
-
-                <div className="flex gap-2 justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
-                  <Button variant="ghost" type="button" onClick={() => setBarcodeCloseModal(false)}>Cancel</Button>
-                  <Button variant="primary" type="submit" disabled={barcodeCloseSubmitting}>
-                    {barcodeCloseSubmitting ? 'Requesting...' : 'Request Conversion'}
-                  </Button>
-                </div>
-              </form>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* View All Photos, Remarks & Documents Modal */}
       {viewAllModalOpen && (

@@ -1,7 +1,8 @@
-import { AlertCircle, Send, X } from 'lucide-react';
+import { AlertCircle, Send, X, Camera } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import Button from '../../components/ui/Button';
 import api from '../../lib/axios';
+import GeoCamera from '../../components/geo-camera/GeoCamera';
 
 const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
   const [employees, setEmployees] = useState([]);
@@ -10,14 +11,25 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
   const [requiresMgmtApproval, setRequiresMgmtApproval] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  
+  const [barcodeDetail, setBarcodeDetail] = useState(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [capturedPhoto, setCapturedPhoto] = useState(null);
+  const [photoMeta, setPhotoMeta] = useState(null);
 
   useEffect(() => {
     if (isOpen) {
-      api.get('/employees').then(res => {
-        setEmployees(res.data.data || []);
+      api.get('/employees?limit=1000&allDepartments=true').then(res => {
+        setEmployees(res.data.employees || res.data.data || []);
       }).catch(err => console.error(err));
+
+      if (barcode?.barcode) {
+        api.get(`/barcodes/${barcode.barcode}`).then(res => {
+          setBarcodeDetail(res.data);
+        }).catch(err => console.error(err));
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, barcode]);
 
   if (!isOpen) return null;
 
@@ -27,14 +39,23 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
       setError('Please select a target recipient employee.');
       return;
     }
+    if (!remarks.trim()) {
+      setError('Remarks / Reason is required.');
+      return;
+    }
+    if (!capturedPhoto) {
+      setError('Please capture a GeoCamera photo before sending the transfer request.');
+      return;
+    }
     setError('');
     setSubmitting(true);
     try {
       const res = await api.post(`/barcodes/${barcode.barcode}/transfer`, {
         targetUserId,
-        remarks: remarks + (requiresMgmtApproval ? ' [Requires Mgmt Approval]' : ''),
+        remarks: remarks.trim() + (requiresMgmtApproval ? ' [Requires Mgmt Approval]' : ''),
         requiresMgmtApproval,
-        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
+        gps: photoMeta ? { lat: photoMeta.lat, lng: photoMeta.lng, address: photoMeta.address } : { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' },
+        photos: [{ url: capturedPhoto, capturedAt: new Date().toISOString() }]
       });
       alert(res.data.message || 'Transfer request submitted successfully.');
       onSuccess();
@@ -45,9 +66,24 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
     }
   };
 
+  const handleCapturePhoto = (uploadData) => {
+    if (uploadData && typeof uploadData === 'object' && uploadData.url) {
+      setCapturedPhoto(uploadData.url);
+      setPhotoMeta(uploadData.metadata);
+    } else {
+      setCapturedPhoto(uploadData);
+    }
+    setCameraOpen(false);
+  };
+
+  const bc = barcodeDetail?.barcode;
+  const material = bc?.transaction?.materials?.find(m =>
+    m.barcodes.some(b => b.barcode === barcode.barcode)
+  );
+
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800">
           <div>
             <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -56,12 +92,30 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
             </h3>
             <p className="text-[10px] text-slate-400 font-bold tracking-wider mt-0.5">Barcode: {barcode.barcode}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer">
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-650 cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4 text-xs">
+        {/* Fetched Material Info Card */}
+        <div className="mt-4 bg-slate-50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-850 p-3.5 rounded-xl text-xs space-y-2 font-semibold text-slate-600">
+          <div>
+            <span className="text-[10px] text-slate-400 font-extrabold block">Material Name</span>
+            <span className="font-extrabold text-slate-800 dark:text-white">{material?.name || bc?.materialName || 'Fetching...'}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <span className="text-[10px] text-slate-400 font-extrabold block">Current Status</span>
+              <span className="font-extrabold text-slate-750 dark:text-slate-205">{bc?.status || 'Fetching...'}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 font-extrabold block">Current Owner</span>
+              <span className="font-extrabold text-slate-750 dark:text-slate-205">{bc?.owner?.fullName || 'Fetching...'}</span>
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4 text-xs font-semibold text-slate-650">
           <div>
             <label className="block text-slate-500 font-extrabold tracking-wider mb-1">Target Employee *</label>
             <select
@@ -71,13 +125,13 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
               className="w-full text-xs bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-blue-500 dark:text-white px-3 py-2.5 font-semibold"
             >
               <option value="">Select Target Employee</option>
-              {employees.map(emp => (
-                <option key={emp._id} value={emp._id}>{emp.fullName} ({emp.employeeId})</option>
+              {employees.filter(emp => emp._id !== bc?.owner?._id && emp._id !== bc?.owner && emp.role !== 'super_admin').map(emp => (
+                <option key={emp._id} value={emp._id}>{emp.fullName} ({emp.department?.name || 'No Dept'})</option>
               ))}
             </select>
           </div>
 
-          <div className="flex items-center gap-2.5 bg-blue-50/50 dark:bg-blue-950/20 p-3.5 rounded-xl border border-blue-100/50 dark:border-blue-900/50">
+          <div className="flex items-center gap-2.5 bg-blue-50/50 dark:bg-blue-955/20 p-3.5 rounded-xl border border-blue-100/50 dark:border-blue-900/50">
             <input
               type="checkbox"
               id="requiresMgmtApproval"
@@ -102,8 +156,33 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
             />
           </div>
 
+          {/* Live Photo Attachment */}
+          <div className="space-y-2">
+            <label className="block text-slate-550 font-extrabold tracking-wider mb-1">Live Photo with Metadata Overlay *</label>
+            {capturedPhoto ? (
+              <div className="relative border border-slate-250 dark:border-slate-800 rounded-xl overflow-hidden aspect-video w-full bg-slate-105">
+                <img src={capturedPhoto} alt="Captured preview" className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setCapturedPhoto(null)}
+                  className="absolute top-2 right-2 bg-black/60 hover:bg-black text-white p-1 px-2.5 rounded-xl text-[10px] font-bold transition"
+                >
+                  Clear
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCameraOpen(true)}
+                className="flex items-center gap-1.5 px-4 py-2.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 text-xs font-bold text-slate-700 dark:text-slate-205 rounded-xl transition cursor-pointer"
+              >
+                <Camera className="w-4 h-4 text-blue-600" /> Open GeoCamera
+              </button>
+            )}
+          </div>
+
           {error && (
-            <div className="flex items-center gap-2 text-red-500 font-bold text-xs bg-red-50 dark:bg-red-950/25 p-3 rounded-lg border border-red-100 dark:border-red-950">
+            <div className="flex items-center gap-2 text-red-500 font-bold text-xs bg-red-50 dark:bg-red-950/25 p-3 rounded-lg border border-red-105 dark:border-red-950">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
@@ -117,6 +196,13 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
           </div>
         </form>
       </div>
+
+      {cameraOpen && (
+        <GeoCamera
+          onCapture={handleCapturePhoto}
+          onClose={() => setCameraOpen(false)}
+        />
+      )}
     </div>
   );
 };

@@ -38,6 +38,7 @@ import ReturnMultiple from './pages/ReturnMultiple';
 import SplitMaterial from './pages/SplitMaterial';
 import TransferMaterial from './pages/TransferMaterial';
 import ExchangeBarcodePage from './pages/ExchangeBarcodePage';
+import ConvertBarcodePage from './pages/ConvertBarcodePage';
 
 
 // Route guards
@@ -106,6 +107,7 @@ export default function App() {
           <Route path="barcodes/:barcode/split" element={<SplitMaterial />} />
           <Route path="barcodes/:barcode/transfer" element={<TransferMaterial />} />
           <Route path="barcodes/:barcode/exchange" element={<ExchangeBarcodePage />} />
+          <Route path="barcodes/:barcode/convert" element={<ConvertBarcodePage />} />
           <Route path="barcodes/:barcode/return" element={<ReturnMaterial />} />
           <Route path="materials" element={<MaterialsTree />} />
           <Route path="transfers" element={<TransferListPage />} />

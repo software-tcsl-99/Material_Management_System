@@ -47,6 +47,17 @@ const PendingTransactionsPage = () => {
   const [selectedBarcodeData, setSelectedBarcodeData] = useState(null);
   const [loadingBarcodeData, setLoadingBarcodeData] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
+
+  const getImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+      return url;
+    }
+    const backendBase = 'http://localhost:5000';
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    return `${backendBase}${cleanPath}`;
+  };
 
   useEffect(() => {
     const bcId = selectedItem?.barcode || selectedItem?.oldBarcode;
@@ -701,6 +712,17 @@ const PendingTransactionsPage = () => {
   };
 
   const handleTransferAction = async (transferId, action) => {
+    if (action === 'accept') {
+      const targetTxnId = selectedItem?.transactionId;
+      const barcodeStr = selectedItem?.barcode;
+      if (targetTxnId && barcodeStr) {
+        navigate(`/transactions/${targetTxnId}/receive?mode=transfer-accept&transferId=${transferId}&barcode=${barcodeStr}`);
+      } else {
+        alert('Invalid transfer reference details.');
+      }
+      return;
+    }
+
     let reason = actionRemarks;
     if (action === 'reject' && !reason.trim()) {
       setRejectModalTitle('Reject Barcode Transfer');
@@ -729,27 +751,21 @@ const PendingTransactionsPage = () => {
       setRejectModalOpen(true);
       return;
     }
+
     setActionError('');
     setSubmitting(true);
     try {
       const payload = {
         transferId,
         action,
-        reason: action === 'reject' ? reason.trim() : (actionRemarks || `Transfer request ${action}ed`),
+        reason: reason.trim(),
         gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
       };
-      if (action === 'accept') {
-        payload.photos = [{ url: transferPhoto, capturedAt: new Date().toISOString() }];
-      }
       await api.post('/barcodes/handle-transfer', payload);
-      alert(`Transfer request ${action}ed successfully.`);
-      const targetTxnId = selectedItem?.transactionId;
+      alert(`Transfer request rejected successfully.`);
       setActionRemarks('');
       setSelectedItem(null);
       fetchApprovals();
-      if (action === 'accept' && targetTxnId) {
-        navigate(`/transactions/${targetTxnId}`);
-      }
     } catch (err) {
       setActionError(err.response?.data?.message || 'Failed to update barcode transfer.');
     } finally {
@@ -1848,7 +1864,13 @@ const PendingTransactionsPage = () => {
                       <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Captured Photo</h4>
                       <div className="flex gap-2 flex-wrap mt-1">
                         {selectedItem.photos.map((ph, index) => (
-                          <img key={index} src={ph.url} alt="Return Capture" className="w-20 h-20 object-cover rounded-lg border border-slate-200" />
+                          <img 
+                            key={index} 
+                            src={getImageUrl(ph.url)} 
+                            alt="Return Capture" 
+                            className="w-20 h-20 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition" 
+                            onClick={() => setPreviewImage(getImageUrl(ph.url))}
+                          />
                         ))}
                       </div>
                     </div>
@@ -1969,10 +1991,27 @@ const PendingTransactionsPage = () => {
 
                   <div>
                     <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Reason for Split</h4>
-                    <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-350 font-bold italic">
+                    <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-355 font-bold italic">
                       "{selectedItem.reason}"
                     </div>
                   </div>
+
+                  {selectedItem.photos && selectedItem.photos.length > 0 && (
+                    <div>
+                      <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Verification Photos</h4>
+                      <div className="flex gap-2 flex-wrap animate-fade-in">
+                        {selectedItem.photos.map((ph, idx) => (
+                          <img
+                            key={idx}
+                            src={getImageUrl(ph.url)}
+                            alt={`Split Photo ${idx + 1}`}
+                            className="w-16 h-16 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition hover:scale-105 duration-200"
+                            onClick={() => setPreviewImage(getImageUrl(ph.url))}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="border-t border-slate-100 dark:border-slate-800 pt-4 space-y-3">
                     <h4 className="text-xs font-bold text-slate-800 dark:text-white tracking-wider">Register New Material & Tally Stock Journal Details</h4>
@@ -2168,8 +2207,25 @@ const PendingTransactionsPage = () => {
                     {selectedItem.remarks && (
                       <div>
                         <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Remarks / Reason</h4>
-                        <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-350 font-bold italic">
+                        <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-355 font-bold italic">
                           "{selectedItem.remarks}"
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedItem.photos && selectedItem.photos.length > 0 && (
+                      <div>
+                        <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Verification Photos</h4>
+                        <div className="flex gap-2 flex-wrap animate-fade-in">
+                          {selectedItem.photos.map((ph, idx) => (
+                            <img
+                              key={idx}
+                              src={getImageUrl(ph.url)}
+                              alt={`Verification Photo ${idx + 1}`}
+                              className="w-16 h-16 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition hover:scale-105 duration-200"
+                              onClick={() => setPreviewImage(getImageUrl(ph.url))}
+                            />
+                          ))}
                         </div>
                       </div>
                     )}
@@ -2290,9 +2346,10 @@ const PendingTransactionsPage = () => {
                             {selectedItem.photos.map((ph, idx) => (
                               <img
                                 key={idx}
-                                src={ph.url}
+                                src={getImageUrl(ph.url)}
                                 alt={`Warranty Proof ${idx + 1}`}
-                                className="w-16 h-16 object-cover rounded-lg border border-slate-200"
+                                className="w-16 h-16 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition"
+                                onClick={() => setPreviewImage(getImageUrl(ph.url))}
                               />
                             ))}
                           </div>
@@ -2376,10 +2433,27 @@ const PendingTransactionsPage = () => {
 
                       <div>
                         <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Remarks / Reason</h4>
-                        <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-300 font-bold">
+                        <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-955 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-300 font-bold">
                           {selectedItem.remarks || 'No remarks provided.'}
                         </div>
                       </div>
+
+                      {selectedItem.photos && selectedItem.photos.length > 0 && (
+                        <div>
+                          <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Initiator Proof Photos</h4>
+                          <div className="flex gap-2 flex-wrap animate-fade-in">
+                            {selectedItem.photos.map((ph, idx) => (
+                              <img
+                                key={idx}
+                                src={getImageUrl(ph.url)}
+                                alt={`Transfer Photo ${idx + 1}`}
+                                className="w-16 h-16 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition hover:scale-105 duration-200"
+                                onClick={() => setPreviewImage(getImageUrl(ph.url))}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {loadingBarcodeData ? (
                         <div className="flex items-center justify-center p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100">
@@ -2428,7 +2502,12 @@ const PendingTransactionsPage = () => {
                               <div className="bg-slate-50 dark:bg-slate-955 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
                                 <label className="block text-xs font-bold text-slate-500 tracking-wider">Transfer Verification Photo *</label>
                                 <div className="flex items-center gap-3">
-                                  <img src={transferPhoto} alt="Verification" className="w-16 h-16 object-cover rounded-lg border border-slate-200" />
+                                  <img 
+                                    src={getImageUrl(transferPhoto)} 
+                                    alt="Verification" 
+                                    className="w-16 h-16 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition" 
+                                    onClick={() => setPreviewImage(getImageUrl(transferPhoto))}
+                                  />
                                   <div className="flex flex-col gap-1.5">
                                     <div className="flex flex-wrap gap-2">
                                       <button
@@ -3037,7 +3116,12 @@ const PendingTransactionsPage = () => {
                 <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Geo-Tagged Receipt Photo *</label>
                 {receivePhoto ? (
                   <div className="relative border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50 h-36">
-                    <img src={receivePhoto} alt="Challan check" className="w-full h-full object-cover" />
+                    <img 
+                      src={getImageUrl(receivePhoto)} 
+                      alt="Challan check" 
+                      className="w-full h-full object-cover cursor-pointer hover:opacity-85 transition" 
+                      onClick={() => setPreviewImage(getImageUrl(receivePhoto))}
+                    />
                     <div className="absolute bottom-0 left-0 right-0 bg-slate-950/80 p-2 text-[9px] text-white flex flex-col leading-tight">
                       <span className="font-extrabold">Coordinates: {receiveCoords.lat}, {receiveCoords.lng}</span>
                       <span className="truncate">{receiveCoords.address}</span>
@@ -3099,6 +3183,28 @@ const PendingTransactionsPage = () => {
           }}
           onClose={() => setCameraOpen(false)}
         />
+      )}
+
+      {/* Image Preview Modal */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-55 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in cursor-pointer"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-3xl max-h-[90vh] p-2 bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+            <button 
+              className="absolute top-3 right-3 p-1.5 bg-black/60 hover:bg-black/85 text-white rounded-full transition-colors cursor-pointer z-10"
+              onClick={() => setPreviewImage(null)}
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <img 
+              src={previewImage} 
+              alt="Preview" 
+              className="max-w-full max-h-[80vh] object-contain rounded-lg"
+            />
+          </div>
+        </div>
       )}
     </div>
   );

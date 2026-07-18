@@ -117,6 +117,13 @@ const barcodeSchema = new mongoose.Schema(
         address: String,
       },
       photos: [{ url: String, capturedAt: { type: Date, default: Date.now } }],
+      documents: [{
+        name: String,
+        url: String,
+        type: String,
+        size: Number,
+        uploadedAt: { type: Date, default: Date.now }
+      }],
       requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       managementApprover: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       customerName: { type: String },

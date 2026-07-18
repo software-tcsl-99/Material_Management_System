@@ -19,6 +19,7 @@ const transferSchema = new mongoose.Schema(
       default: 'internal',
     },
     requiresApproval: { type: Boolean, default: false },
+    managementApprover: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedAt: { type: Date },
     rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

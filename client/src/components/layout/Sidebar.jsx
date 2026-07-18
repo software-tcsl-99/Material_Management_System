@@ -139,9 +139,11 @@ export default function Sidebar() {
     <aside className="w-64 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800 flex flex-col h-screen sidebar-transition shrink-0 z-30">
       {/* Brand Logo header */}
       <div className="h-16 flex items-center gap-3 px-6 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
-        <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center font-bold text-white text-base">
-          I
-        </div>
+        <img
+          src="/Logo-upscaled (1).jpeg"
+          alt="IMS Logo"
+          className="w-8 h-8 rounded-xl object-fit"
+        />
         <div>
           <h2 className="text-slate-900 dark:text-white font-bold text-sm leading-none tracking-wide">IMS</h2>
           <span className="text-[10px] font-semibold text-slate-500 tracking-widest mt-0.5 block">
@@ -207,10 +209,9 @@ export default function Sidebar() {
                 end
                 onClick={closeMobileMenu}
                 className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-4 py-2 rounded-xl text-[11px] font-medium transition ${
-                    isActive 
-                      ? 'text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 font-semibold' 
-                      : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
+                  `flex items-center gap-2.5 px-4 py-2 rounded-xl text-[11px] font-medium transition ${isActive
+                    ? 'text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 font-semibold'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
                   }`
                 }
               >
@@ -220,10 +221,9 @@ export default function Sidebar() {
                 to="/transactions/create"
                 onClick={closeMobileMenu}
                 className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-4 py-2 rounded-xl text-[11px] font-medium transition ${
-                    isActive 
-                      ? 'text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 font-semibold' 
-                      : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
+                  `flex items-center gap-2.5 px-4 py-2 rounded-xl text-[11px] font-medium transition ${isActive
+                    ? 'text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 font-semibold'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
                   }`
                 }
               >
@@ -238,8 +238,8 @@ export default function Sidebar() {
           to="/materials"
           onClick={closeMobileMenu}
           className={({ isActive }) =>
-            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive 
-              ? 'bg-primary text-white shadow-md shadow-primary/20' 
+            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive
+              ? 'bg-primary text-white shadow-md shadow-primary/20'
               : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
             }`
           }
@@ -254,8 +254,8 @@ export default function Sidebar() {
           to="/transfers"
           onClick={closeMobileMenu}
           className={({ isActive }) =>
-            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive 
-              ? 'bg-primary text-white shadow-md shadow-primary/20' 
+            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive
+              ? 'bg-primary text-white shadow-md shadow-primary/20'
               : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
             }`
           }
@@ -268,8 +268,8 @@ export default function Sidebar() {
           to="/returns"
           onClick={closeMobileMenu}
           className={({ isActive }) =>
-            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive 
-              ? 'bg-primary text-white shadow-md shadow-primary/20' 
+            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive
+              ? 'bg-primary text-white shadow-md shadow-primary/20'
               : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
             }`
           }
@@ -285,8 +285,8 @@ export default function Sidebar() {
               to="/audit-logs"
               onClick={closeMobileMenu}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive 
-                  ? 'bg-primary text-white shadow-md shadow-primary/20' 
+                `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive
+                  ? 'bg-primary text-white shadow-md shadow-primary/20'
                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
                 }`
               }
@@ -300,8 +300,8 @@ export default function Sidebar() {
           to="/reports"
           onClick={closeMobileMenu}
           className={({ isActive }) =>
-            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive 
-              ? 'bg-primary text-white shadow-md shadow-primary/20' 
+            `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive
+              ? 'bg-primary text-white shadow-md shadow-primary/20'
               : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
             }`
           }
@@ -316,8 +316,8 @@ export default function Sidebar() {
           to="/notifications"
           onClick={closeMobileMenu}
           className={({ isActive }) =>
-            `flex items-center justify-between px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive 
-              ? 'bg-primary text-white shadow-md shadow-primary/20' 
+            `flex items-center justify-between px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive
+              ? 'bg-primary text-white shadow-md shadow-primary/20'
               : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
             }`
           }
@@ -340,8 +340,8 @@ export default function Sidebar() {
               to="/users"
               onClick={closeMobileMenu}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive 
-                  ? 'bg-primary text-white shadow-md shadow-primary/20' 
+                `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive
+                  ? 'bg-primary text-white shadow-md shadow-primary/20'
                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
                 }`
               }
@@ -352,8 +352,8 @@ export default function Sidebar() {
               to="/masters"
               onClick={closeMobileMenu}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive 
-                  ? 'bg-primary text-white shadow-md shadow-primary/20' 
+                `flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${isActive
+                  ? 'bg-primary text-white shadow-md shadow-primary/20'
                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
                 }`
               }
