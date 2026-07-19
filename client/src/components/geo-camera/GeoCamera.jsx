@@ -1,170 +1,142 @@
-import { AlertCircle, Camera, CheckCircle2, RefreshCw } from 'lucide-react';
+import { AlertCircle, Camera, CheckCircle2, MapPin, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import useGeoLocation from '../../hooks/useGeoLocation';
-import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
 import Button from '../ui/Button';
 import Spinner from '../ui/Spinner';
 
-const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
+const GeoCamera = ({
+  value,
+  onCapture,
+  label = 'Evidence Photo',
+  triggerOnly = false,
+  onClose,
+}) => {
   const { user } = useAuthStore();
-  const { loading: geoLoading, error: geoError, coordinates, address, accuracy, getPosition } = useGeoLocation();
-
+  const { loading: geoLoading, getPosition } = useGeoLocation();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
   const [stream, setStream] = useState(null);
   const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState(null);
-  const [capturedPhoto, setCapturedPhoto] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [devices, setDevices] = useState([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState('');
-  const [cameraMode, setCameraMode] = useState('environment');
-  const isMobileBrowser = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState(null);
+  const [gpsData, setGpsData] = useState(null);
+  const gpsPromiseRef = useRef(null);
 
-  // Initialize camera and location
-  const startCamera = async (mode = cameraMode, deviceId = selectedDeviceId) => {
+  // Auto-start camera if triggerOnly is true
+  useEffect(() => {
+    if (triggerOnly) {
+      startCamera();
+    }
+    return () => {
+      stopCamera();
+    };
+  }, [triggerOnly]);
+
+  const startCamera = async () => {
+    setError(null);
+    setCameraActive(true);
+
+    // 1. Start fetching GPS in parallel
+    gpsPromiseRef.current = getPosition()
+      .then((loc) => {
+        setGpsData(loc);
+        return loc;
+      })
+      .catch((err) => {
+        console.warn('GPS retrieval error:', err);
+        const fallbackLoc = { lat: 18.5204, lng: 73.8567, accuracy: 50, address: 'Fallback Location (Pune Plant)' };
+        setGpsData(fallbackLoc);
+        return fallbackLoc;
+      });
+
+    // 2. Start webcam stream
     try {
-      setCameraError(null);
-      setCapturedPhoto(null);
-
-      const videoConstraints = {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+      const constraints = {
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
       };
-
-      if (isMobileBrowser) {
-        videoConstraints.facingMode = { exact: mode };
-      } else if (deviceId) {
-        videoConstraints.deviceId = { exact: deviceId };
-      }
-
-      const constraints = { video: videoConstraints, audio: false };
 
       let mediaStream;
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       } catch (err) {
-        console.warn('Primary getUserMedia failed, trying fallback facingMode:user', err);
-        const fallback = { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false };
-        mediaStream = await navigator.mediaDevices.getUserMedia(fallback);
-      }
-
-      const video = videoRef.current;
-      setStream(mediaStream);
-      if (video) {
-        video.srcObject = mediaStream;
-        await new Promise((resolve, reject) => {
-          const handleLoaded = () => {
-            video.play().then(resolve).catch(reject);
-          };
-          video.addEventListener('loadedmetadata', handleLoaded, { once: true });
-          setTimeout(() => {
-            if (!video.videoWidth || !video.videoHeight) {
-              resolve();
-            }
-          }, 1500);
+        console.warn('Primary getUserMedia failed, trying user camera', err);
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false,
         });
       }
-      setCameraActive(true);
-    } catch (err) {
-      console.error('Camera access error:', err);
-      setCameraError('Unable to access camera. Please check permissions.');
-    }
-  };
 
-  // Enumerate available video input devices for selection (front/back/laptop)
-  const discoverDevices = async () => {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-      const list = await navigator.mediaDevices.enumerateDevices();
-      const videoInputs = list.filter((d) => d.kind === 'videoinput');
-      setDevices(videoInputs);
-      // If no selection yet, pick the first device (only on desktop)
-      if (videoInputs.length > 0 && !selectedDeviceId && !isMobileBrowser) {
-        setSelectedDeviceId(videoInputs[0].deviceId || '');
+      setStream(mediaStream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+        await videoRef.current.play().catch(e => console.warn(e));
       }
     } catch (err) {
-      console.warn('Device discovery failed', err);
+      console.error('Camera access error:', err);
+      setError('Unable to access camera. Please check permissions.');
+      setCameraActive(false);
     }
   };
 
   const stopCamera = () => {
-    const currentStream = videoRef.current?.srcObject || stream;
-    if (currentStream) {
-      currentStream.getTracks().forEach((track) => track.stop());
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
       setStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
     setCameraActive(false);
   };
 
-  const switchCamera = async () => {
-    if (isMobileBrowser) {
-      const nextMode = cameraMode === 'environment' ? 'user' : 'environment';
-      stopCamera();
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      setCameraMode(nextMode);
-      await startCamera(nextMode, '');
-    } else if (devices.length > 1) {
-      const currentIndex = devices.findIndex((d) => d.deviceId === selectedDeviceId);
-      const nextIndex = (currentIndex + 1) % devices.length;
-      const nextDevice = devices[nextIndex];
-      stopCamera();
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      const nextDeviceId = nextDevice.deviceId || '';
-      setSelectedDeviceId(nextDeviceId);
-      await startCamera(cameraMode, nextDeviceId);
-    }
-  };
-
-  useEffect(() => {
-    // Discover devices once on mount
-    discoverDevices();
-    return () => {
-      stopCamera();
-    };
-  }, []);
-
   const capturePhoto = async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
+    setProcessing(true);
     try {
-      const captureTimestamp = new Date();
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
 
       // Match canvas dimensions to video feed
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
 
-      // Capture the current frame first
+      // Draw the video frame
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Stop camera stream immediately
       stopCamera();
 
-      // Then gather metadata after capture
-      let loc = { lat: 0, lng: 0, accuracy: 0, address: 'Unknown Location' };
-      try {
-        const fetched = await getPosition();
-        loc = fetched;
-      } catch (err) {
-        console.warn('Could not get precise location after capture:', err);
+      // Get GPS info
+      let loc = { lat: 18.5204, lng: 73.8567, accuracy: 50, address: 'Fallback Location (Pune Plant)' };
+      if (gpsPromiseRef.current) {
+        loc = await gpsPromiseRef.current;
       }
 
-      const browserDetails = navigator.userAgent || 'Unknown Browser';
-      const deviceDetails = {
-        platform: navigator.platform || 'Unknown Platform',
-        vendor: navigator.vendor || 'Unknown Vendor',
-        product: navigator.product || 'Unknown Product',
-        hardwareConcurrency: navigator.hardwareConcurrency || 'Unknown',
-        maxTouchPoints: navigator.maxTouchPoints || 'Unknown',
-      };
+      // Draw metadata overlays
+      const height = canvas.height;
+      const width = canvas.width;
+      const bannerHeight = Math.floor(height * 0.22);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+      ctx.fillRect(0, height - bannerHeight, width, bannerHeight);
+      ctx.fillStyle = '#ffffff';
+      ctx.textBaseline = 'top';
 
-      const timestamp = captureTimestamp.toLocaleString('en-US', {
+      const fontSize = Math.max(12, Math.floor(height * 0.025));
+      ctx.font = `600 ${fontSize}px sans-serif`;
+      const paddingLeft = Math.floor(width * 0.04);
+      let textTop = height - bannerHeight + Math.floor(bannerHeight * 0.1);
+      const lineSpacing = Math.floor(fontSize * 1.3);
+
+      const timestamp = new Date().toLocaleString('en-US', {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -173,22 +145,9 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
         hour12: true,
       });
 
-      // Add semi-transparent overlay banner at the bottom (20% of canvas height)
-      const bannerHeight = Math.floor(canvas.height * 0.22);
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
-      ctx.fillRect(0, canvas.height - bannerHeight, canvas.width, bannerHeight);
-      ctx.fillStyle = '#ffffff';
-      ctx.textBaseline = 'top';
-      const fontSize = Math.max(12, Math.floor(canvas.height * 0.025));
-      ctx.font = `600 ${fontSize}px sans-serif`;
-      const paddingLeft = Math.floor(canvas.width * 0.04);
-      let textTop = canvas.height - bannerHeight + Math.floor(bannerHeight * 0.1);
-      const lineSpacing = Math.floor(fontSize * 1.3);
-
       const employeeDetails = `Employee: ${user?.fullName || 'Unknown'} (${user?.employeeId || 'N/A'})`;
       const coordsText = `Lat: ${loc.lat.toFixed(6)}, Lng: ${loc.lng.toFixed(6)} (Acc: ${Math.round(loc.accuracy)}m)`;
       const addressText = `Addr: ${loc.address || 'Address not resolved'}`;
-      const browserText = browserDetails;
 
       ctx.fillText(employeeDetails, paddingLeft, textTop);
       textTop += lineSpacing;
@@ -197,186 +156,185 @@ const GeoCamera = ({ onCapture, label = 'Evidence Photo' }) => {
       ctx.fillText(coordsText, paddingLeft, textTop);
       textTop += lineSpacing;
       ctx.fillText(addressText, paddingLeft, textTop);
-      textTop += lineSpacing;
-      ctx.fillText(`Browser: ${browserText}`, paddingLeft, textTop);
 
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      setCapturedPhoto(dataUrl);
-
-      setUploading(true);
-      const response = await api.post('/upload/base64', {
-        image: dataUrl,
-        metadata: {
-          lat: loc.lat,
-          lng: loc.lng,
-          accuracy: loc.accuracy,
-          address: loc.address,
-          capturedAt: captureTimestamp.toISOString(),
-          timestamp,
-          browserDetails,
-          deviceDetails,
-        },
-      });
-
-      setUploading(false);
 
       const uploadData = {
-        url: response.data.url,
+        url: dataUrl,
         metadata: {
           lat: loc.lat,
           lng: loc.lng,
           accuracy: loc.accuracy,
           address: loc.address,
-          capturedAt: captureTimestamp.toISOString(),
-          timestamp,
-          browserDetails,
-          deviceDetails,
+          capturedAt: new Date().toISOString(),
         },
       };
 
       onCapture(uploadData);
     } catch (err) {
-      console.error('Capture/Upload error:', err);
-      setUploading(false);
-      setCameraError('Capture or upload failed. Please try again.');
+      console.error('Capture failed:', err);
+      setError('Capture failed. Please try again.');
+    } finally {
+      setProcessing(false);
     }
   };
 
+  const handleClear = () => {
+    stopCamera();
+    onCapture(null);
+    setGpsData(null);
+    setError(null);
+  };
+
+  const handleClose = () => {
+    stopCamera();
+    if (onClose) onClose();
+  };
+
+  if (triggerOnly) {
+    return (
+      <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center gap-4 text-white z-50 p-4 font-sans">
+        <canvas ref={canvasRef} className="hidden" />
+
+        <div className="relative w-full max-w-lg aspect-video rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl flex flex-col items-center justify-center">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={`w-full h-full object-cover ${cameraActive ? '' : 'hidden'}`}
+          />
+          {!cameraActive && !processing && (
+            <div className="flex flex-col items-center gap-2 text-slate-400">
+              <Camera className="w-10 h-10 animate-pulse text-indigo-500" />
+              <p className="text-xs font-semibold">Initializing camera stream...</p>
+            </div>
+          )}
+          {processing && (
+            <div className="absolute inset-0 bg-slate-955/85 flex flex-col items-center justify-center gap-3">
+              <Spinner size="md" />
+              <p className="text-xs font-medium">Stamping metadata & coordinates...</p>
+            </div>
+          )}
+        </div>
+
+        {cameraActive && (
+          <div className="flex gap-3 w-full max-w-lg">
+            <Button type="button" variant="outline" className="flex-1 text-slate-300 border-slate-700 hover:bg-slate-850" onClick={handleClose}>
+              Cancel
+            </Button>
+            <Button type="button" variant="primary" className="flex-1" onClick={capturePhoto} icon={Camera}>
+              Capture
+            </Button>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-center gap-2 text-rose-400 text-xs bg-rose-950/30 p-3 rounded-xl border border-rose-900 max-w-lg">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="w-full flex flex-col gap-4 border border-slate-200 dark:border-slate-800 rounded-xl p-5 bg-slate-50/50 dark:bg-slate-900/40">
+    <div className="w-full flex flex-col gap-3 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 bg-slate-50/50 dark:bg-slate-900/40 font-sans">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 tracking-wider">
+        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
           {label}
         </span>
-        {capturedPhoto && (
-          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-            <CheckCircle2 className="w-4 h-4" /> Captured & Uploaded
+        {value && (
+          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+            <CheckCircle2 className="w-3.5 h-3.5" /> Captured Successfully
           </span>
         )}
       </div>
 
-      <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center text-slate-400">
-        <canvas ref={canvasRef} className="hidden" />
+      <canvas ref={canvasRef} className="hidden" />
 
-        {/* Captured Preview */}
-        {capturedPhoto && (
-          <img src={capturedPhoto} alt="Captured" className="w-full h-full object-cover animate-fade-in" />
-        )}
-
-        {/* Live Camera Feed */}
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          controls={false}
-          className={`w-full h-full object-cover ${cameraActive && !capturedPhoto ? '' : 'hidden'}`}
-        />
-
-        {/* Idle/Trigger State */}
-        {!cameraActive && !capturedPhoto && (
-          <div className="flex flex-col items-center gap-2">
-            <Camera className="w-12 h-12 text-slate-500" />
-            <p className="text-sm font-medium">No live feed active</p>
-            <Button size="sm" onClick={() => startCamera(cameraMode)} icon={Camera}>
-              Capture Live Photo
-            </Button>
-          </div>
-        )}
-
-        {/* Loader Screen */}
-        {(uploading || geoLoading) && (
-          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center gap-3 text-white z-10">
-            <Spinner size="md" />
-            <p className="text-xs font-medium">
-              {geoLoading ? 'Acquiring high-accuracy GPS coordinates...' : 'Uploading secure image with metadata overlays...'}
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Geolocation feedback in container */}
-      {cameraActive && !capturedPhoto && (
-        <div className="flex flex-col gap-2 p-3 bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-100/50 dark:border-indigo-800/10 rounded-lg text-xs">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold text-indigo-700 dark:text-indigo-400">
-              On-Site GPS Tracking
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 py-0 px-2 text-[10px] text-indigo-600 cursor-pointer"
-              onClick={getPosition}
-              disabled={geoLoading}
-            >
-              <RefreshCw className={`w-3 h-3 mr-1 ${geoLoading ? 'animate-spin' : ''}`} /> Refresh
-            </Button>
-          </div>
-          {coordinates ? (
-            <div className="flex flex-col gap-1 text-slate-600 dark:text-slate-400">
-              <p>Coordinates: {coordinates.lat.toFixed(6)}, {coordinates.lng.toFixed(6)} (+/- {Math.round(accuracy)}m)</p>
-              <p className="truncate">Address: {address || 'Resolving address...'}</p>
+      {/* 1. Live stream container inline in the form */}
+      {cameraActive && (
+        <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center text-slate-400">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full h-full object-cover"
+          />
+          {processing && (
+            <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center gap-3 text-white">
+              <Spinner size="md" />
+              <p className="text-xs font-medium">Stamping metadata overlays...</p>
             </div>
-          ) : geoError ? (
-            <p className="text-red-500 flex items-center gap-1 font-medium">
-              <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {geoError}
-            </p>
-          ) : (
-            <p className="text-slate-500 animate-pulse">Requesting current location...</p>
           )}
-        </div>
-      )}
-
-      {/* Control Actions */}
-      {/* Camera device selector */}
-      {!isMobileBrowser && devices.length > 1 && (
-        <div className="flex items-center gap-2 w-full">
-          <label className="text-xs text-slate-500">Camera:</label>
-          <select
-            value={selectedDeviceId}
-            onChange={(e) => setSelectedDeviceId(e.target.value)}
-            className="rounded-lg border px-2 py-1 text-sm"
-          >
-            {devices.map((d) => (
-              <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId}`}</option>
-            ))}
-          </select>
-          <div className="flex-1" />
-        </div>
-      )}
-
-      <div className="flex items-center gap-2.5">
-        {cameraActive && !capturedPhoto && (
-          <>
-            <Button variant="outline" size="sm" onClick={stopCamera} className="flex-1">
+          <div className="absolute bottom-3 left-3 right-3 flex gap-2">
+            <Button type="button" size="xs" variant="outline" className="flex-1 bg-black/60 border-black/10 hover:bg-black/85 text-white" onClick={stopCamera}>
               Cancel
             </Button>
-            {!isMobileBrowser && (
-              <Button variant="outline" size="sm" onClick={switchCamera} className="flex-1" disabled={geoLoading || uploading}>
-                Switch Camera
-              </Button>
-            )}
-            <Button
-              size="sm"
-              onClick={capturePhoto}
-              disabled={geoLoading || uploading}
-              icon={Camera}
-              className="flex-1"
-            >
-              Capture Frame
+            <Button type="button" size="xs" variant="primary" className="flex-1" onClick={capturePhoto} icon={Camera}>
+              Capture Photo
             </Button>
-          </>
-        )}
-        {capturedPhoto && (
-          <Button variant="outline" size="sm" onClick={() => startCamera(cameraMode)} icon={Camera} className="w-full">
-            Recapture Photo
-          </Button>
-        )}
-      </div>
+          </div>
+        </div>
+      )}
 
-      {cameraError && (
-        <p className="text-xs text-red-500 font-semibold flex items-center gap-1.5 mt-1.5">
-          <AlertCircle className="w-4 h-4 shrink-0" /> {cameraError}
+      {/* 2. WhatsApp attachment preview style layout */}
+      {value && !cameraActive && (
+        <div className="flex flex-col sm:flex-row gap-4 bg-white dark:bg-slate-950 p-3.5 rounded-xl border border-slate-100 dark:border-slate-850">
+          <div className="relative aspect-video sm:w-48 overflow-hidden rounded-lg bg-slate-900 border border-slate-100 dark:border-slate-850 shrink-0">
+            <img src={value} alt="Preview" className="w-full h-full object-cover" />
+          </div>
+          <div className="flex-1 flex flex-col justify-between text-xs text-slate-500 font-semibold min-w-0">
+            <div className="space-y-1.5 py-1">
+              <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200">
+                <MapPin className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                <span className="font-bold text-[10px] text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">GPS Stamp</span>
+              </div>
+              {gpsData ? (
+                <div className="space-y-0.5 font-mono text-[10px] text-slate-600 dark:text-slate-400">
+                  <p>Latitude: {gpsData.lat.toFixed(6)}</p>
+                  <p>Longitude: {gpsData.lng.toFixed(6)}</p>
+                  <p>Accuracy: ±{Math.round(gpsData.accuracy)}m</p>
+                  <p className="font-bold mt-1 text-slate-500">Addr: {gpsData.address}</p>
+                </div>
+              ) : (
+                <p className="text-[10px] text-slate-400 italic">Coordinates attached to image</p>
+              )}
+            </div>
+            <div className="pt-2 sm:pt-0 flex gap-2">
+              <Button type="button" size="xs" variant="outline" onClick={startCamera} icon={Camera}>
+                Retake
+              </Button>
+              <Button type="button" size="xs" variant="outline" className="text-rose-600 border-rose-100 hover:bg-rose-50" onClick={handleClear} icon={Trash2}>
+                Clear
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Idle action button */}
+      {!value && !cameraActive && (
+        <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50/20 dark:bg-slate-900/10">
+          <Button
+            type="button"
+            onClick={startCamera}
+            icon={Camera}
+            variant="primary"
+            size="sm"
+          >
+            Open Geo Camera
+          </Button>
+          <p className="text-[10px] text-slate-400 mt-2 font-medium">Opens live capture stream, logs coordinates instantly</p>
+        </div>
+      )}
+
+      {error && (
+        <p className="text-xs text-rose-500 font-semibold flex items-center gap-1 mt-1">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {error}
         </p>
       )}
     </div>

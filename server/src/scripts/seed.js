@@ -112,7 +112,7 @@ const seedAll = async () => {
     userSpecs.push({
       employeeId: 'MGT001',
       fullName: 'Aditya Pise',
-      email: 'management@mms.com',
+      email: 'management@ims.com',
       phone: '9876543212',
       password: 'password123',
       role: 'department_admin',
@@ -124,7 +124,7 @@ const seedAll = async () => {
     userSpecs.push({
       employeeId: 'MGT002',
       fullName: 'Minal Patil',
-      email: 'minal@mms.com',
+      email: 'minal@ims.com',
       phone: '9876543215',
       password: 'password123',
       role: 'department_admin',
@@ -136,7 +136,7 @@ const seedAll = async () => {
     userSpecs.push({
       employeeId: 'MGT003',
       fullName: 'Vikas Sir',
-      email: 'vikas@mms.com',
+      email: 'vikas@ims.com',
       phone: '9876543216',
       password: 'password123',
       role: 'department_admin',
@@ -161,37 +161,37 @@ const seedAll = async () => {
     // Helper map to reuse existing credentials/names where applicable so we don't break existing tests
     const keyUsers = {
       // Software
-      'employee_Software': { employeeId: 'EMP001', fullName: 'Abhay Mudgal', email: 'abhay@mms.com', password: 'password123' },
-      'team_lead_Software': { employeeId: 'TL001', fullName: 'Akshay Kusale', email: 'teamlead@mms.com', password: 'password123' },
-      'department_admin_Software': { employeeId: 'ADM_SOFT', fullName: 'Adesh Bhongale', email: 'admin.soft@mms.com', password: 'password123' },
+      'employee_Software': { employeeId: 'EMP001', fullName: 'Abhay Mudgal', email: 'abhay@ims.com', password: 'password123' },
+      'team_lead_Software': { employeeId: 'TL001', fullName: 'Akshay Kusale', email: 'teamlead@ims.com', password: 'password123' },
+      'department_admin_Software': { employeeId: 'ADM_SOFT', fullName: 'Adesh Bhongale', email: 'admin.soft@ims.com', password: 'password123' },
       // Production
-      'department_admin_Production': { employeeId: 'PROD001', fullName: 'Bhushan Mahajan', email: 'production@mms.com', password: 'password123' },
-      'employee_Production': { employeeId: 'EMP002', fullName: 'Sakshee Kapade', email: 'sneha@mms.com', password: 'password123' },
-      'team_lead_Production': { employeeId: 'TL_PROD', fullName: 'Sanket Karande', email: 'teamlead.prod@mms.com', password: 'password123' },
+      'department_admin_Production': { employeeId: 'PROD001', fullName: 'Bhushan Mahajan', email: 'production@ims.com', password: 'password123' },
+      'employee_Production': { employeeId: 'EMP002', fullName: 'Sakshee Kapade', email: 'sneha@ims.com', password: 'password123' },
+      'team_lead_Production': { employeeId: 'TL_PROD', fullName: 'Sanket Karande', email: 'teamlead.prod@ims.com', password: 'password123' },
       // Stores
-      'department_admin_Stores': { employeeId: 'STORE001', fullName: 'GOKUL SHIRGAON', email: 'store@mms.com', password: 'password123' },
-      'employee_Stores': { employeeId: 'HDL001', fullName: 'Shreyas', email: 'handler@mms.com', password: 'password123' },
-      'team_lead_Stores': { employeeId: 'TL_STR', fullName: 'Sanket Kharade', email: 'teamlead.str@mms.com', password: 'password123' },
+      'department_admin_Stores': { employeeId: 'STORE001', fullName: 'GOKUL SHIRGAON', email: 'store@ims.com', password: 'password123' },
+      'employee_Stores': { employeeId: 'HDL001', fullName: 'Shreyas', email: 'handler@ims.com', password: 'password123' },
+      'team_lead_Stores': { employeeId: 'TL_STR', fullName: 'Sanket Kharade', email: 'teamlead.str@ims.com', password: 'password123' },
       // Purchase
-      'employee_Purchase': { employeeId: 'EMP_PUR', fullName: 'Deepak Patil', email: 'employee.pur@mms.com', password: 'password123' },
-      'team_lead_Purchase': { employeeId: 'TL_PUR', fullName: 'Devraj Powar', email: 'teamlead.pur@mms.com', password: 'password123' },
-      'department_admin_Purchase': { employeeId: 'ADM_PUR', fullName: 'Meghraj Yadav', email: 'admin.pur@mms.com', password: 'password123' },
+      'employee_Purchase': { employeeId: 'EMP_PUR', fullName: 'Deepak Patil', email: 'employee.pur@ims.com', password: 'password123' },
+      'team_lead_Purchase': { employeeId: 'TL_PUR', fullName: 'Devraj Powar', email: 'teamlead.pur@ims.com', password: 'password123' },
+      'department_admin_Purchase': { employeeId: 'ADM_PUR', fullName: 'Meghraj Yadav', email: 'admin.pur@ims.com', password: 'password123' },
       // HR
-      'employee_HR': { employeeId: 'EMP_HR', fullName: 'Mitali Lad', email: 'employee.hr@mms.com', password: 'password123' },
-      'team_lead_HR': { employeeId: 'TL_HR', fullName: 'Mrunal Kudalkar', email: 'teamlead.hr@mms.com', password: 'password123' },
-      'department_admin_HR': { employeeId: 'ADM_HR', fullName: 'Paramshivam J', email: 'admin.hr@mms.com', password: 'password123' },
+      'employee_HR': { employeeId: 'EMP_HR', fullName: 'Mitali Lad', email: 'employee.hr@ims.com', password: 'password123' },
+      'team_lead_HR': { employeeId: 'TL_HR', fullName: 'Mrunal Kudalkar', email: 'teamlead.hr@ims.com', password: 'password123' },
+      'department_admin_HR': { employeeId: 'ADM_HR', fullName: 'Paramshivam J', email: 'admin.hr@ims.com', password: 'password123' },
       // Finance
-      'department_admin_Finance': { employeeId: 'ACC001', fullName: 'Sachin Sherkhane', email: 'accounts@mms.com', password: 'password123' },
-      'employee_Finance': { employeeId: 'EMP_FIN', fullName: 'Shubham Shinde', email: 'employee.fin@mms.com', password: 'password123' },
-      'team_lead_Finance': { employeeId: 'TL_FIN', fullName: 'Siddharth Kattimani', email: 'teamlead.fin@mms.com', password: 'password123' },
+      'department_admin_Finance': { employeeId: 'ACC001', fullName: 'Sachin Sherkhane', email: 'accounts@ims.com', password: 'password123' },
+      'employee_Finance': { employeeId: 'EMP_FIN', fullName: 'Shubham Shinde', email: 'employee.fin@ims.com', password: 'password123' },
+      'team_lead_Finance': { employeeId: 'TL_FIN', fullName: 'Siddharth Kattimani', email: 'teamlead.fin@ims.com', password: 'password123' },
       // R&D
-      'employee_R&D': { employeeId: 'RND001', fullName: 'Ganesh Naik', email: 'rnd@mms.com', password: 'password123' },
-      'team_lead_R&D': { employeeId: 'TL_RND', fullName: 'Imran Shaikh', email: 'teamlead.rnd@mms.com', password: 'password123' },
-      'department_admin_R&D': { employeeId: 'ADM_RND', fullName: 'Prasanna Ghatage', email: 'admin.rnd@mms.com', password: 'password123' },
+      'employee_R&D': { employeeId: 'RND001', fullName: 'Ganesh Naik', email: 'rnd@ims.com', password: 'password123' },
+      'team_lead_R&D': { employeeId: 'TL_RND', fullName: 'Imran Shaikh', email: 'teamlead.rnd@ims.com', password: 'password123' },
+      'department_admin_R&D': { employeeId: 'ADM_RND', fullName: 'Prasanna Ghatage', email: 'admin.rnd@ims.com', password: 'password123' },
       // Service
-      'team_lead_Service': { employeeId: 'TL002', fullName: 'Suraj Mane', email: 'teamlead2@mms.com', password: 'password123' },
-      'employee_Service': { employeeId: 'EMP003', fullName: 'Ravi Sharma', email: 'ravi@mms.com', password: 'password123' },
-      'department_admin_Service': { employeeId: 'ADM_SRV', fullName: 'Vasudeo Barhate', email: 'admin.srv@mms.com', password: 'password123' }
+      'team_lead_Service': { employeeId: 'TL002', fullName: 'Suraj Mane', email: 'teamlead2@ims.com', password: 'password123' },
+      'employee_Service': { employeeId: 'EMP003', fullName: 'Ravi Sharma', email: 'ravi@ims.com', password: 'password123' },
+      'department_admin_Service': { employeeId: 'ADM_SRV', fullName: 'Vasudeo Barhate', email: 'admin.srv@ims.com', password: 'password123' }
     };
 
     normalDepts.forEach((d) => {
@@ -211,7 +211,7 @@ const seedAll = async () => {
         userSpecs.push({
           employeeId: `EMP_${d.code}`,
           fullName: `${d.name} Employee`,
-          email: `employee.${d.code.toLowerCase()}@mms.com`,
+          email: `employee.${d.code.toLowerCase()}@ims.com`,
           phone: '9876543230',
           password: 'password123',
           role: 'employee',
@@ -238,7 +238,7 @@ const seedAll = async () => {
         userSpecs.push({
           employeeId: `TL_${d.code}`,
           fullName: `${d.name} Team Lead`,
-          email: `teamlead.${d.code.toLowerCase()}@mms.com`,
+          email: `teamlead.${d.code.toLowerCase()}@ims.com`,
           phone: '9876543231',
           password: 'password123',
           role: 'team_lead',
@@ -265,7 +265,7 @@ const seedAll = async () => {
         userSpecs.push({
           employeeId: `ADM_${d.code}`,
           fullName: `${d.name} Admin`,
-          email: `admin.${d.code.toLowerCase()}@mms.com`,
+          email: `admin.${d.code.toLowerCase()}@ims.com`,
           phone: '9876543232',
           password: 'password123',
           role: 'department_admin',
@@ -593,6 +593,17 @@ const seedAll = async () => {
         ],
       });
     }
+    
+    // Create returns for TXN 2
+    for (const bc of ['200001', '200002', '300001']) {
+      await Return.create({
+        transactionId: txn2.transactionId, barcode: bc, fromUser: emp3._id,
+        store: store._id, status: 'completed', condition: 'good',
+        remarks: 'All items returned', receivedAt: new Date('2026-06-25T15:00:00Z'),
+        createdAt: new Date('2026-06-24T15:00:00Z'),
+      });
+    }
+
     console.log(`  ✓ ${txn2.transactionId}: Closed (3 items all returned)`);
 
     // --- TXN 3: PENDING TL Approval (Simplified Sourcing Request - No Barcodes) ---
@@ -848,28 +859,28 @@ const printSummary = () => {
   console.log('┌─────────────────────┬──────────────────────┬──────────────┬─────────────────────────────┐');
   console.log('│ Name                │ Email                │ Password     │ Role                        │');
   console.log('├─────────────────────┼──────────────────────┼──────────────┼─────────────────────────────┤');
-  console.log('│ GOKUL SHIRGAON      │ store@mms.com        │ password123  │ department_admin (store)    │');
-  console.log('│ Sachin Sherkhane    │ accounts@mms.com     │ password123  │ department_admin (accounts) │');
-  console.log('│ Bhushan Mahajan     │ production@mms.com   │ password123  │ department_admin (production)│');
+  console.log('│ GOKUL SHIRGAON      │ store@ims.com        │ password123  │ department_admin (store)    │');
+  console.log('│ Sachin Sherkhane    │ accounts@ims.com     │ password123  │ department_admin (accounts) │');
+  console.log('│ Bhushan Mahajan     │ production@ims.com   │ password123  │ department_admin (production)│');
   console.log('├─────────────────────┼──────────────────────┼──────────────┼─────────────────────────────┤');
-  console.log('│ Aditya Pise         │ management@mms.com   │ password123  │ department_admin (management)│');
-  console.log('│ Minal Patil         │ minal@mms.com        │ password123  │ department_admin (management)│');
-  console.log('│ Vikas Sir           │ vikas@mms.com        │ password123  │ department_admin (management)│');
+  console.log('│ Aditya Pise         │ management@ims.com   │ password123  │ department_admin (management)│');
+  console.log('│ Minal Patil         │ minal@ims.com        │ password123  │ department_admin (management)│');
+  console.log('│ Vikas Sir           │ vikas@ims.com        │ password123  │ department_admin (management)│');
   console.log('├─────────────────────┼──────────────────────┼──────────────┼─────────────────────────────┤');
-  console.log('│ Akshay Kusale       │ teamlead@mms.com     │ password123  │ team_lead (Software)        │');
-  console.log('│ Suraj Mane          │ teamlead2@mms.com    │ password123  │ team_lead (Service)         │');
-  console.log('│ Sanket Kharade      │ teamlead.str@mms.com │ password123  │ team_lead (Stores)          │');
+  console.log('│ Akshay Kusale       │ teamlead@ims.com     │ password123  │ team_lead (Software)        │');
+  console.log('│ Suraj Mane          │ teamlead2@ims.com    │ password123  │ team_lead (Service)         │');
+  console.log('│ Sanket Kharade      │ teamlead.str@ims.com │ password123  │ team_lead (Stores)          │');
   console.log('├─────────────────────┼──────────────────────┼──────────────┼─────────────────────────────┤');
-  console.log('│ Abhay Mudgal        │ abhay@mms.com        │ password123  │ employee (Software)         │');
-  console.log('│ Sakshee Kapade      │ sneha@mms.com        │ password123  │ employee (Production)       │');
-  console.log('│ Ravi Sharma         │ ravi@mms.com         │ password123  │ employee (Service)          │');
-  console.log('│ Shreyas             │ handler@mms.com      │ password123  │ employee (Stores/Handler)   │');
-  console.log('│ Ganesh Naik         │ rnd@mms.com          │ password123  │ employee (R&D)              │');
+  console.log('│ Abhay Mudgal        │ abhay@ims.com        │ password123  │ employee (Software)         │');
+  console.log('│ Sakshee Kapade      │ sneha@ims.com        │ password123  │ employee (Production)       │');
+  console.log('│ Ravi Sharma         │ ravi@ims.com         │ password123  │ employee (Service)          │');
+  console.log('│ Shreyas             │ handler@ims.com      │ password123  │ employee (Stores/Handler)   │');
+  console.log('│ Ganesh Naik         │ rnd@ims.com          │ password123  │ employee (R&D)              │');
   console.log('└─────────────────────┴──────────────────────┴──────────────┴─────────────────────────────┘');
   console.log('\n💡 Note: All other departments have credentials matching:');
-  console.log('  • Employee: employee.<dept_code>@mms.com (Password: password123)');
-  console.log('  • Team Lead: teamlead.<dept_code>@mms.com (Password: password123)');
-  console.log('  • Admin: admin.<dept_code>@mms.com (Password: password123)');
+  console.log('  • Employee: employee.<dept_code>@ims.com (Password: password123)');
+  console.log('  • Team Lead: teamlead.<dept_code>@ims.com (Password: password123)');
+  console.log('  • Admin: admin.<dept_code>@ims.com (Password: password123)');
 
   console.log('\n📦 TRANSACTION STATUSES:');
   console.log('  • TXN-20260001: Active (6 items, 4 active, 2 returned, with transfers)');

@@ -128,25 +128,22 @@ const ReturnListPage = () => {
                       <th className="px-5 py-3">Status</th>
                       <th className="px-5 py-3">Return Date</th>
                       <th className="px-5 py-3">Reason / Remarks</th>
-                      <th className="px-5 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {items.map((row) => (
                       <tr
                         key={row._id}
-                        className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10 transition-colors"
+                        className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10 transition-colors cursor-pointer"
+                        onClick={() => navigate(`/barcodes/${row.barcode}`)}
                       >
                         <td className="px-5 py-3.5 whitespace-nowrap">
-                          <span
-                            onClick={() => navigate(`/barcodes/${row.barcode}`)}
-                            className="font-extrabold text-blue-650 dark:text-blue-400 hover:underline cursor-pointer tracking-wider font-mono"
-                          >
+                          <span className="font-extrabold text-blue-650 dark:text-blue-400 hover:underline tracking-wider font-mono">
                             {row.barcode}
                           </span>
                         </td>
                         <td className="px-5 py-3.5 whitespace-nowrap">
-                          <span className="font-bold text-slate-850 dark:text-slate-100">
+                          <span className="font-bold text-slate-855 dark:text-slate-100">
                             {row.fromUser ? `${row.fromUser.fullName} (${row.fromUser.employeeId})` : '-'}
                           </span>
                         </td>
@@ -163,14 +160,6 @@ const ReturnListPage = () => {
                         </td>
                         <td className="px-5 py-3.5">
                           <span className="text-slate-550 dark:text-slate-300 italic block truncate max-w-xs">{row.reason || row.remarks || '-'}</span>
-                        </td>
-                        <td className="px-5 py-3.5 text-right whitespace-nowrap">
-                          <button
-                            onClick={() => navigate(`/barcodes/${row.barcode}`)}
-                            className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-600 transition"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
                         </td>
                       </tr>
                     ))}

@@ -17,7 +17,6 @@ export default function ExchangeBarcodeModal({
   const [exchangePhoto, setExchangePhoto] = useState('');
   const [exchangeAttachment, setExchangeAttachment] = useState(null);
   const [exchangeRemarks, setExchangeRemarks] = useState('');
-  const [exchangeCameraOpen, setExchangeCameraOpen] = useState(false);
 
   if (!isOpen) return null;
 
@@ -149,26 +148,11 @@ export default function ExchangeBarcodeModal({
               </div>
             )}
 
-            <div>
-              <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Warranty Verification Photo</label>
-              <div className="flex items-center gap-3">
-                {exchangePhoto ? (
-                  <img src={exchangePhoto} alt="Exchange Verification" className="w-12 h-12 object-cover rounded-lg border border-slate-200" />
-                ) : (
-                  <div className="w-12 h-12 bg-slate-50 dark:bg-slate-955 border border-dashed border-slate-250 dark:border-slate-800 rounded-lg flex items-center justify-center text-[9px] text-slate-400">
-                    No Photo
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setExchangeCameraOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 dark:border-slate-850 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200"
-                >
-                  <Camera className="w-3.5 h-3.5 text-blue-600" />
-                  Open GeoCamera
-                </button>
-              </div>
-            </div>
+            <GeoCamera
+              value={exchangePhoto}
+              onCapture={(data) => setExchangePhoto(data ? data.url : '')}
+              label="Warranty Verification Photo *"
+            />
 
             <div>
               <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Attachment (e.g. Warranty Card)</label>
@@ -197,20 +181,6 @@ export default function ExchangeBarcodeModal({
           </form>
         </div>
       </div>
-
-      {exchangeCameraOpen && (
-        <GeoCamera
-          onCapture={(uploadData) => {
-            if (uploadData && typeof uploadData === 'object' && uploadData.url) {
-              setExchangePhoto(uploadData.url);
-            } else {
-              setExchangePhoto(uploadData);
-            }
-            setExchangeCameraOpen(false);
-          }}
-          onClose={() => setExchangeCameraOpen(false)}
-        />
-      )}
     </>
   );
 }

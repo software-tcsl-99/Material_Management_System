@@ -399,6 +399,7 @@ export default function ReturnMultiple() {
 
       {cameraOpen && (
         <GeoCamera
+          triggerOnly={true}
           onCapture={handleCapturePhoto}
           onClose={() => setCameraOpen(false)}
         />

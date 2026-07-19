@@ -54,11 +54,10 @@ const LoginPage = () => {
       {/* Material Movement Background Image */}
       <div className="absolute inset-0 z-0 select-none pointer-events-none">
         <img
-          src="/material_movement_bg.png"
+          src="material_movement_bg.png"
           alt="Material Movement Logistics"
-          className="w-full h-full object-cover opacity-90 dark:opacity-90 mix-blend-luminosity filter blur-[1px]"
+          className="w-full h-full object-cover"
         />
-        <div className="absolute inset-0 bg-gradient-to-tr from-slate-50 via-transparent to-slate-50 dark:from-slate-950 dark:via-transparent dark:to-slate-950" />
       </div>
 
       <div className="w-full max-w-[400px] p-6 sm:p-8 glass border border-slate-200/80 dark:border-white/10 relative z-10 bg-white/80 dark:bg-slate-950/40 shadow-2xl rounded-2xl flex flex-col gap-6 backdrop-blur-md">

@@ -231,6 +231,7 @@ export default function ReceivingForm() {
 
         {cameraOpen && (
           <GeoCamera
+            triggerOnly={true}
             onCapture={handleCapturePhoto}
             onClose={() => setCameraOpen(false)}
           />

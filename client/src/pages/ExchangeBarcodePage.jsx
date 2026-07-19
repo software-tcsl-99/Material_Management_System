@@ -16,7 +16,6 @@ export default function ExchangeBarcodePage() {
   const [exchangePhoto, setExchangePhoto] = useState('');
   const [exchangeAttachment, setExchangeAttachment] = useState(null);
   const [exchangeRemarks, setExchangeRemarks] = useState('');
-  const [exchangeCameraOpen, setExchangeCameraOpen] = useState(false);
 
   // Fetch barcode detail
   const { data: detailData, isLoading, refetch } = useQuery({
@@ -212,27 +211,12 @@ export default function ExchangeBarcodePage() {
           </div>
         )}
 
-        {/* Live Photo Upload */}
-        <div className="space-y-2">
-          <label className="block text-[10px] font-bold text-slate-500 tracking-wider">Warranty Verification Photo</label>
-          <div className="flex items-center gap-3">
-            {exchangePhoto ? (
-              <img src={exchangePhoto} alt="Exchange Verification" className="w-16 h-16 object-cover rounded-lg border border-slate-200" />
-            ) : (
-              <div className="w-16 h-16 bg-slate-50 dark:bg-slate-950 border border-dashed border-slate-250 dark:border-slate-800 rounded-lg flex items-center justify-center text-[10px] text-slate-400 font-bold">
-                No Photo
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => setExchangeCameraOpen(true)}
-              className="flex items-center gap-1.5 px-4 py-2.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200"
-            >
-              <Camera className="w-4 h-4 text-blue-600" />
-              Open GeoCamera
-            </button>
-          </div>
-        </div>
+        {/* Verification Photo */}
+        <GeoCamera
+          value={exchangePhoto}
+          onCapture={(data) => setExchangePhoto(data ? data.url : '')}
+          label="Exchange Verification Photo *"
+        />
 
         {/* File Attachment */}
         <div className="space-y-2">
@@ -261,20 +245,6 @@ export default function ExchangeBarcodePage() {
           </Button>
         </div>
       </form>
-
-      {exchangeCameraOpen && (
-        <GeoCamera
-          onCapture={(uploadData) => {
-            if (uploadData && typeof uploadData === 'object' && uploadData.url) {
-              setExchangePhoto(uploadData.url);
-            } else {
-              setExchangePhoto(uploadData);
-            }
-            setExchangeCameraOpen(false);
-          }}
-          onClose={() => setExchangeCameraOpen(false)}
-        />
-      )}
     </div>
   );
 }

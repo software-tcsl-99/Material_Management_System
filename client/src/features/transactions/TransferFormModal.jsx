@@ -13,7 +13,6 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
   const [error, setError] = useState('');
   
   const [barcodeDetail, setBarcodeDetail] = useState(null);
-  const [cameraOpen, setCameraOpen] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState(null);
   const [photoMeta, setPhotoMeta] = useState(null);
 
@@ -71,9 +70,9 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
       setCapturedPhoto(uploadData.url);
       setPhotoMeta(uploadData.metadata);
     } else {
-      setCapturedPhoto(uploadData);
+      setCapturedPhoto(null);
+      setPhotoMeta(null);
     }
-    setCameraOpen(false);
   };
 
   const bc = barcodeDetail?.barcode;
@@ -159,30 +158,15 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
           {/* Live Photo Attachment */}
           <div className="space-y-2">
             <label className="block text-slate-550 font-extrabold tracking-wider mb-1">Live Photo with Metadata Overlay *</label>
-            {capturedPhoto ? (
-              <div className="relative border border-slate-250 dark:border-slate-800 rounded-xl overflow-hidden aspect-video w-full bg-slate-105">
-                <img src={capturedPhoto} alt="Captured preview" className="w-full h-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => setCapturedPhoto(null)}
-                  className="absolute top-2 right-2 bg-black/60 hover:bg-black text-white p-1 px-2.5 rounded-xl text-[10px] font-bold transition"
-                >
-                  Clear
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setCameraOpen(true)}
-                className="flex items-center gap-1.5 px-4 py-2.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 text-xs font-bold text-slate-700 dark:text-slate-205 rounded-xl transition cursor-pointer"
-              >
-                <Camera className="w-4 h-4 text-blue-600" /> Open GeoCamera
-              </button>
-            )}
+            <GeoCamera
+              value={capturedPhoto}
+              onCapture={handleCapturePhoto}
+              label="Live Photo with Metadata Overlay *"
+            />
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 text-red-500 font-bold text-xs bg-red-50 dark:bg-red-950/25 p-3 rounded-lg border border-red-105 dark:border-red-950">
+            <div className="flex items-center gap-2 text-red-500 font-bold text-xs bg-red-50 dark:bg-red-955/25 p-3 rounded-lg border border-red-100 dark:border-red-950">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
@@ -196,13 +180,6 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
           </div>
         </form>
       </div>
-
-      {cameraOpen && (
-        <GeoCamera
-          onCapture={handleCapturePhoto}
-          onClose={() => setCameraOpen(false)}
-        />
-      )}
     </div>
   );
 };

@@ -302,10 +302,6 @@ exports.getTransactionReport = async (req, res) => {
       const { status, barcode, startDate, endDate, handler } = req.query;
       const returnFilter = {};
 
-      if (req.user.role === 'employee') {
-        returnFilter.returnHandler = req.user._id;
-      }
-
       if (status && status !== 'all' && status !== '') {
         returnFilter.status = status;
       }
@@ -607,10 +603,6 @@ exports.exportTransactionReport = async (req, res) => {
       const Return = require('../models/Return');
       const { status, barcode, startDate, endDate, handler } = req.query;
       const returnFilter = {};
-
-      if (req.user.role === 'employee') {
-        returnFilter.returnHandler = req.user._id;
-      }
 
       if (status && status !== 'all' && status !== '') {
         returnFilter.status = status;

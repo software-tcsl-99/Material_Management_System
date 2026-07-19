@@ -1542,7 +1542,11 @@ exports.listBarcodes = async (req, res) => {
     if (status) filter.status = status;
 
     if (req.user.role === 'employee') {
-      filter.owner = req.user._id;
+      filter.$or = [
+        { owner: req.user._id },
+        { 'ownershipHistory.user': req.user._id },
+        { 'history.user': req.user._id }
+      ];
     }
 
     const [barcodes, total] = await Promise.all([
@@ -1915,7 +1919,22 @@ exports.searchBarcodes = async (req, res) => {
 
     // Role-based filtering (restrict others' materials)
     if (req.user.role === 'employee') {
-      filter.owner = req.user._id;
+      const empFilter = {
+        $or: [
+          { owner: req.user._id },
+          { 'ownershipHistory.user': req.user._id },
+          { 'history.user': req.user._id }
+        ]
+      };
+      if (filter.$or) {
+        filter.$and = [
+          { $or: filter.$or },
+          empFilter
+        ];
+        delete filter.$or;
+      } else {
+        filter.$or = empFilter.$or;
+      }
     } else if (req.user.role === 'team_lead') {
       filter.ownerDepartment = req.user.department._id || req.user.department;
     } else if (req.user.role === 'department_admin') {
@@ -2063,9 +2082,6 @@ exports.getAllTransfers = async (req, res) => {
 exports.getAllReturns = async (req, res) => {
   try {
     const filter = {};
-    if (req.user.role === 'employee') {
-      filter.fromUser = req.user._id;
-    }
 
     const returns = await Return.find(filter)
       .populate('fromUser', 'fullName employeeId')

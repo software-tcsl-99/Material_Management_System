@@ -14,7 +14,6 @@ export default function TransferMaterial() {
   const [remarks, setRemarks] = useState('');
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [managementApprover, setManagementApprover] = useState('');
-  const [cameraOpen, setCameraOpen] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState(null);
   const [photoMeta, setPhotoMeta] = useState(null);
 
@@ -75,9 +74,9 @@ export default function TransferMaterial() {
       setCapturedPhoto(uploadData.url);
       setPhotoMeta(uploadData.metadata);
     } else {
-      setCapturedPhoto(uploadData);
+      setCapturedPhoto(null);
+      setPhotoMeta(null);
     }
-    setCameraOpen(false);
   };
 
   const handleSubmit = (e) => {
@@ -194,18 +193,7 @@ export default function TransferMaterial() {
             </div>
           )}
 
-          <div className="flex items-center gap-2.5 bg-blue-50/50 dark:bg-blue-955/20 p-3.5 rounded-xl border border-blue-100/50 dark:border-blue-900/50">
-            <input
-              type="checkbox"
-              id="requiresApproval"
-              checked={requiresApproval}
-              onChange={(e) => setRequiresApproval(e.target.checked)}
-              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"
-            />
-            <label htmlFor="requiresApproval" className="text-slate-600 dark:text-slate-300 font-bold cursor-pointer select-none">
-              Requires Management Approval (Force TL/Department Admin check)
-            </label>
-          </div>
+
 
           <div>
             <label className="block text-[10px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">Remarks / Reason *</label>
@@ -220,29 +208,11 @@ export default function TransferMaterial() {
           </div>
 
           {/* Live Photo Attachment */}
-          <div className="space-y-2">
-            <label className="block text-[10px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">Live Photo with Metadata Overlay *</label>
-            {capturedPhoto ? (
-              <div className="relative border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden aspect-video w-64 bg-slate-100 dark:bg-slate-950">
-                <img src={capturedPhoto} alt="Captured preview" className="w-full h-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => setCapturedPhoto(null)}
-                  className="absolute top-2 right-2 bg-black/60 hover:bg-black text-white p-1 px-2.5 rounded-xl text-[10px] font-bold transition"
-                >
-                  Clear
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setCameraOpen(true)}
-                className="flex items-center gap-1.5 px-4 py-2.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 text-xs font-bold text-slate-700 dark:text-slate-200 rounded-xl transition"
-              >
-                <Camera className="w-4 h-4 text-blue-600" /> Open GeoCamera
-              </button>
-            )}
-          </div>
+          <GeoCamera
+            value={capturedPhoto}
+            onCapture={handleCapturePhoto}
+            label="Live Photo with Metadata Overlay *"
+          />
 
           {/* Submit */}
           {transferMutation.isError && (
@@ -255,7 +225,7 @@ export default function TransferMaterial() {
             <button
               type="button"
               onClick={() => navigate(-1)}
-              className="px-5 py-2.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-600 dark:text-slate-355 text-xs font-bold rounded-xl transition cursor-pointer"
+              className="px-5 py-2.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-855 text-slate-600 dark:text-slate-355 text-xs font-bold rounded-xl transition cursor-pointer"
             >
               Cancel
             </button>
@@ -268,13 +238,6 @@ export default function TransferMaterial() {
           </div>
         </form>
       </div>
-
-      {cameraOpen && (
-        <GeoCamera
-          onCapture={handleCapturePhoto}
-          onClose={() => setCameraOpen(false)}
-        />
-      )}
     </div>
   );
 }

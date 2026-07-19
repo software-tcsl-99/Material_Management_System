@@ -454,6 +454,7 @@ export default function ConvertBarcodePage() {
 
       {cameraOpen && (
         <GeoCamera
+          triggerOnly={true}
           onCapture={(uploadData) => {
             let capturedUrl = '';
             if (uploadData && typeof uploadData === 'object' && uploadData.url) {

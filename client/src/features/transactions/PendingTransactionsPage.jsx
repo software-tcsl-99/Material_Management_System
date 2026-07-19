@@ -3173,6 +3173,7 @@ const PendingTransactionsPage = () => {
 
       {cameraOpen && (
         <GeoCamera
+          triggerOnly={true}
           onCapture={(uploadData) => {
             if (uploadData && typeof uploadData === 'object' && uploadData.url) {
               setTransferPhoto(uploadData.url);

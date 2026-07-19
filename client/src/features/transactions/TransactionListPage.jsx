@@ -184,17 +184,76 @@ const TransactionListPage = () => {
       header: 'Progress',
       cell: (row) => {
         // Calculate progress percentage
-        let progress = 10;
-        if (row.status === 'tl_approved') progress = 30;
-        else if (row.status === 'mgt_approved' || row.status === 'ready_for_dispatch') progress = 45;
-        else if (row.status === 'store_accepted') progress = 60;
-        else if (row.status === 'handler_assigned') progress = 70;
-        else if (row.status === 'dispatched') progress = 85;
-        else if (row.status === 'received') progress = 95;
-        else if (row.status === 'completed' || row.status === 'closed') progress = 100;
-        else if (row.status === 'rejected') progress = 100;
-        else if (row.status === 'partially_returned') progress = 90;
-        else if (row.status === 'active') progress = 95;
+        const statusLower = row.status?.toLowerCase() || '';
+        let progress = 0;
+
+        if (statusLower === 'rejected' || statusLower === 'cancelled') {
+          progress = 100;
+        } else {
+          // 1. Transaction submitted (10%)
+          if (['submitted', 'tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+            progress += 10;
+          }
+          // 2. TL approved (10%)
+          if (['tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+            progress += 10;
+          }
+          // 3. Management approved (10%)
+          if (['mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+            progress += 10;
+          }
+          // 4. Store accepted / Handler assigned / Dispatched (10%)
+          if (['store_accepted', 'handler_assigned', 'dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+            progress += 10;
+          }
+          // 5. Requester received / active (10%)
+          if (['received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+            progress += 10;
+          }
+
+          // Calculate items progress (remaining 50%)
+          let itemsProgress = 0;
+          
+          // Total items in transaction
+          let totalItems = 0;
+          if (row.materials && row.materials.length > 0) {
+            row.materials.forEach(m => {
+              if (m.barcodes && m.barcodes.length > 0) {
+                totalItems += m.barcodes.length;
+              } else {
+                totalItems += m.quantity || 0;
+              }
+            });
+          }
+          if (!totalItems) {
+            totalItems = row.totalItems || 0;
+          }
+
+          // Returned or closed items count
+          let returnedOrClosed = 0;
+          if (row.materials && row.materials.length > 0) {
+            row.materials.forEach(m => {
+              if (m.barcodes && m.barcodes.length > 0) {
+                m.barcodes.forEach(b => {
+                  if (b.status === 'Returned' || b.status === 'Closed') {
+                    returnedOrClosed++;
+                  }
+                });
+              }
+            });
+          }
+          if (!returnedOrClosed) {
+            returnedOrClosed = (row.returnedItems || 0) + (row.closedItems || 0);
+          }
+
+          if (totalItems > 0) {
+            const pctPerItem = 50 / totalItems;
+            itemsProgress = returnedOrClosed * pctPerItem;
+          }
+
+          progress = Math.round(progress + itemsProgress);
+          if (progress > 100) progress = 100;
+        }
 
         return (
           <div className="flex items-center gap-2 w-28">

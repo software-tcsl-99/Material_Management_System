@@ -99,15 +99,30 @@ const DashboardPage = () => {
 
       // Derive counts for StatsCards matching mockup layout
       const activeItemsCount = bcList.filter(b => b.status === 'Active').length;
-      const pendingCount = txnsList.filter(t => ['submitted', 'tl_approved', 'store_accepted', 'handler_assigned'].includes(t.status)).length;
+      const exchangeCount = bcList.filter(b => b.status === 'Exchanged').length;
       const returnedCount = bcList.filter(b => b.status === 'Returned').length;
-      const closedCount = txnsList.filter(t => ['completed', 'rejected'].includes(t.status)).length;
+      
+      const closedItemsCount = txnsList
+        .filter(t => ['closed', 'completed', 'rejected'].includes(t.status))
+        .reduce((sum, t) => {
+          let count = 0;
+          if (t.materials && t.materials.length > 0) {
+            t.materials.forEach(m => {
+              if (m.barcodes && m.barcodes.length > 0) {
+                count += m.barcodes.length;
+              } else {
+                count += m.quantity || 0;
+              }
+            });
+          }
+          return sum + (count || t.totalItems || 0);
+        }, 0);
 
       setStats({
         activeItems: activeItemsCount,
-        pending: pendingCount,
+        exchanged: exchangeCount,
         returned: returnedCount,
-        closed: closedCount
+        closed: closedItemsCount
       });
 
       // Derive daily barcodes trend count for the last 30 days
@@ -120,20 +135,56 @@ const DashboardPage = () => {
         const d = new Date();
         d.setDate(d.getDate() - i);
         const dateStr = d.toISOString().split('T')[0];
-        dailyBarcodesMap[dateStr] = 0;
+        dailyBarcodesMap[dateStr] = { count: 0, active: 0, exchanged: 0, returned: 0, closed: 0 };
       }
 
       bcList.forEach((b) => {
         if (!b.createdAt) return;
         const dateStr = b.createdAt.split('T')[0];
         if (dailyBarcodesMap[dateStr] !== undefined) {
-          dailyBarcodesMap[dateStr] += 1;
+          dailyBarcodesMap[dateStr].count += 1;
+          const statusLower = b.status?.toLowerCase() || '';
+          if (statusLower === 'active') {
+            dailyBarcodesMap[dateStr].active += 1;
+          } else if (statusLower === 'exchanged') {
+            dailyBarcodesMap[dateStr].exchanged += 1;
+          } else if (statusLower === 'returned') {
+            dailyBarcodesMap[dateStr].returned += 1;
+          } else if (statusLower === 'closed') {
+            dailyBarcodesMap[dateStr].closed += 1;
+          }
+        }
+      });
+
+      // Populate closed items count on transaction close date
+      txnsList.forEach((t) => {
+        if (!['closed', 'completed', 'rejected'].includes(t.status)) return;
+        const dateStr = (t.closedAt || t.updatedAt || t.createdAt || '').split('T')[0];
+        if (dailyBarcodesMap[dateStr] !== undefined) {
+          let count = 0;
+          if (t.materials && t.materials.length > 0) {
+            t.materials.forEach(m => {
+              if (m.barcodes && m.barcodes.length > 0) {
+                count += m.barcodes.length;
+              } else {
+                count += m.quantity || 0;
+              }
+            });
+          }
+          dailyBarcodesMap[dateStr].closed += (count || t.totalItems || 0);
         }
       });
 
       const dailyData = Object.keys(dailyBarcodesMap)
         .sort()
-        .map((date) => ({ date, count: dailyBarcodesMap[date] }));
+        .map((date) => ({
+          date,
+          count: dailyBarcodesMap[date].count,
+          Active: dailyBarcodesMap[date].active,
+          Exchanged: dailyBarcodesMap[date].exchanged,
+          Returned: dailyBarcodesMap[date].returned,
+          Closed: dailyBarcodesMap[date].closed,
+        }));
 
       const chartData = chartsRes.data.data?.charts || {};
       const docType = (chartData.docTypeDistribution || []).map((d) => ({ name: d._id, value: d.count }));
@@ -223,30 +274,86 @@ const DashboardPage = () => {
   };
 
   // Unified Premium Dashboard rendering for all users
-  const totalItemsCount = (stats?.activeItems || 0) + (stats?.pending || 0) + (stats?.returned || 0) + (stats?.closed || 0);
+  const totalItemsCount = (stats?.activeItems || 0) + (stats?.exchanged || 0) + (stats?.returned || 0) + (stats?.closed || 0);
   const pieData = [
     { name: 'Active', value: stats?.activeItems || 0, color: '#10b981' },
-    { name: 'Pending', value: stats?.pending || 0, color: '#f59e0b' },
-    { name: 'Returned', value: stats?.returned || 0, color: '#34d399' },
+    { name: 'Exchanged', value: stats?.exchanged || 0, color: '#3b82f6' },
+    { name: 'Returned', value: stats?.returned || 0, color: '#f59e0b' },
     { name: 'Closed', value: stats?.closed || 0, color: '#94a3b8' }
   ];
 
-  const getProgressPercentage = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'submitted': return 20;
-      case 'tl_approved': return 40;
-      case 'mgt_approved': return 55;
-      case 'store_accepted':
-      case 'handler_assigned': return 70;
-      case 'dispatched': return 85;
-      case 'received':
-      case 'active':
-      case 'partially_returned': return 90;
-      case 'closed':
-      case 'completed': return 100;
-      case 'rejected': return 100;
-      default: return 0;
+  const getProgressPercentage = (row) => {
+    if (!row) return 0;
+    const statusLower = row.status?.toLowerCase() || '';
+    if (statusLower === 'rejected' || statusLower === 'cancelled') {
+      return 100;
     }
+
+    let baseProgress = 0;
+    // 1. Transaction submitted (10%)
+    if (['submitted', 'tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+      baseProgress += 10;
+    }
+    // 2. TL approved (10%)
+    if (['tl_approved', 'mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+      baseProgress += 10;
+    }
+    // 3. Management approved (10%)
+    if (['mgt_approved', 'store_accepted', 'handler_assigned', 'dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+      baseProgress += 10;
+    }
+    // 4. Store accepted / Handler assigned / Dispatched (10%)
+    if (['store_accepted', 'handler_assigned', 'dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+      baseProgress += 10;
+    }
+    // 5. Requester received / active (10%)
+    if (['received', 'active', 'partially_returned', 'closed', 'completed'].includes(statusLower)) {
+      baseProgress += 10;
+    }
+
+    // Calculate items progress (remaining 50%)
+    let itemsProgress = 0;
+    
+    // Total items in transaction
+    let totalItems = 0;
+    if (row.materials && row.materials.length > 0) {
+      row.materials.forEach(m => {
+        if (m.barcodes && m.barcodes.length > 0) {
+          totalItems += m.barcodes.length;
+        } else {
+          totalItems += m.quantity || 0;
+        }
+      });
+    }
+    if (!totalItems) {
+      totalItems = row.totalItems || 0;
+    }
+
+    // Returned or closed items count
+    let returnedOrClosed = 0;
+    if (row.materials && row.materials.length > 0) {
+      row.materials.forEach(m => {
+        if (m.barcodes && m.barcodes.length > 0) {
+          m.barcodes.forEach(b => {
+            if (b.status === 'Returned' || b.status === 'Closed') {
+              returnedOrClosed++;
+            }
+          });
+        }
+      });
+    }
+    if (!returnedOrClosed) {
+      returnedOrClosed = (row.returnedItems || 0) + (row.closedItems || 0);
+    }
+
+    if (totalItems > 0) {
+      const pctPerItem = 50 / totalItems;
+      itemsProgress = returnedOrClosed * pctPerItem;
+    }
+
+    let finalProgress = Math.round(baseProgress + itemsProgress);
+    if (finalProgress > 100) finalProgress = 100;
+    return finalProgress;
   };
 
   return (
@@ -273,9 +380,9 @@ const DashboardPage = () => {
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider block">Pending</span>
-          <span className="text-3xl font-extrabold text-slate-900 dark:text-white mt-1.5">{stats?.pending ?? 0}</span>
-          <span className="text-[10px] text-slate-400 font-semibold mt-1">Awaiting action</span>
+          <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider block">Exchanged</span>
+          <span className="text-3xl font-extrabold text-slate-900 dark:text-white mt-1.5">{stats?.exchanged ?? 0}</span>
+          <span className="text-[10px] text-slate-400 font-semibold mt-1">Warranty exchanges</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs flex flex-col justify-between">
@@ -371,9 +478,21 @@ const DashboardPage = () => {
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={charts.daily} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
                     <defs>
-                      <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
+                      <linearGradient id="colorActive" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="colorExchanged" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
                         <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="colorReturned" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="colorClosed" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#94a3b8" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.08)" />
@@ -407,9 +526,12 @@ const DashboardPage = () => {
                           return label;
                         }
                       }}
-                      formatter={(value) => [value, 'Barcodes Registered']}
+                      formatter={(value, name) => [value, name]}
                     />
-                    <Area name="Barcodes" type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCount)" />
+                    <Area name="Active" type="monotone" dataKey="Active" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorActive)" />
+                    <Area name="Exchanged" type="monotone" dataKey="Exchanged" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorExchanged)" />
+                    <Area name="Returned" type="monotone" dataKey="Returned" stroke="#f59e0b" strokeWidth={2} fillOpacity={1} fill="url(#colorReturned)" />
+                    <Area name="Closed" type="monotone" dataKey="Closed" stroke="#94a3b8" strokeWidth={2} fillOpacity={1} fill="url(#colorClosed)" />
                   </AreaChart>
                 </ResponsiveContainer>
               )}
@@ -433,7 +555,7 @@ const DashboardPage = () => {
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-semibold text-slate-700 dark:text-slate-200">
               {transactions.slice(0, 5).map((t) => {
-                const progressPct = getProgressPercentage(t.status);
+                const progressPct = getProgressPercentage(t);
                 const dateStr = new Date(t.createdAt).toLocaleDateString('en-IN', {
                   day: 'numeric',
                   month: 'short',
