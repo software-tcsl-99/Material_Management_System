@@ -101,7 +101,7 @@ const DashboardPage = () => {
       const activeItemsCount = bcList.filter(b => b.status === 'Active').length;
       const exchangeCount = bcList.filter(b => b.status === 'Exchanged').length;
       const returnedCount = bcList.filter(b => b.status === 'Returned').length;
-      
+
       const closedItemsCount = txnsList
         .filter(t => ['closed', 'completed', 'rejected'].includes(t.status))
         .reduce((sum, t) => {
@@ -313,7 +313,7 @@ const DashboardPage = () => {
 
     // Calculate items progress (remaining 50%)
     let itemsProgress = 0;
-    
+
     // Total items in transaction
     let totalItems = 0;
     if (row.materials && row.materials.length > 0) {
@@ -420,7 +420,7 @@ const DashboardPage = () => {
                 </Pie>
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    backgroundColor: 'rgba(126, 161, 242, 0.95)',
                     border: '1px solid rgba(255, 255, 255, 0.1)',
                     borderRadius: '8px',
                     fontSize: '11px',

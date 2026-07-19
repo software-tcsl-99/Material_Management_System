@@ -20,6 +20,23 @@ const PendingTransactionsPage = () => {
   const { user } = useAuthStore();
   const activeRole = useActiveRole();
 
+  const renderCreatedAt = (item) => {
+    if (!item?.createdAt) return null;
+    const dateStr = new Date(item.createdAt).toLocaleString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    return (
+      <span className="text-[10px] text-slate-405 dark:text-slate-500 font-semibold italic flex items-center gap-1">
+        <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+        Created: {dateStr}
+      </span>
+    );
+  };
+
   const [loading, setLoading] = useState(true);
   const [txns, setTxns] = useState([]);
   const [pendingTransfers, setPendingTransfers] = useState([]);
@@ -1481,7 +1498,8 @@ const PendingTransactionsPage = () => {
                             <div>
                               <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100">{s.materialName}</h4>
                               <p className="text-[10px] text-slate-550 dark:text-slate-300 font-semibold mt-0.5">Parent: <span className="font-extrabold text-blue-600">{s.barcode}</span></p>
-                              <p className="text-[10px] text-slate-550 dark:text-slate-300 font-semibold">Requester: <span className="font-extrabold">{s.requester?.fullName}</span></p>
+                              <p className="text-[10px] text-slate-550 dark:text-slate-300 font-semibold mb-1">Requester: <span className="font-extrabold">{s.requester?.fullName}</span></p>
+                              {renderCreatedAt(s)}
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
                               <span className={statusTab === 'history' ? 'text-slate-400 font-extrabold' : 'text-rose-600 dark:text-rose-400 font-extrabold'}>
@@ -1528,11 +1546,12 @@ const PendingTransactionsPage = () => {
                                 </span>
                               </p>
                               <p className="text-[10px] text-slate-555 dark:text-slate-300 font-semibold mt-0.5">From: <span className="font-extrabold">{r.fromUser?.fullName}</span></p>
-                              <p className="text-[10px] text-slate-555 font-semibold">
+                              <p className="text-[10px] text-slate-555 font-semibold mb-1">
                                 Condition: <span className="font-extrabold text-amber-700">
                                   {r.items && r.items.length > 1 ? [...new Set(r.items.map(it => it.condition))].join(', ') : r.condition}
                                 </span>
                               </p>
+                              {renderCreatedAt(r)}
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
                               <span className={statusTab === 'history' ? 'text-slate-400 font-extrabold' : 'text-rose-600 dark:text-rose-400 font-extrabold'}>
@@ -1582,7 +1601,8 @@ const PendingTransactionsPage = () => {
                             <div>
                               <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100">Convert to {r.documentType}</h4>
                               <p className="text-[10px] text-slate-500 dark:text-slate-300 font-semibold mt-0.5">Number: <span className="font-extrabold">{r.documentNumber}</span></p>
-                              <p className="text-[10px] text-slate-500 dark:text-slate-300 font-semibold">Requester: <span className="font-extrabold">{r.requester?.fullName}</span></p>
+                              <p className="text-[10px] text-slate-550 dark:text-slate-300 font-semibold mb-1">Requester: <span className="font-extrabold">{r.requester?.fullName}</span></p>
+                              {renderCreatedAt(r)}
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
                               <span className={statusTab === 'history' ? 'text-slate-400 font-extrabold' : 'text-rose-600 dark:text-rose-400 font-extrabold'}>
@@ -1633,7 +1653,8 @@ const PendingTransactionsPage = () => {
                             <div>
                               <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 font-sans">Exchange to {e.newDocumentType}</h4>
                               <p className="text-[10px] text-slate-500 dark:text-slate-300 font-semibold mt-0.5">Material: <span className="font-extrabold">{e.materialName}</span></p>
-                              <p className="text-[10px] text-slate-500 dark:text-slate-300 font-semibold">Requester: <span className="font-extrabold">{e.requester?.fullName}</span></p>
+                              <p className="text-[10px] text-slate-550 dark:text-slate-300 font-semibold mb-1">Requester: <span className="font-extrabold">{e.requester?.fullName}</span></p>
+                              {renderCreatedAt(e)}
                             </div>
                             <div className="mt-2 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 text-[10px] font-bold flex justify-between items-center text-slate-500">
                               <span className={statusTab === 'history' ? 'text-slate-400 font-extrabold' : 'text-rose-600 dark:text-rose-400 font-extrabold'}>
@@ -1685,7 +1706,8 @@ const PendingTransactionsPage = () => {
 
                             <div>
                               <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 line-clamp-1 leading-snug">{t.description || 'Material Logistics transaction'}</h4>
-                              <p className="text-[10px] text-slate-500 dark:text-slate-300 font-medium mt-0.5">Sender: <span className="font-extrabold">{t.sender?.fullName || t.requester?.fullName}</span></p>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-300 font-medium mt-0.5 mb-1">Sender: <span className="font-extrabold">{t.sender?.fullName || t.requester?.fullName}</span></p>
+                              {renderCreatedAt(t)}
                             </div>
 
                             <div className="flex items-center justify-between text-[9px] text-slate-400 font-extrabold mt-1">
@@ -1740,7 +1762,8 @@ const PendingTransactionsPage = () => {
                             <div>
                               <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-snug">Barcode Transfer Sourcing</h4>
                               <p className="text-[10px] text-slate-500 dark:text-slate-300 font-medium mt-0.5">Sender: <span className="font-extrabold">{tr.fromUser?.fullName}</span></p>
-                              <p className="text-[10px] text-slate-500 dark:text-slate-300 font-medium mt-0.5">Recipient: <span className="font-extrabold">{tr.toUser?.fullName}</span></p>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-300 font-medium mt-0.5 mb-1">Recipient: <span className="font-extrabold">{tr.toUser?.fullName}</span></p>
+                              {renderCreatedAt(tr)}
                             </div>
 
                             <div className="text-[9px] text-slate-400 font-extrabold mt-1">
@@ -1764,13 +1787,14 @@ const PendingTransactionsPage = () => {
         ) : (
           /* Right Side: Selected details preview workspace taking full width */
           <div className="w-full flex bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex-col">
-            <div className="p-3 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-105 flex items-center shrink-0">
+            <div className="p-3 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-105 flex items-center justify-between gap-2 shrink-0">
               <button
                 onClick={() => setSelectedItem(null)}
                 className="flex items-center gap-2 text-xs font-bold text-blue-650 dark:text-blue-700 transition animate-fade-in"
               >
                 <ArrowLeft className="w-4 h-4" /> Back to Pending List
               </button>
+              {renderCreatedAt(selectedItem)}
             </div>
             {selectedItem.condition ? (
               /* RETURN REQUEST PREVIEW */

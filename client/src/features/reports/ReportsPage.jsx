@@ -482,12 +482,12 @@ const ReportsPage = () => {
     <div className="flex flex-col gap-6 max-w-6xl mx-auto px-1">
       {/* Header Section */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 rounded-2xl border border-slate-200/10 shadow-lg text-white">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-indigo-500/20 border border-indigo-500/30 rounded-xl">
+        <div className="flex items-start sm:items-center gap-4">
+          <div className="p-3 bg-indigo-500/20 border border-indigo-500/30 rounded-xl shrink-0">
             <Filter className="w-6 h-6 text-indigo-400" />
           </div>
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight m-0 bg-gradient-to-r from-white to-indigo-200 bg-clip-text text-transparent">
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight m-0 bg-gradient-to-r from-white to-indigo-200 bg-clip-text text-transparent">
               Report Command Center
             </h1>
             <p className="text-xs text-slate-400 mt-1">
@@ -500,17 +500,17 @@ const ReportsPage = () => {
           onClick={handleExportExcel}
           disabled={exporting}
           icon={FileSpreadsheet}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-md hover:shadow-emerald-500/20 font-bold tracking-wide transition-all scale-100 hover:scale-[1.02] active:scale-[0.98] border-none"
+          className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-700 text-white shadow-md hover:shadow-emerald-500/20 font-bold tracking-wide transition-all scale-100 hover:scale-[1.02] active:scale-[0.98] border-none"
         >
           {exporting ? 'Exporting...' : 'Export Excel Report'}
         </Button>
       </div>
 
       {/* Report Type Navigation Tabs */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6">
+      <div className="flex overflow-x-auto whitespace-nowrap scrollbar-none border-b border-slate-200 dark:border-slate-800 gap-6 pb-1">
         <button
           onClick={() => { setReportType('transaction'); setCurrentPage(1); }}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'transaction'
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer shrink-0 ${reportType === 'transaction'
             ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
             : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
@@ -519,7 +519,7 @@ const ReportsPage = () => {
         </button>
         <button
           onClick={() => { setReportType('handler'); setCurrentPage(1); }}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'handler'
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer shrink-0 ${reportType === 'handler'
             ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
             : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
@@ -528,7 +528,7 @@ const ReportsPage = () => {
         </button>
         <button
           onClick={() => { setReportType('returns'); setCurrentPage(1); }}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'returns'
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer shrink-0 ${reportType === 'returns'
             ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
             : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
@@ -537,7 +537,7 @@ const ReportsPage = () => {
         </button>
         <button
           onClick={() => { setReportType('conversions'); setCurrentPage(1); }}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'conversions'
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer shrink-0 ${reportType === 'conversions'
             ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
             : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
@@ -546,7 +546,7 @@ const ReportsPage = () => {
         </button>
         <button
           onClick={() => { setReportType('exchange'); setCurrentPage(1); }}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${reportType === 'exchange'
+          className={`pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer shrink-0 ${reportType === 'exchange'
             ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
             : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
