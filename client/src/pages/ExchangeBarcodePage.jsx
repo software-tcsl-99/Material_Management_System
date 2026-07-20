@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Camera } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import GeoCamera from '../components/geo-camera/GeoCamera';
 import Button from '../components/ui/Button';
+import BarcodeScanner from '../components/BarcodeScanner';
 import api from '../lib/api';
 
 export default function ExchangeBarcodePage() {
@@ -16,6 +17,7 @@ export default function ExchangeBarcodePage() {
   const [exchangePhoto, setExchangePhoto] = useState('');
   const [exchangeAttachment, setExchangeAttachment] = useState(null);
   const [exchangeRemarks, setExchangeRemarks] = useState('');
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   // Fetch barcode detail
   const { data: detailData, isLoading, refetch } = useQuery({
@@ -38,7 +40,8 @@ export default function ExchangeBarcodePage() {
   const isReturnPending = returns.some(r => ['pending', 'handler_assigned', 'collected', 'store_received'].includes(r.status));
   const isClosePending = bc?.closeRequest && bc.closeRequest.documentNumber && ['pending', 'pending_accounts_approval', 'pending_store_acceptance'].includes(bc.closeRequest.status);
 
-  const hasPendingAction = isSplitPending || isExchangePending || isTransferPending || isReturnPending || isClosePending;
+  const isExchanged = bc?.status?.toUpperCase() === 'EXCHANGED';
+  const hasPendingAction = isSplitPending || isExchangePending || isTransferPending || isReturnPending || isClosePending || isExchanged;
 
   const handleExchangeSubmit = async (e) => {
     e.preventDefault();
@@ -94,6 +97,10 @@ export default function ExchangeBarcodePage() {
   }
 
   if (hasPendingAction) {
+    const message = isExchanged
+      ? "This barcode has already been exchanged under warranty."
+      : "This barcode has a pending request (split, return, transfer, exchange, or close) in progress. No other actions can be initiated until it is resolved.";
+
     return (
       <div className="max-w-md mx-auto mt-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 text-center">
         <div className="w-12 h-12 rounded-full bg-amber-50 dark:bg-amber-955/20 flex items-center justify-center mx-auto">
@@ -101,7 +108,7 @@ export default function ExchangeBarcodePage() {
         </div>
         <h2 className="text-base font-extrabold text-slate-800 dark:text-white">Action Blocked</h2>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          This barcode has a pending request (split, return, transfer, exchange, or close) in progress. No other actions can be initiated until it is resolved.
+          {message}
         </p>
         <button
           onClick={() => navigate(`/barcodes/${barcode}`)}
@@ -197,15 +204,34 @@ export default function ExchangeBarcodePage() {
 
         {hasNewBarcode === 'yes' && (
           <div className="animate-in slide-in-from-top-2 duration-150 space-y-2">
-            <label className="block text-[10px] font-bold text-slate-500 tracking-wider">Type New Barcode ID *</label>
-            <input
-              type="text"
-              value={exchangeNewBarcode}
-              onChange={(e) => setExchangeNewBarcode(e.target.value)}
-              required
-              placeholder="e.g. DG300005"
-              className="w-full text-xs bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-lg px-3.5 py-3 font-semibold focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            />
+            <label className="block text-[10px] font-bold text-slate-500 tracking-wider">Scan New Barcode ID *</label>
+            <div className="flex gap-2">
+              {exchangeNewBarcode ? (
+                <div className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-mono font-bold flex items-center justify-between min-h-[38px] text-slate-800 dark:text-white">
+                  <span>{exchangeNewBarcode}</span>
+                  <button
+                    type="button"
+                    onClick={() => setExchangeNewBarcode('')}
+                    className="text-[10px] text-rose-500 hover:text-rose-700 font-extrabold"
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : (
+                <div className="flex-1 bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-400 font-bold flex items-center justify-between min-h-[38px]">
+                  <span>No barcode scanned yet</span>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setScannerOpen(true)}
+                className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center transition shadow-sm font-extrabold text-xs flex-shrink-0 h-[38px]"
+                title="Open Camera Scanner"
+              >
+                <Camera className="w-3.5 h-3.5 mr-1" />
+                Scan
+              </button>
+            </div>
           </div>
         )}
 
@@ -243,6 +269,17 @@ export default function ExchangeBarcodePage() {
           </Button>
         </div>
       </form>
+      {scannerOpen && (
+        <BarcodeScanner
+          onScan={(code) => {
+            if (code) {
+              setExchangeNewBarcode(code.trim().toUpperCase());
+            }
+            setScannerOpen(false);
+          }}
+          onClose={() => setScannerOpen(false)}
+        />
+      )}
     </div>
   );
 }

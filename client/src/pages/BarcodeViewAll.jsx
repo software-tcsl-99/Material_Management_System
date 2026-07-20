@@ -15,6 +15,19 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import api from '../lib/api';
 
+const getCleanUserRemarks = (str) => {
+  if (!str) return 'N/A';
+  let clean = str;
+  if (clean.startsWith("Remarks: ")) {
+    clean = clean.replace("Remarks: ", "");
+  }
+  const attachmentIdx = clean.indexOf(" | Attachment:");
+  if (attachmentIdx !== -1) {
+    clean = clean.substring(0, attachmentIdx);
+  }
+  return clean.trim();
+};
+
 export default function BarcodeViewAll() {
   const { barcode } = useParams();
   const navigate = useNavigate();
@@ -35,6 +48,7 @@ export default function BarcodeViewAll() {
   const returns = data?.returns || [];
   const splits = data?.splits || [];
   const exchanges = data?.exchanges || [];
+  const receiptsData = data?.receipts || [];
 
   // Re-build exact timelineHistory matching BarcodeDetail
   const filteredHistory = bc?.history?.filter(log => {
@@ -71,7 +85,7 @@ export default function BarcodeViewAll() {
         action: 'Barcode Exchange Requested',
         user: ex.requester,
         timestamp: ex.createdAt,
-        remarks: `Warranty exchange requested. Failure reason: ${ex.warrantyReason}`
+        remarks: getCleanUserRemarks(ex.warrantyReason)
       });
     }
     if (ex.status === 'approved') {
@@ -353,6 +367,8 @@ export default function BarcodeViewAll() {
   const seenDocUrls = new Set();
   const addAttachment = (name, url, type, size, date, source) => {
     if (!url || typeof url !== 'string' || seenDocUrls.has(url)) return;
+    const isUserUploaded = url.includes('cloudinary') || url.startsWith('data:');
+    if (!isUserUploaded) return;
     seenDocUrls.add(url);
     allAttachments.push({
       name: name || 'Unnamed Document',
@@ -375,6 +391,31 @@ export default function BarcodeViewAll() {
       addAttachment(doc.name, doc.url, doc.type, doc.size, doc.uploadedAt, 'Transaction Challan');
     });
   }
+
+  if (bc?.transaction?.photos) {
+    bc.transaction.photos.forEach((ph, idx) => {
+      const url = typeof ph === 'string' ? ph : ph.url;
+      const name = url.split('/').pop() || `Dispatch Attachment #${idx + 1}`;
+      addAttachment(name, url, 'document', 0, ph.metadata?.capturedAt || bc.transaction.createdAt, 'Store Dispatch');
+    });
+  }
+
+  receiptsData.forEach((rec, index) => {
+    if (rec.receiverDocumentPhotos) {
+      rec.receiverDocumentPhotos.forEach((ph, pIdx) => {
+        const url = typeof ph === 'string' ? ph : ph.url;
+        const name = url.split('/').pop() || `Receiving Doc #${pIdx + 1}`;
+        addAttachment(name, url, 'document', 0, rec.createdAt, 'Material Receipt');
+      });
+    }
+    if (rec.photos) {
+      rec.photos.forEach((ph, pIdx) => {
+        const url = typeof ph === 'string' ? ph : ph.url;
+        const name = url.split('/').pop() || `Receiving Doc #${pIdx + 1}`;
+        addAttachment(name, url, 'document', 0, rec.createdAt, 'Material Receipt');
+      });
+    }
+  });
 
   returns.forEach((returnRequest, index) => {
     returnRequest.documents?.forEach(document => {

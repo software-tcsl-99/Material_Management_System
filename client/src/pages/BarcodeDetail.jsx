@@ -12,6 +12,19 @@ import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import api from '../lib/api';
 
+const getCleanUserRemarks = (str) => {
+  if (!str) return 'N/A';
+  let clean = str;
+  if (clean.startsWith("Remarks: ")) {
+    clean = clean.replace("Remarks: ", "");
+  }
+  const attachmentIdx = clean.indexOf(" | Attachment:");
+  if (attachmentIdx !== -1) {
+    clean = clean.substring(0, attachmentIdx);
+  }
+  return clean.trim();
+};
+
 export default function BarcodeDetail() {
   const { barcode } = useParams();
   const navigate = useNavigate();
@@ -164,7 +177,7 @@ export default function BarcodeDetail() {
         action: 'Barcode Exchange Requested',
         user: ex.requester,
         timestamp: ex.createdAt,
-        remarks: `Warranty exchange requested. Failure reason: ${ex.warrantyReason}`
+        remarks: getCleanUserRemarks(ex.warrantyReason)
       });
     }
 
@@ -516,9 +529,11 @@ export default function BarcodeDetail() {
                     }}>
                       Convert to Invoice
                     </Button>
-                    <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-indigo-50 hover:!bg-indigo-100 !text-indigo-700 !border-indigo-250 hover:!border-indigo-300 dark:!bg-indigo-950/20 dark:!text-indigo-300 dark:!border-indigo-800/40 dark:hover:!bg-indigo-950/30" onClick={() => navigate(`/barcodes/${barcode}/exchange`)}>
-                      Exchange Barcode
-                    </Button>
+                    {bc.status?.toUpperCase() !== 'EXCHANGED' && (
+                      <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-indigo-50 hover:!bg-indigo-100 !text-indigo-700 !border-indigo-250 hover:!border-indigo-300 dark:!bg-indigo-950/20 dark:!text-indigo-300 dark:!border-indigo-800/40 dark:hover:!bg-indigo-950/30" onClick={() => navigate(`/barcodes/${barcode}/exchange`)}>
+                        Exchange Barcode
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-cyan-50 hover:!bg-cyan-100 !text-cyan-700 !border-cyan-250 hover:!border-cyan-300 dark:!bg-cyan-950/20 dark:!text-cyan-300 dark:!border-cyan-800/40 dark:hover:!bg-cyan-950/30" onClick={() => navigate(`/barcodes/${barcode}/transfer`)}>
                       Transfer Barcode
                     </Button>

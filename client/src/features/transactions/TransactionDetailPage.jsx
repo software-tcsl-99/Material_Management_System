@@ -47,9 +47,93 @@ const TransactionDetailPage = () => {
   const [txn, setTxn] = useState(null);
   const [barcodes, setBarcodes] = useState([]);
   const [returnsList, setReturnsList] = useState([]);
+  const [receiptsList, setReceiptsList] = useState([]);
   const [exchangeRequests, setExchangeRequests] = useState([]);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
+
+  const getTransactionAttachments = () => {
+    if (!txn) return [];
+    const list = [];
+    const seenUrls = new Set();
+
+    const addDoc = (name, url, uploadedAt, source) => {
+      if (!url || typeof url !== 'string' || seenUrls.has(url)) return;
+      const isUserUploaded = url.includes('cloudinary') || url.startsWith('data:');
+      if (!isUserUploaded) return;
+      seenUrls.add(url);
+      list.push({
+        name: name || url.split('/').pop() || 'Attachment',
+        url,
+        uploadedAt: uploadedAt || txn.createdAt,
+        source
+      });
+    };
+
+    // 1. Transaction-level documents
+    if (txn.documents) {
+      txn.documents.forEach(doc => {
+        addDoc(doc.name, doc.url, doc.uploadedAt, 'Transaction Document');
+      });
+    }
+
+    // 2. Transaction-level dispatch photos/documents (uploaded in Step 4 of store dispatch)
+    if (txn.photos) {
+      txn.photos.forEach((ph, idx) => {
+        const url = typeof ph === 'string' ? ph : ph.url;
+        addDoc(`Dispatch Attachment #${idx + 1}`, url, ph.metadata?.capturedAt || txn.createdAt, 'Store Dispatch');
+      });
+    }
+
+    // 3. Material-level photos/documents
+    if (txn.materials) {
+      txn.materials.forEach(mat => {
+        if (mat.photos) {
+          mat.photos.forEach((ph, idx) => {
+            const url = typeof ph === 'string' ? ph : ph.url;
+            addDoc(`${mat.name} Dispatch #${idx + 1}`, url, ph.metadata?.capturedAt || txn.createdAt, 'Material Dispatch');
+          });
+        }
+      });
+    }
+
+    // 4. Return-level photos/documents
+    if (returnsList) {
+      returnsList.forEach((rt, idx) => {
+        if (rt.photos) {
+          rt.photos.forEach((ph, pIdx) => {
+            const url = typeof ph === 'string' ? ph : ph.url;
+            addDoc(`Return Proof #${pIdx + 1}`, url, ph.capturedAt || rt.createdAt, `Return Request #${returnsList.length - idx}`);
+          });
+        }
+        if (rt.documents) {
+          rt.documents.forEach((doc, dIdx) => {
+            addDoc(doc.name, doc.url, doc.uploadedAt || rt.createdAt, `Return Doc #${dIdx + 1}`);
+          });
+        }
+      });
+    }
+
+    // 5. Receiving-level photos/documents
+    if (receiptsList) {
+      receiptsList.forEach((rec, idx) => {
+        if (rec.receiverDocumentPhotos) {
+          rec.receiverDocumentPhotos.forEach((ph, pIdx) => {
+            const url = typeof ph === 'string' ? ph : ph.url;
+            addDoc(`Receiving Doc #${pIdx + 1}`, url, rec.createdAt, 'Material Receipt');
+          });
+        }
+        if (rec.photos) {
+          rec.photos.forEach((ph, pIdx) => {
+            const url = typeof ph === 'string' ? ph : ph.url;
+            addDoc(`Receiving Doc #${pIdx + 1}`, url, rec.createdAt, 'Material Receipt');
+          });
+        }
+      });
+    }
+
+    return list;
+  };
 
   const handleExport = async (format) => {
     setExporting(true);
@@ -195,6 +279,7 @@ const TransactionDetailPage = () => {
       const txnData = txnRes.data.transaction;
       setTxn(txnData);
       setReturnsList(txnRes.data.returns || []);
+      setReceiptsList(txnRes.data.receipts || []);
       fetchTxnChat(txnData.transactionId);
 
       // Fetch barcodes matching this transaction
@@ -2256,61 +2341,34 @@ const TransactionDetailPage = () => {
         {activeTab === 'documents' && (
           <Card title="Supporting Challan Documents">
             <div className="flex flex-col gap-3.5">
-              <div className="p-4 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-900 rounded-xl flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <File className="w-8 h-8 text-blue-650 shrink-0" />
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Delivery Challan PDF</h4>
-                    <p className="text-[10px] text-slate-400">Generated on {new Date(txn.createdAt).toLocaleDateString()}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleExport('pdf')}
-                  disabled={exporting}
-                  className="text-xs font-bold text-blue-600 hover:underline cursor-pointer disabled:opacity-50"
-                >
-                  Download PDF
-                </button>
-              </div>
-              <div className="p-4 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-900 rounded-xl flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <FileSpreadsheet className="w-8 h-8 text-emerald-600 shrink-0" />
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Delivery Challan Excel Sheets</h4>
-                    <p className="text-[10px] text-slate-400">Generated on {new Date(txn.createdAt).toLocaleDateString()}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleExport('excel')}
-                  disabled={exporting}
-                  className="text-xs font-bold text-blue-600 hover:underline cursor-pointer disabled:opacity-50"
-                >
-                  Download Excel
-                </button>
-              </div>
-
-              {/* Dynamic Transaction Level Documents */}
-              {txn.documents && txn.documents.map((doc, idx) => (
-                <div key={idx} className="p-4 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-900 rounded-xl flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <FileText className="w-8 h-8 text-indigo-500 shrink-0" />
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">{doc.name}</h4>
-                      <p className="text-[10px] text-slate-400">
-                        Uploaded on {new Date(doc.uploadedAt || txn.createdAt).toLocaleDateString()}
-                      </p>
+              {getTransactionAttachments().length === 0 ? (
+                <p className="text-xs text-slate-400 py-10 text-center font-bold">No documents uploaded for this transaction.</p>
+              ) : (
+                getTransactionAttachments().map((doc, idx) => (
+                  <div key={idx} className="p-4 bg-white dark:bg-slate-955 border border-slate-100 dark:border-slate-900 rounded-xl flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-8 h-8 text-blue-600 shrink-0" />
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">{doc.name}</h4>
+                        <p className="text-[10px] text-slate-400">
+                          Uploaded on {new Date(doc.uploadedAt).toLocaleDateString()}
+                        </p>
+                        <span className="inline-block mt-1 bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-1.5 py-0.5 rounded font-mono text-[9px]">
+                          {doc.source}
+                        </span>
+                      </div>
                     </div>
+                    <a
+                      href={doc.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
+                    >
+                      View Document
+                    </a>
                   </div>
-                  <a
-                    href={doc.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
-                  >
-                    View Document
-                  </a>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </Card>
         )}

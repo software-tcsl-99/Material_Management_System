@@ -540,6 +540,15 @@ exports.getTransaction = async (req, res) => {
       }
     }
 
+    // Get receipts for this transaction
+    const InternalReceipt = require('../models/InternalReceipt');
+    const ExternalReceipt = require('../models/ExternalReceipt');
+    const [internalReceipts, externalReceipts] = await Promise.all([
+      InternalReceipt.find({ transaction: transaction._id }).populate('receiver', 'fullName employeeId'),
+      ExternalReceipt.find({ 'materials.barcode': { $in: barcodes.map(b => b.barcode) } }).populate('receiver', 'fullName employeeId')
+    ]);
+    const receipts = [...internalReceipts, ...externalReceipts];
+
     const transactionObj = transaction.toObject();
     transactionObj.chatLocked = dynamicChatLocked;
 
@@ -547,7 +556,8 @@ exports.getTransaction = async (req, res) => {
       data: transactionObj,
       transaction: transactionObj,
       barcodes,
-      returns
+      returns,
+      receipts
     });
   } catch (error) {
     console.error('Get transaction error:', error);

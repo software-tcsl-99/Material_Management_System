@@ -68,7 +68,19 @@ exports.getBarcodeDetail = async (req, res) => {
       .populate('approvedBy', 'fullName employeeId')
       .sort({ createdAt: -1 });
 
-    res.json({ barcode: bc, transfers, returns, splits, closeRequests, exchanges });
+    const InternalReceipt = require('../models/InternalReceipt');
+    const ExternalReceipt = require('../models/ExternalReceipt');
+    let receipts = [];
+    if (bc && bc.transaction) {
+      const txnId = bc.transaction._id;
+      const [intRecs, extRecs] = await Promise.all([
+        InternalReceipt.find({ transaction: txnId }).populate('receiver', 'fullName employeeId'),
+        ExternalReceipt.find({ 'materials.barcode': normalizedBarcode }).populate('receiver', 'fullName employeeId')
+      ]);
+      receipts = [...intRecs, ...extRecs];
+    }
+
+    res.json({ barcode: bc, transfers, returns, splits, closeRequests, exchanges, receipts });
   } catch (error) {
     res.status(500).json({ message: 'Server error.' });
   }

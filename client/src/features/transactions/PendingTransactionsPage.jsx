@@ -8,6 +8,7 @@ import {
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import GeoCamera from '../../components/geo-camera/GeoCamera';
+import BarcodeScanner from '../../components/BarcodeScanner';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
@@ -128,6 +129,7 @@ const PendingTransactionsPage = () => {
   const [pendingExchanges, setPendingExchanges] = useState([]);
   const [exchangeNewBarcode, setExchangeNewBarcode] = useState('');
   const [txnExpectedReturnDates, setTxnExpectedReturnDates] = useState({});
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
 
   // Custom Rejection Modal States
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
@@ -2328,9 +2330,36 @@ const PendingTransactionsPage = () => {
 
                       <div>
                         <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Warranty Form / Failure Reason</h4>
-                        <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-955 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-350 font-bold font-sans">
-                          "{selectedItem.warrantyReason}"
-                        </div>
+                        {(() => {
+                          const rawReason = selectedItem.warrantyReason;
+                          let remarks = rawReason || 'N/A';
+                          let attachmentUrl = null;
+                          if (remarks.startsWith("Remarks: ")) {
+                            remarks = remarks.replace("Remarks: ", "");
+                          }
+                          const attachmentIdx = remarks.indexOf(" | Attachment: ");
+                          if (attachmentIdx !== -1) {
+                            attachmentUrl = remarks.substring(attachmentIdx + " | Attachment: ".length).trim();
+                            remarks = remarks.substring(0, attachmentIdx).trim();
+                          }
+                          return (
+                            <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-955 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-350 font-bold font-sans flex flex-col gap-2">
+                              <p className="text-xs">"{remarks}"</p>
+                              {attachmentUrl && (
+                                <div className="mt-1">
+                                  <a
+                                    href={attachmentUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-xl text-[10px] font-extrabold hover:bg-blue-100 dark:hover:bg-blue-950/60 transition"
+                                  >
+                                    View Document
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {loadingBarcodeData ? (
@@ -2383,14 +2412,33 @@ const PendingTransactionsPage = () => {
                         <div className="bg-slate-50 dark:bg-slate-955 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
                           <div>
                             <label className="block text-xs font-bold text-slate-500 tracking-wider mb-1">Assign New Barcode ID *</label>
-                            <input
-                              type="text"
-                              value={exchangeNewBarcode}
-                              onChange={(e) => setExchangeNewBarcode(e.target.value)}
-                              required
-                              placeholder="e.g. DG300005"
-                              className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2.5 font-semibold focus:outline-none"
-                            />
+                            <div className="flex gap-2">
+                              {exchangeNewBarcode ? (
+                                <div className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-mono font-bold flex items-center justify-between min-h-[38px] text-slate-800 dark:text-white">
+                                  <span>{exchangeNewBarcode}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setExchangeNewBarcode('')}
+                                    className="text-[10px] text-rose-500 hover:text-rose-700 font-extrabold"
+                                  >
+                                    Clear
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-400 font-bold flex items-center justify-between min-h-[38px]">
+                                  <span>No barcode scanned yet</span>
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setBarcodeScannerOpen(true)}
+                                className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center transition shadow-sm font-extrabold text-xs flex-shrink-0 h-[38px]"
+                                title="Open Camera Scanner"
+                              >
+                                <Camera className="w-3.5 h-3.5 mr-1" />
+                                Scan
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -3206,6 +3254,18 @@ const PendingTransactionsPage = () => {
             setCameraOpen(false);
           }}
           onClose={() => setCameraOpen(false)}
+        />
+      )}
+
+      {barcodeScannerOpen && (
+        <BarcodeScanner
+          onScan={(code) => {
+            if (code) {
+              setExchangeNewBarcode(code.trim().toUpperCase());
+            }
+            setBarcodeScannerOpen(false);
+          }}
+          onClose={() => setBarcodeScannerOpen(false)}
         />
       )}
 
