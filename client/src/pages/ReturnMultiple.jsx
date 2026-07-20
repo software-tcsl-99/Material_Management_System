@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertCircle, ArrowLeft, Camera, Check, Paperclip, Trash2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Camera, Check, Paperclip, Trash2, X, FileText } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import GeoCamera from '../components/geo-camera/GeoCamera';
@@ -26,6 +26,8 @@ export default function ReturnMultiple() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraBarcode, setCameraBarcode] = useState(null);
   const [barcodeEvidence, setBarcodeEvidence] = useState({});
+  const [commonDocuments, setCommonDocuments] = useState([]);
+  const [previewImage, setPreviewImage] = useState(null);
 
   const [employees, setEmployees] = useState([]);
   const [returnMethod, setReturnMethod] = useState('direct'); // 'direct' or 'handler'
@@ -104,16 +106,37 @@ export default function ReturnMultiple() {
     }
   });
 
+  const getInitialEvidence = (bc) => {
+    const isNewEx = bc.history?.some(h => h.action === 'Exchange Child Created');
+    const recLog = bc.history?.find(h => h.action === 'Received');
+    const recTime = recLog ? new Date(recLog.timestamp) : new Date(bc.updatedAt || Date.now());
+    const passed = (Date.now() - recTime.getTime()) > 3600000;
+
+    if (isNewEx) {
+      return { reason: 'Defective/Damaged', condition: 'defective', remarks: '', photos: [], documents: [] };
+    } else if (passed) {
+      return { reason: 'Job Completed', condition: 'good', remarks: '', photos: [], documents: [] };
+    } else {
+      return { reason: '', condition: 'good', remarks: '', photos: [], documents: [] };
+    }
+  };
+
   const updateEvidence = (barcode, changes) => {
-    setBarcodeEvidence(current => ({
-      ...current,
-      [barcode]: { reason: '', condition: 'good', remarks: '', photos: [], documents: [], ...current[barcode], ...changes }
-    }));
+    setBarcodeEvidence(current => {
+      const bc = activeOwnedBarcodes.find(item => item.barcode === barcode);
+      const initial = bc ? getInitialEvidence(bc) : { reason: '', condition: 'good', remarks: '', photos: [], documents: [] };
+      return {
+        ...current,
+        [barcode]: { ...initial, ...current[barcode], ...changes }
+      };
+    });
   };
 
   const handleCapturePhoto = (uploadData) => {
     if (!cameraBarcode || !uploadData?.url) return;
-    const current = barcodeEvidence[cameraBarcode] || { photos: [] };
+    const bc = activeOwnedBarcodes.find(item => item.barcode === cameraBarcode);
+    const initial = bc ? getInitialEvidence(bc) : { reason: '', condition: 'good', remarks: '', photos: [], documents: [] };
+    const current = { ...initial, ...(barcodeEvidence[cameraBarcode] || {}) };
     updateEvidence(cameraBarcode, {
       photos: [...(current.photos || []), { url: uploadData.url, capturedAt: new Date().toISOString() }],
       gps: uploadData.metadata ? { lat: uploadData.metadata.lat, lng: uploadData.metadata.lng, address: uploadData.metadata.address } : undefined
@@ -122,14 +145,13 @@ export default function ReturnMultiple() {
     setCameraBarcode(null);
   };
 
-  const handleAttachment = async (barcode, file) => {
+  const handleCommonAttachment = async (file) => {
     if (!file) return;
     try {
       const formData = new FormData();
       formData.append('file', file);
       const { data } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      const current = barcodeEvidence[barcode] || { documents: [] };
-      updateEvidence(barcode, { documents: [...(current.documents || []), { name: file.name, url: data.url, type: file.type || 'document', size: file.size, uploadedAt: new Date().toISOString() }] });
+      setCommonDocuments(prev => [...prev, { name: file.name, url: data.url, type: file.type || 'document', size: file.size, uploadedAt: new Date().toISOString() }]);
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to upload attachment.');
     }
@@ -162,17 +184,23 @@ export default function ReturnMultiple() {
     }
 
     const payloads = Array.from(selectedBarcodes).map(barcode => {
-      const evidence = barcodeEvidence[barcode] || {};
+      const bc = activeOwnedBarcodes.find(item => item.barcode === barcode);
+      const initial = bc ? getInitialEvidence(bc) : { reason: '', condition: 'good', remarks: '', photos: [], documents: [] };
+      const evidence = { ...initial, ...(barcodeEvidence[barcode] || {}) };
       return {
-      barcode,
-      reason: evidence.reason,
-      condition: evidence.condition,
-      remarks: evidence.remarks,
-      returnHandler: returnMethod === 'handler' ? handlerId : undefined,
-      gps: evidence.gps,
-      photos: evidence.photos || [],
-      documents: evidence.documents || []
-    };
+        barcode,
+        reason: evidence.reason,
+        condition: evidence.condition,
+        remarks: evidence.remarks,
+        returnHandler: returnMethod === 'handler' ? handlerId : undefined,
+        gps: evidence.gps || (evidence.photos?.[0]?.metadata ? {
+          lat: evidence.photos[0].metadata.lat,
+          lng: evidence.photos[0].metadata.lng,
+          address: evidence.photos[0].metadata.address
+        } : undefined),
+        photos: (evidence.photos || []).map(p => ({ url: p.url, capturedAt: p.capturedAt || new Date() })),
+        documents: commonDocuments
+      };
     });
     const incomplete = payloads.find(item => !item.reason || !item.remarks?.trim() || !item.photos?.length);
     if (incomplete) {
@@ -231,7 +259,7 @@ export default function ReturnMultiple() {
           </div>
 
           {activeOwnedBarcodes.length === 0 ? (
-            <p className="text-xs text-slate-400 italic py-2">No active owned barcodes are eligible for return under this transaction (others may have been split, returned, or transferred).</p>
+            <p className="text-xs text-slate-400 py-2">No active owned barcodes are eligible for return under this transaction (others may have been split, returned, or transferred).</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-1">
               {activeOwnedBarcodes.map(bc => {
@@ -262,23 +290,202 @@ export default function ReturnMultiple() {
 
         {selectedBarcodes.size > 0 && (
           <div className="space-y-3">
-            <div><h3 className="font-extrabold text-slate-800 dark:text-slate-200 tracking-wider">Per-Barcode Return Details</h3><p className="text-[10px] text-slate-400 mt-1">Record a separate reason, condition, remark, GeoCamera proof, and attachment for every returned barcode.</p></div>
+            <div>
+              <h3 className="font-extrabold text-slate-800 dark:text-slate-200 tracking-wider">Per-Barcode Return Details</h3>
+              <p className="text-[10px] text-slate-400 mt-1">Record a separate remark and GeoCamera photo for every returned barcode.</p>
+            </div>
             {Array.from(selectedBarcodes).map(barcode => {
               const bc = activeOwnedBarcodes.find(item => item.barcode === barcode);
-              const evidence = barcodeEvidence[barcode] || { reason: '', condition: 'good', remarks: '', photos: [], documents: [] };
+              if (!bc) return null;
+
+              const isNewEx = bc.history?.some(h => h.action === 'Exchange Child Created');
+              const recLog = bc.history?.find(h => h.action === 'Received');
+              const recTime = recLog ? new Date(recLog.timestamp) : new Date(bc.updatedAt || Date.now());
+              const passed = (Date.now() - recTime.getTime()) > 3600000;
+
+              const initial = getInitialEvidence(bc);
+              const evidence = { ...initial, ...(barcodeEvidence[barcode] || {}) };
+
               return (
-                <div key={barcode} className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 bg-slate-50/50 dark:bg-slate-950/20 space-y-3">
-                  <div><p className="font-mono font-extrabold text-slate-850 dark:text-white">{barcode}</p><p className="text-[10px] text-slate-400 font-semibold">{bc?.materialName || 'Material'}</p></div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <select value={evidence.reason} onChange={(e) => updateEvidence(barcode, { reason: e.target.value })} required className="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold"><option value="">Select return reason *</option><option value="Job Completed">Job Completed</option><option value="Defective/Damaged">Defective/Damaged</option><option value="Incorrect Material">Incorrect Material</option><option value="Excess Stock">Excess Stock</option></select>
-                    <select value={evidence.condition} onChange={(e) => updateEvidence(barcode, { condition: e.target.value })} className="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold"><option value="good">Good Condition (Usable)</option><option value="damaged">Damaged / Needs QC</option><option value="defective">Defective</option></select>
+                <div key={barcode} className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 bg-slate-50/50 dark:bg-slate-950/20 space-y-4">
+                  <div>
+                    <p className="font-mono font-extrabold text-slate-850 dark:text-white">{barcode}</p>
+                    <p className="text-[10px] text-slate-400 font-semibold">{bc?.materialName || 'Material'}</p>
                   </div>
-                  <textarea value={evidence.remarks} onChange={(e) => updateEvidence(barcode, { remarks: e.target.value })} required rows="2" placeholder="Return remark / reason details *" className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold resize-none" />
-                  <div className="flex flex-wrap gap-2"><button type="button" onClick={() => { setCameraBarcode(barcode); setCameraOpen(true); }} className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold"><Camera className="w-4 h-4 text-primary" /> GeoCamera Photo *</button><label className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold cursor-pointer"><Paperclip className="w-4 h-4 text-primary" /> Add Attachment<input type="file" className="hidden" onChange={(e) => handleAttachment(barcode, e.target.files?.[0])} /></label></div>
-                  {(evidence.photos.length > 0 || evidence.documents.length > 0) && <div className="flex flex-wrap gap-2">{evidence.photos.map((item, index) => <div key={`p-${index}`} className="relative"><img src={item.url} alt="Return proof" className="w-16 h-16 object-cover rounded-lg" /><button type="button" onClick={() => updateEvidence(barcode, { photos: evidence.photos.filter((_, i) => i !== index) })} className="absolute -top-1 -right-1 bg-rose-500 text-white rounded-full p-0.5"><Trash2 className="w-3 h-3" /></button></div>)}{evidence.documents.map((document, index) => <div key={`d-${index}`} className="flex items-center gap-1 text-[10px] bg-white border border-slate-200 px-2 py-1 rounded-lg"><Paperclip className="w-3 h-3" />{document.name}<button type="button" onClick={() => updateEvidence(barcode, { documents: evidence.documents.filter((_, i) => i !== index) })}><Trash2 className="w-3 h-3 text-rose-500" /></button></div>)}</div>}
+
+                  {!isNewEx && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <select
+                        value={evidence.reason}
+                        onChange={(e) => updateEvidence(barcode, { reason: e.target.value })}
+                        required
+                        className="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold outline-none"
+                      >
+                        {passed ? (
+                          <option value="Job Completed">Job Completed</option>
+                        ) : (
+                          <>
+                            <option value="">Select return reason *</option>
+                            <option value="Job Completed">Job Completed</option>
+                            <option value="Defective/Damaged">Defective/Damaged</option>
+                            <option value="Incorrect Material">Incorrect Material</option>
+                            <option value="Excess Stock">Excess Stock</option>
+                          </>
+                        )}
+                      </select>
+
+                      <select
+                        value={evidence.condition}
+                        onChange={(e) => updateEvidence(barcode, { condition: e.target.value })}
+                        className="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold outline-none"
+                      >
+                        {passed ? (
+                          <option value="good">Good Condition (Usable)</option>
+                        ) : (
+                          <>
+                            <option value="good">Good Condition (Usable)</option>
+                            <option value="damaged">Damaged / Needs QC</option>
+                            <option value="defective">Defective</option>
+                          </>
+                        )}
+                      </select>
+                    </div>
+                  )}
+
+                  <textarea
+                    value={evidence.remarks}
+                    onChange={(e) => updateEvidence(barcode, { remarks: e.target.value })}
+                    required
+                    rows="2"
+                    placeholder="Return remark / reason details *"
+                    className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold resize-none outline-none"
+                  />
+
+                  {/* Per-Barcode Photos Grid */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="block text-[10px] text-slate-500 font-bold tracking-wider">
+                        Live Photo Verification ({(evidence.photos || []).length}) *
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setCameraBarcode(barcode); setCameraOpen(true); }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 dark:border-slate-800 rounded-xl text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                      >
+                        <Camera className="w-3.5 h-3.5" /> Capture Live Photo
+                      </button>
+                    </div>
+
+                    {(evidence.photos || []).length > 0 && (
+                      <div className="flex flex-wrap gap-2.5">
+                        {evidence.photos.map((photo, pIdx) => (
+                          <div key={pIdx} className="flex flex-col items-center gap-1">
+                            <div className="relative w-24 h-24 bg-slate-100 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-sm">
+                              <img
+                                src={photo.url}
+                                alt="Captured evidence"
+                                className="w-full h-full object-cover cursor-pointer hover:opacity-85 transition"
+                                onClick={() => setPreviewImage(photo.url)}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updatedPhotos = evidence.photos.filter((_, i) => i !== pIdx);
+                                  updateEvidence(barcode, { photos: updatedPhotos });
+                                }}
+                                className="absolute top-1 right-1 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition cursor-pointer"
+                                title="Delete Photo"
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                            <span className="text-[9px] text-slate-500 font-bold text-center truncate w-24">
+                              Capture {pIdx + 1}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {selectedBarcodes.size > 0 && (
+          /* Global Document Upload Section */
+          <div className="border-t border-slate-200 pt-4 space-y-3">
+            <div>
+              <h4 className="text-xs font-extrabold text-slate-850 dark:text-white tracking-wider flex items-center gap-1.5">
+                <Paperclip className="w-4 h-4 text-primary" />
+                Upload Dispatch Documents / Attachments (PDF/Word/Images)
+              </h4>
+              <p className="text-[10px] text-slate-450 mt-0.5">Attach documents applicable to the entire return batch (Multiple files allowed).</p>
+            </div>
+            <div className="flex flex-wrap gap-3 items-center">
+              <label className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-extrabold cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition">
+                <Paperclip className="w-4 h-4 text-primary" />
+                Add Attachment
+                <input
+                  type="file"
+                  accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,.doc,.docx"
+                  className="hidden"
+                  onChange={(e) => handleCommonAttachment(e.target.files?.[0])}
+                />
+              </label>
+            </div>
+
+            {commonDocuments.length > 0 && (
+              <div className="space-y-1">
+                <span className="block text-[9px] font-bold text-slate-450 tracking-wider">
+                  Uploaded Attachments ({commonDocuments.length})
+                </span>
+                <div className="flex flex-wrap gap-2.5">
+                  {commonDocuments.map((doc, docIdx) => {
+                    const urlLower = doc.url.toLowerCase();
+                    const ext = urlLower.split('.').pop().split('?')[0];
+                    const isImg = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext) || urlLower.startsWith('data:image');
+                    return (
+                      <div key={docIdx} className="flex flex-col items-center gap-1">
+                        <div className="relative w-24 h-24 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex items-center justify-center">
+                          {isImg ? (
+                            <img
+                              src={doc.url}
+                              alt={doc.name || `Document ${docIdx + 1}`}
+                              className="w-full h-full object-cover cursor-pointer hover:opacity-85 transition"
+                              onClick={() => setPreviewImage(doc.url)}
+                            />
+                          ) : (
+                            <a
+                              href={doc.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="w-full h-full flex flex-col items-center justify-center bg-blue-50 dark:bg-blue-955/40 text-blue-600 dark:text-blue-400 text-[10px] font-bold gap-1"
+                              title="Click to view file"
+                            >
+                              <FileText className="w-6 h-6" />
+                              {ext.toUpperCase().substring(0, 4)}
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setCommonDocuments(prev => prev.filter((_, i) => i !== docIdx))}
+                            className="absolute top-1 right-1 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition cursor-pointer"
+                            title="Delete File"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                        <span className="text-[9px] text-slate-500 font-bold text-center truncate w-24" title={doc.name}>
+                          {doc.name || `Doc ${docIdx + 1}`}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -403,6 +610,28 @@ export default function ReturnMultiple() {
           onCapture={handleCapturePhoto}
           onClose={() => setCameraOpen(false)}
         />
+      )}
+
+      {/* Full-screen Image Preview Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in cursor-pointer"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-3xl max-h-[90vh] p-2" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="absolute top-3 right-3 p-1.5 bg-black/60 hover:bg-black/85 text-white rounded-full transition-colors cursor-pointer z-10"
+              onClick={() => setPreviewImage(null)}
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <img
+              src={previewImage}
+              alt="Preview"
+              className="max-w-full max-h-[80vh] object-contain rounded-lg"
+            />
+          </div>
+        </div>
       )}
     </div>
   );

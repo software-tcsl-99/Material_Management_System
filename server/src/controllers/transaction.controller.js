@@ -420,7 +420,7 @@ exports.getTransactions = async (req, res) => {
 
         if (activePostDispatch.includes(txn.status)) {
           const txnBarcodes = barcodesForTxns.filter(b => b.transactionId === txn.transactionId);
-          const hasActiveMaterial = txnBarcodes.some(b => 
+          const hasActiveMaterial = txnBarcodes.some(b =>
             (b.owner?._id || b.owner)?.toString() === req.user._id.toString() ||
             b.ownershipHistory?.some(h => h.user?.toString() === req.user._id.toString())
           );
@@ -512,7 +512,7 @@ exports.getTransaction = async (req, res) => {
     if (req.user.role === 'employee' && !isTeamLead) {
       const activePostDispatch = ['dispatched', 'received', 'active', 'partially_returned', 'closed', 'completed'];
       if (activePostDispatch.includes(transaction.status)) {
-        const hasActiveMaterial = barcodes.some(b => 
+        const hasActiveMaterial = barcodes.some(b =>
           (b.owner?._id || b.owner)?.toString() === req.user._id.toString() ||
           b.ownershipHistory?.some(h => h.user?.toString() === req.user._id.toString())
         );
@@ -526,7 +526,7 @@ exports.getTransaction = async (req, res) => {
           ]
         });
 
-        const hasActiveReturnAssignment = returns.some(r => 
+        const hasActiveReturnAssignment = returns.some(r =>
           (r.returnHandler?._id || r.returnHandler)?.toString() === req.user._id.toString() &&
           r.status !== 'completed'
         );
@@ -908,7 +908,7 @@ exports.assignHandler = async (req, res) => {
     try {
       const fs = require('fs');
       fs.writeFileSync('error.log', 'Assign handler error:\n' + (error.stack || error.message || String(error)));
-    } catch (e) {}
+    } catch (e) { }
     res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
@@ -1120,12 +1120,12 @@ exports.handlerAction = async (req, res) => {
       transaction.handler = null;
       addTimeline(transaction, 'Handler Declined', `Sourcing assignment declined by handler. Reason: ${remarks || ''}`, req.user._id);
     } else if (actionType === 'send_to_store') {
-      const wasRejected = transaction.timeline?.some(t => 
-        t.action?.toLowerCase()?.includes('receipt rejected') || 
+      const wasRejected = transaction.timeline?.some(t =>
+        t.action?.toLowerCase()?.includes('receipt rejected') ||
         t.action?.toLowerCase()?.includes('request rejected')
       );
       const isValidState = (transaction.status === 'dispatched' && transaction.rejectedDeliveryStatus === 'rejected_by_requester') ||
-                           (transaction.status === 'handler_assigned' && wasRejected);
+        (transaction.status === 'handler_assigned' && wasRejected);
 
       if (!isValidState) {
         return res.status(400).json({ message: 'Invalid transaction state for sending to store.' });
@@ -1250,7 +1250,7 @@ exports.handlerAction = async (req, res) => {
     try {
       const fs = require('fs');
       fs.writeFileSync('error.log', 'Handler action error:\n' + (error.stack || error.message || String(error)));
-    } catch (e) {}
+    } catch (e) { }
     res.status(500).json({ message: 'Server error.', error: error.message });
   }
 };
@@ -1309,7 +1309,7 @@ exports.receiveTransaction = async (req, res) => {
         bc.gps = {
           lat: receiverGeo.lat || 18.5204,
           lng: receiverGeo.lng || 73.8567,
-          address: receiverGeo.address || 'MIDC Pune, India'
+          address: receiverGeo.address || 'MIDC kolhapur, India'
         };
       }
       await bc.save();
@@ -1422,7 +1422,7 @@ exports.rejectReceipt = async (req, res) => {
     // Set transaction status to 'rejected'
     transaction.status = 'rejected';
     transaction.rejectionReason = reason || 'Rejected by requester upon direct delivery';
-    
+
     // Add timeline entry
     addTimeline(transaction, 'Request Rejected', `Direct delivery receipt rejected by requester: ${reason || 'No remarks'}`, req.user._id);
 

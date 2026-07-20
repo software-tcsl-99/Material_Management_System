@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Camera } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import GeoCamera from '../components/geo-camera/GeoCamera';
@@ -73,7 +73,7 @@ export default function ExchangeBarcodePage() {
         warrantyReason: reasonCombined,
         newBarcode: hasNewBarcode === 'yes' ? exchangeNewBarcode.trim().toUpperCase() : undefined,
         photos: exchangePhoto ? [{ url: exchangePhoto }] : [],
-        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
+        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' }
       });
 
       alert('Exchange request submitted successfully!');
@@ -128,7 +128,7 @@ export default function ExchangeBarcodePage() {
       </div>
 
       <form onSubmit={handleExchangeSubmit} className="space-y-6 text-xs font-semibold text-slate-600">
-        
+
         {/* Fetched Material Details */}
         <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4">
           <span className="text-[10px] text-primary font-bold tracking-wider block">Material Details</span>
@@ -172,11 +172,10 @@ export default function ExchangeBarcodePage() {
             <button
               type="button"
               onClick={() => setHasNewBarcode('yes')}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition ${
-                hasNewBarcode === 'yes'
+              className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition ${hasNewBarcode === 'yes'
                   ? 'bg-blue-600 text-white shadow-md'
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-200'
-              }`}
+                }`}
             >
               Yes
             </button>
@@ -186,11 +185,10 @@ export default function ExchangeBarcodePage() {
                 setHasNewBarcode('no');
                 setExchangeNewBarcode('');
               }}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition ${
-                hasNewBarcode === 'no'
+              className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition ${hasNewBarcode === 'no'
                   ? 'bg-blue-600 text-white shadow-md'
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-200'
-              }`}
+                }`}
             >
               No (Store Admin will assign it)
             </button>

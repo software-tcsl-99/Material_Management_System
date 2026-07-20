@@ -1,8 +1,8 @@
-import { AlertCircle, Send, X, Camera } from 'lucide-react';
+import { AlertCircle, Send, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import GeoCamera from '../../components/geo-camera/GeoCamera';
 import Button from '../../components/ui/Button';
 import api from '../../lib/axios';
-import GeoCamera from '../../components/geo-camera/GeoCamera';
 
 const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
   const [employees, setEmployees] = useState([]);
@@ -11,7 +11,7 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
   const [requiresMgmtApproval, setRequiresMgmtApproval] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  
+
   const [barcodeDetail, setBarcodeDetail] = useState(null);
   const [capturedPhoto, setCapturedPhoto] = useState(null);
   const [photoMeta, setPhotoMeta] = useState(null);
@@ -53,7 +53,7 @@ const TransferFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
         targetUserId,
         remarks: remarks.trim() + (requiresMgmtApproval ? ' [Requires Mgmt Approval]' : ''),
         requiresMgmtApproval,
-        gps: photoMeta ? { lat: photoMeta.lat, lng: photoMeta.lng, address: photoMeta.address } : { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' },
+        gps: photoMeta ? { lat: photoMeta.lat, lng: photoMeta.lng, address: photoMeta.address } : { lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' },
         photos: [{ url: capturedPhoto, capturedAt: new Date().toISOString() }]
       });
       alert(res.data.message || 'Transfer request submitted successfully.');

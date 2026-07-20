@@ -486,7 +486,7 @@ export default function BarcodeViewAll() {
                   All Uploaded Photos
                 </h3>
                 {allPhotos.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic py-10 text-center">No photos uploaded for this barcode.</p>
+                  <p className="text-xs text-slate-400 py-10 text-center">No photos uploaded for this barcode.</p>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {allPhotos.map((p, idx) => (
@@ -519,7 +519,7 @@ export default function BarcodeViewAll() {
                                 </>
                               );
                             } else {
-                              return <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>;
+                              return <p className="text-[10px] text-slate-400">No GPS coordinates recorded</p>;
                             }
                           })()}
                           <span className="text-[9px] text-slate-405 font-bold font-mono mt-1.5 flex items-center gap-1">
@@ -540,7 +540,7 @@ export default function BarcodeViewAll() {
                   All History Remarks
                 </h3>
                 {remarksList.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic py-10 text-center">No remarks recorded for this barcode.</p>
+                  <p className="text-xs text-slate-400 py-10 text-center">No remarks recorded for this barcode.</p>
                 ) : (
                   <div className="space-y-4">
                     {remarksList.slice().reverse().map((log, idx) => (
@@ -560,7 +560,7 @@ export default function BarcodeViewAll() {
                           </span>
                         </div>
                         <div className="p-3 bg-white dark:bg-slate-900 border border-slate-150/60 dark:border-slate-800/80 rounded-xl">
-                          <p className="text-xs text-slate-655 dark:text-slate-300 italic font-semibold leading-relaxed">
+                          <p className="text-xs text-slate-655 dark:text-slate-300 font-semibold leading-relaxed">
                             "{log.remarks}"
                           </p>
                         </div>
@@ -577,7 +577,7 @@ export default function BarcodeViewAll() {
                   All Uploaded Attachments
                 </h3>
                 {allAttachments.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic py-10 text-center">No documents uploaded for this barcode.</p>
+                  <p className="text-xs text-slate-400 py-10 text-center">No documents uploaded for this barcode.</p>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {allAttachments.map((doc, idx) => (

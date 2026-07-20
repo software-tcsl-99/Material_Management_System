@@ -264,7 +264,7 @@ const ReportsPage = () => {
         {
           header: 'Reason',
           cell: (row) => (
-            <span className="text-xs italic text-slate-600 dark:text-slate-400 truncate max-w-[150px] block" title={row.reason}>
+            <span className="text-xs text-slate-600 dark:text-slate-400 truncate max-w-[150px] block" title={row.reason}>
               {row.reason || 'N/A'}
             </span>
           ),

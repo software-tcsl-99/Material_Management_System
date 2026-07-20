@@ -400,7 +400,7 @@ export default function BarcodeDetail() {
     try {
       await api.post('/barcodes/accept-split-material', {
         barcode: barcode,
-        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' },
+        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' },
         photos: [{ url: acceptPhoto, capturedAt: new Date().toISOString() }]
       });
       alert('Material accepted successfully!');
@@ -490,30 +490,40 @@ export default function BarcodeDetail() {
               !exchanges.some(e => e.status === 'pending')
             ) && (
               <>
-                <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-purple-50 hover:!bg-purple-100 !text-purple-700 !border-purple-250 hover:!border-purple-300 dark:!bg-purple-950/20 dark:!text-purple-300 dark:!border-purple-800/40 dark:hover:!bg-purple-950/30" onClick={() => navigate(`/barcodes/${barcode}/split`)}>
-                  Split Serial
-                </Button>
-                {bc.status?.toUpperCase() !== 'EXCHANGED' && (
-                  <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-rose-50 hover:!bg-rose-100 !text-rose-700 !border-rose-250 hover:!border-rose-300 dark:!bg-rose-950/20 dark:!text-rose-300 dark:!border-rose-800/40 dark:hover:!bg-rose-950/30" onClick={() => navigate(`/barcodes/${barcode}/return`)}>
-                    Return Request
-                  </Button>
+                {bc?.history?.some(h => h.action === 'Exchange Child Created') ? (
+                  bc.status?.toUpperCase() !== 'EXCHANGED' && (
+                    <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-rose-50 hover:!bg-rose-100 !text-rose-700 !border-rose-250 hover:!border-rose-300 dark:!bg-rose-955/20 dark:!text-rose-300 dark:!border-rose-800/40 dark:hover:!bg-rose-955/30" onClick={() => navigate(`/barcodes/${barcode}/return`)}>
+                      Return Request
+                    </Button>
+                  )
+                ) : (
+                  <>
+                    <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-purple-50 hover:!bg-purple-100 !text-purple-700 !border-purple-250 hover:!border-purple-300 dark:!bg-purple-950/20 dark:!text-purple-300 dark:!border-purple-800/40 dark:hover:!bg-purple-950/30" onClick={() => navigate(`/barcodes/${barcode}/split`)}>
+                      Split Serial
+                    </Button>
+                    {bc.status?.toUpperCase() !== 'EXCHANGED' && (
+                      <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-rose-50 hover:!bg-rose-100 !text-rose-700 !border-rose-250 hover:!border-rose-300 dark:!bg-rose-950/20 dark:!text-rose-300 dark:!border-rose-800/40 dark:hover:!bg-rose-955/30" onClick={() => navigate(`/barcodes/${barcode}/return`)}>
+                        Return Request
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-amber-50 hover:!bg-amber-100 !text-amber-700 !border-amber-250 hover:!border-amber-300 dark:!bg-amber-955/20 dark:!text-amber-300 dark:!border-amber-800/40 dark:hover:!bg-amber-955/30" onClick={() => {
+                      navigate(`/barcodes/${barcode}/convert?defaultType=DC`);
+                    }}>
+                      Convert to DC
+                    </Button>
+                    <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-emerald-50 hover:!bg-emerald-100 !text-emerald-700 !border-emerald-250 hover:!border-emerald-300 dark:!bg-emerald-955/20 dark:!text-emerald-300 dark:!border-emerald-800/40 dark:hover:!bg-emerald-955/30" onClick={() => {
+                      navigate(`/barcodes/${barcode}/convert?defaultType=Invoice`);
+                    }}>
+                      Convert to Invoice
+                    </Button>
+                    <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-indigo-50 hover:!bg-indigo-100 !text-indigo-700 !border-indigo-250 hover:!border-indigo-300 dark:!bg-indigo-950/20 dark:!text-indigo-300 dark:!border-indigo-800/40 dark:hover:!bg-indigo-950/30" onClick={() => navigate(`/barcodes/${barcode}/exchange`)}>
+                      Exchange Barcode
+                    </Button>
+                    <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-cyan-50 hover:!bg-cyan-100 !text-cyan-700 !border-cyan-250 hover:!border-cyan-300 dark:!bg-cyan-950/20 dark:!text-cyan-300 dark:!border-cyan-800/40 dark:hover:!bg-cyan-950/30" onClick={() => navigate(`/barcodes/${barcode}/transfer`)}>
+                      Transfer Barcode
+                    </Button>
+                  </>
                 )}
-                <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-amber-50 hover:!bg-amber-100 !text-amber-700 !border-amber-250 hover:!border-amber-300 dark:!bg-amber-950/20 dark:!text-amber-300 dark:!border-amber-800/40 dark:hover:!bg-amber-955/30" onClick={() => {
-                  navigate(`/barcodes/${barcode}/convert?defaultType=DC`);
-                }}>
-                  Convert to DC
-                </Button>
-                <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-emerald-50 hover:!bg-emerald-100 !text-emerald-700 !border-emerald-250 hover:!border-emerald-300 dark:!bg-emerald-955/20 dark:!text-emerald-300 dark:!border-emerald-800/40 dark:hover:!bg-emerald-955/30" onClick={() => {
-                  navigate(`/barcodes/${barcode}/convert?defaultType=Invoice`);
-                }}>
-                  Convert to Invoice
-                </Button>
-                <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-indigo-50 hover:!bg-indigo-100 !text-indigo-700 !border-indigo-250 hover:!border-indigo-300 dark:!bg-indigo-950/20 dark:!text-indigo-300 dark:!border-indigo-800/40 dark:hover:!bg-indigo-950/30" onClick={() => navigate(`/barcodes/${barcode}/exchange`)}>
-                  Exchange Barcode
-                </Button>
-                <Button size="sm" variant="outline" className="w-full sm:w-auto !bg-cyan-50 hover:!bg-cyan-100 !text-cyan-700 !border-cyan-250 hover:!border-cyan-300 dark:!bg-cyan-950/20 dark:!text-cyan-300 dark:!border-cyan-800/40 dark:hover:!bg-cyan-950/30" onClick={() => navigate(`/barcodes/${barcode}/transfer`)}>
-                  Transfer Barcode
-                </Button>
               </>
             )}
           {bc && (
@@ -641,7 +651,7 @@ export default function BarcodeDetail() {
                   </div>
                   <div className="flex flex-col gap-4">
                     {!recentPhoto ? (
-                      <p className="text-xs text-slate-405 italic mt-1">No photos uploaded</p>
+                      <p className="text-xs text-slate-405 mt-1">No photos uploaded</p>
                     ) : (
                       (
                         <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-950/20 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
@@ -672,7 +682,7 @@ export default function BarcodeDetail() {
                                   </>
                                 );
                               } else {
-                                return <p className="text-[10px] text-slate-400 italic">No GPS coordinates recorded</p>;
+                                return <p className="text-[10px] text-slate-400">No GPS coordinates recorded</p>;
                               }
                             })()}
                           </div>
@@ -721,7 +731,7 @@ export default function BarcodeDetail() {
                     </span>
                   </div>
                   {allAttachments.length === 0 ? (
-                    <p className="text-xs text-slate-405 italic mt-1">No documents</p>
+                    <p className="text-xs text-slate-405 mt-1">No documents</p>
                   ) : (
                     (
                       <div className="flex flex-col gap-1 mt-1">
@@ -1028,7 +1038,7 @@ export default function BarcodeDetail() {
                                 {statusLabel}
                               </span>
                             </div>
-                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium italic mt-0.5">
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
                               By: {byLabel} {log.remarks ? `— ${log.remarks}` : ''}
                             </p>
                           </div>
@@ -1076,7 +1086,7 @@ export default function BarcodeDetail() {
                     {/* Header: Action Name, User, and Date */}
                     <div className="flex justify-between items-start gap-4">
                       <div>
-                        <span className="inline-block text-[10px] font-extrabold bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-2 py-0.5 rounded uppercase tracking-wider font-mono">
+                        <span className="inline-block text-[10px] font-extrabold bg-blue-50 text-blue-600 dark:bg-blue-950/30 px-2 py-0.5 rounded tracking-wider font-mono">
                           {log.action}
                         </span>
                         <p className="text-[11px] text-slate-500 font-semibold mt-1">
@@ -1091,7 +1101,7 @@ export default function BarcodeDetail() {
                     {/* Remarks Body */}
                     {log.remarks && (
                       <div className="p-3 bg-white dark:bg-slate-900 border border-slate-150/60 dark:border-slate-800/80 rounded-xl">
-                        <p className="text-xs text-slate-655 dark:text-slate-350 italic font-semibold leading-relaxed">
+                        <p className="text-xs text-slate-655 dark:text-slate-350 font-semibold leading-relaxed">
                           "{log.remarks}"
                         </p>
                       </div>
@@ -1104,7 +1114,7 @@ export default function BarcodeDetail() {
                           <img src={associatedPhoto.url} alt="Process Upload" className="w-full h-full object-cover" />
                         </div>
                         <div className="flex flex-col gap-0.5 text-[10px] text-slate-500">
-                          <span className="font-extrabold text-slate-400 text-[9px] uppercase tracking-wider">Process GPS Coordinates</span>
+                          <span className="font-extrabold text-slate-400 text-[9px] tracking-wider">Process GPS Coordinates</span>
                           {associatedPhoto.lat && associatedPhoto.lng ? (
                             <>
                               <p className="font-mono font-bold text-slate-700 dark:text-slate-200">
@@ -1115,7 +1125,7 @@ export default function BarcodeDetail() {
                               </p>
                             </>
                           ) : (
-                            <p className="italic text-slate-400">No location coordinates uploaded.</p>
+                            <p className="text-slate-400">No location coordinates uploaded.</p>
                           )}
                         </div>
                       </div>
@@ -1125,7 +1135,7 @@ export default function BarcodeDetail() {
               })}
 
               {timelineHistory.length === 0 && (
-                <p className="text-xs text-slate-400 italic text-center py-8">No process history logs recorded for this barcode.</p>
+                <p className="text-xs text-slate-400 text-center py-8">No process history logs recorded for this barcode.</p>
               )}
             </div>
 

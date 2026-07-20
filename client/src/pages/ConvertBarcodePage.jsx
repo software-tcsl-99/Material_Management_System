@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Camera, Paperclip, FileText } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { ArrowLeft, Camera, FileText, Paperclip } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import GeoCamera from '../components/geo-camera/GeoCamera';
 import Button from '../components/ui/Button';
@@ -113,7 +113,7 @@ export default function ConvertBarcodePage() {
         managementApprover: ['DC FOC', 'Invoice'].includes(docType) ? selectedManagementId : undefined,
         customerName: docType === 'DC FOC' ? selectedCustomerName : undefined,
         photos: closePhotos,
-        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' },
+        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' },
         documents: uploadedAttachments
       });
 
@@ -253,7 +253,7 @@ export default function ConvertBarcodePage() {
           <h1 className="text-lg font-extrabold text-slate-800 dark:text-white">
             {isInvoiceMode ? 'Convert Barcode to Invoice' : 'Convert DC Challan Type'}
           </h1>
-          <p className="text-[10px] text-slate-400 font-bold tracking-wider font-mono uppercase mt-0.5">
+          <p className="text-[10px] text-slate-400 font-bold tracking-wider font-bold mt-0.5">
             Barcode conversion loop • {barcode}
           </p>
         </div>
@@ -295,7 +295,7 @@ export default function ConvertBarcodePage() {
 
               <div className="bg-slate-50 dark:bg-slate-950/20 p-4 rounded-2xl border border-slate-100 dark:border-slate-850">
                 <span className="text-[10px] text-slate-400 font-extrabold block">Total Valuation</span>
-                <span className="text-sm font-black text-blue-600 dark:text-blue-400">
+                <span className="text-sm font-bold text-blue-600 dark:text-blue-400">
                   ₹{(material?.quantity || 1) * (material?.price || 0)}
                 </span>
               </div>
@@ -324,7 +324,7 @@ export default function ConvertBarcodePage() {
           {/* Right Column: Premium Invoice form */}
           <div className="lg:col-span-7 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
             <form onSubmit={handleSubmit} className="space-y-6 text-xs font-semibold text-slate-600">
-              
+
               <div className="space-y-2">
                 <label className="block text-[10px] font-bold text-slate-500 tracking-wider">Target Document Type</label>
                 <input
@@ -377,7 +377,7 @@ export default function ConvertBarcodePage() {
         /* ================= DC CONVERSION MODE: DROPDOWN CHANNELS ================= */
         <div className="max-w-2xl mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
           <form onSubmit={handleSubmit} className="space-y-6 text-xs font-semibold text-slate-600">
-            
+
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-500 tracking-wider">Target Document Type *</label>
               <select

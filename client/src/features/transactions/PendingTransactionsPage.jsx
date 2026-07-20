@@ -13,6 +13,7 @@ import Button from '../../components/ui/Button';
 import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
 import useActiveRole from '../../hooks/useActiveRole';
 import api from '../../lib/axios';
+import { fetchDynamicLocation } from '../../lib/location';
 import useAuthStore from '../../store/authStore';
 
 const PendingTransactionsPage = () => {
@@ -30,7 +31,7 @@ const PendingTransactionsPage = () => {
       minute: '2-digit'
     });
     return (
-      <span className="text-[10px] text-slate-405 dark:text-slate-500 font-semibold italic flex items-center gap-1">
+      <span className="text-[10px] text-slate-405 dark:text-slate-500 font-semibold flex items-center gap-1">
         <Clock className="w-3 h-3 text-slate-400 shrink-0" />
         Created: {dateStr}
       </span>
@@ -147,7 +148,7 @@ const PendingTransactionsPage = () => {
   const [receiveCondition, setReceiveCondition] = useState('Good');
   const [receiveRemarks, setReceiveRemarks] = useState('');
   const [receivePhoto, setReceivePhoto] = useState('');
-  const [receiveCoords, setReceiveCoords] = useState({ lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' });
+  const [receiveCoords, setReceiveCoords] = useState({ lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' });
   const [capturingPhoto, setCapturingPhoto] = useState(false);
   const [receivingSubmitting, setReceivingSubmitting] = useState(false);
 
@@ -752,7 +753,7 @@ const PendingTransactionsPage = () => {
             transferId,
             action,
             reason: reasonText,
-            gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
+            gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' }
           };
           await api.post('/barcodes/handle-transfer', payload);
           alert(`Transfer request rejected successfully.`);
@@ -776,7 +777,7 @@ const PendingTransactionsPage = () => {
         transferId,
         action,
         reason: reason.trim(),
-        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
+        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' }
       };
       await api.post('/barcodes/handle-transfer', payload);
       alert(`Transfer request rejected successfully.`);
@@ -1220,11 +1221,7 @@ const PendingTransactionsPage = () => {
   };
 
   const handleRequesterAcceptReceipt = (txnId) => {
-    setReceiveCondition('Good');
-    setReceiveRemarks('');
-    setReceivePhoto('');
-    setReceiveCoords({ lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' });
-    setReceiveModal(true);
+    navigate(`/transactions/${txnId}/receive`);
   };
 
   const handlePhotoUpload = async (e) => {
@@ -1243,21 +1240,23 @@ const PendingTransactionsPage = () => {
       setReceivePhoto(data.url);
 
       if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition((position) => {
-          const lat = position.coords.latitude.toFixed(4);
-          const lng = position.coords.longitude.toFixed(4);
+        navigator.geolocation.getCurrentPosition(async (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const loc = await fetchDynamicLocation(lat, lng);
           setReceiveCoords({
-            lat,
-            lng,
-            address: `Received Dock Area, Pune Plant (${lat}° N, ${lng}° E)`
+            lat: loc.lat,
+            lng: loc.lng,
+            address: loc.address
           });
-        }, () => {
+        }, async () => {
           const lat = 18.5204;
           const lng = 73.8567;
+          const loc = await fetchDynamicLocation(lat, lng);
           setReceiveCoords({
-            lat,
-            lng,
-            address: `Received Dock Area, Pune Plant (Coordinates: ${lat}, ${lng})`
+            lat: loc.lat,
+            lng: loc.lng,
+            address: loc.address
           });
         });
       }
@@ -1417,7 +1416,7 @@ const PendingTransactionsPage = () => {
           <select
             value={filterRequestType}
             onChange={(e) => setFilterRequestType(e.target.value)}
-            className="w-full sm:w-44 px-3 py-2 text-xs bg-white border border-slate-200 dark:bg-slate-955 dark:border-slate-800 rounded-lg focus:outline-none focus:border-blue-500 text-slate-700 dark:text-slate-200 font-extrabold"
+            className="w-full sm:w-44 px-3 py-2 text-xs bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-lg focus:outline-none focus:border-blue-500 text-slate-700 dark:text-slate-100 font-bold"
           >
             <option value="all">All Request Types</option>
             <option value="material">Material Requests</option>
@@ -1869,7 +1868,7 @@ const PendingTransactionsPage = () => {
 
                   <div>
                     <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Reason for Return</h4>
-                    <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-350 font-bold italic">
+                    <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-350 font-bold">
                       "{selectedItem.reason || 'No reason provided.'}"
                     </div>
                   </div>
@@ -1888,11 +1887,11 @@ const PendingTransactionsPage = () => {
                       <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Captured Photo</h4>
                       <div className="flex gap-2 flex-wrap mt-1">
                         {selectedItem.photos.map((ph, index) => (
-                          <img 
-                            key={index} 
-                            src={getImageUrl(ph.url)} 
-                            alt="Return Capture" 
-                            className="w-20 h-20 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition" 
+                          <img
+                            key={index}
+                            src={getImageUrl(ph.url)}
+                            alt="Return Capture"
+                            className="w-20 h-20 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition"
                             onClick={() => setPreviewImage(getImageUrl(ph.url))}
                           />
                         ))}
@@ -2015,7 +2014,7 @@ const PendingTransactionsPage = () => {
 
                   <div>
                     <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Reason for Split</h4>
-                    <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-355 font-bold italic">
+                    <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-355 font-bold">
                       "{selectedItem.reason}"
                     </div>
                   </div>
@@ -2231,7 +2230,7 @@ const PendingTransactionsPage = () => {
                     {selectedItem.remarks && (
                       <div>
                         <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Remarks / Reason</h4>
-                        <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-355 font-bold italic">
+                        <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-950 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-355 font-bold">
                           "{selectedItem.remarks}"
                         </div>
                       </div>
@@ -2277,7 +2276,7 @@ const PendingTransactionsPage = () => {
                         </Button>
                       </div>
                     ) : (
-                      <p className="text-xs text-slate-400 italic text-center mt-auto pt-5 border-t">
+                      <p className="text-xs text-slate-400 text-center mt-auto pt-5 border-t">
                         {getHelperText()}
                       </p>
                     )}
@@ -2308,7 +2307,7 @@ const PendingTransactionsPage = () => {
                         </div>
                         <div>
                           <span className="text-[9px] text-slate-400 font-bold block mb-0.5">NEW BARCODE</span>
-                          <span className="font-bold text-emerald-600 dark:text-emerald-400 italic">{selectedItem.newBarcode || 'Pending Assignment'}</span>
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">{selectedItem.newBarcode || 'Pending Assignment'}</span>
                         </div>
                       </div>
 
@@ -2329,7 +2328,7 @@ const PendingTransactionsPage = () => {
 
                       <div>
                         <h4 className="text-[10px] text-slate-400 font-extrabold mb-1.5">Warranty Form / Failure Reason</h4>
-                        <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-955 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-350 font-bold italic font-sans">
+                        <div className="p-3.5 bg-slate-50/50 border border-slate-100 dark:bg-slate-955 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-350 font-bold font-sans">
                           "{selectedItem.warrantyReason}"
                         </div>
                       </div>
@@ -2341,7 +2340,7 @@ const PendingTransactionsPage = () => {
                         </div>
                       ) : selectedBarcodeData ? (
                         <div className="bg-indigo-50/30 dark:bg-indigo-950/10 p-4 rounded-xl border border-indigo-100 dark:border-indigo-900/40 space-y-2">
-                          <h4 className="text-[10px] text-indigo-600 dark:text-indigo-400 font-extrabold uppercase tracking-wider">Fetched Material Details</h4>
+                          <h4 className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold tracking-wider">Fetched Material Details</h4>
                           <div className="grid grid-cols-2 gap-3 text-[11px]">
                             <div>
                               <span className="text-[9px] text-slate-400 font-bold block">Material Name</span>
@@ -2417,7 +2416,7 @@ const PendingTransactionsPage = () => {
                           </Button>
                         </div>
                       ) : (
-                        <p className="text-xs text-slate-400 italic text-center mt-auto pt-5 border-t">
+                        <p className="text-xs text-slate-400 text-center mt-auto pt-5 border-t">
                           Only Store Admin can process barcode exchange requests.
                         </p>
                       )}
@@ -2526,10 +2525,10 @@ const PendingTransactionsPage = () => {
                               <div className="bg-slate-50 dark:bg-slate-955 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
                                 <label className="block text-xs font-bold text-slate-500 tracking-wider">Transfer Verification Photo *</label>
                                 <div className="flex items-center gap-3">
-                                  <img 
-                                    src={getImageUrl(transferPhoto)} 
-                                    alt="Verification" 
-                                    className="w-16 h-16 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition" 
+                                  <img
+                                    src={getImageUrl(transferPhoto)}
+                                    alt="Verification"
+                                    className="w-16 h-16 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition"
                                     onClick={() => setPreviewImage(getImageUrl(transferPhoto))}
                                   />
                                   <div className="flex flex-col gap-1.5">
@@ -2626,7 +2625,7 @@ const PendingTransactionsPage = () => {
                       {selectedItem.remarks && (
                         <div className="p-4 bg-slate-50 dark:bg-slate-950/40 border border-slate-150 dark:border-slate-800 rounded-xl space-y-1.5 text-xs">
                           <span className="text-[10px] text-slate-400 font-extrabold tracking-wider block mb-0.5">Store Dispatch Remarks / Purpose</span>
-                          <p className="font-semibold text-slate-700 dark:text-slate-350 italic">
+                          <p className="font-semibold text-slate-700 dark:text-slate-350">
                             "{selectedItem.remarks}"
                           </p>
                         </div>
@@ -3108,7 +3107,7 @@ const PendingTransactionsPage = () => {
               {selectedItem?.remarks && (
                 <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800/80 rounded-xl space-y-1">
                   <span className="block text-[9px] text-slate-400 font-bold tracking-wider">Store Dispatch Remarks / Purpose</span>
-                  <p className="text-xs text-slate-700 dark:text-slate-350 font-medium italic font-semibold">"{selectedItem.remarks}"</p>
+                  <p className="text-xs text-slate-700 dark:text-slate-350 font-medium font-semibold">"{selectedItem.remarks}"</p>
                 </div>
               )}
               <div>
@@ -3140,10 +3139,10 @@ const PendingTransactionsPage = () => {
                 <label className="block text-slate-500 font-bold tracking-wider mb-1.5">Geo-Tagged Receipt Photo *</label>
                 {receivePhoto ? (
                   <div className="relative border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50 h-36">
-                    <img 
-                      src={getImageUrl(receivePhoto)} 
-                      alt="Challan check" 
-                      className="w-full h-full object-cover cursor-pointer hover:opacity-85 transition" 
+                    <img
+                      src={getImageUrl(receivePhoto)}
+                      alt="Challan check"
+                      className="w-full h-full object-cover cursor-pointer hover:opacity-85 transition"
                       onClick={() => setPreviewImage(getImageUrl(receivePhoto))}
                     />
                     <div className="absolute bottom-0 left-0 right-0 bg-slate-950/80 p-2 text-[9px] text-white flex flex-col leading-tight">
@@ -3212,20 +3211,20 @@ const PendingTransactionsPage = () => {
 
       {/* Image Preview Modal */}
       {previewImage && (
-        <div 
+        <div
           className="fixed inset-0 z-55 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in cursor-pointer"
           onClick={() => setPreviewImage(null)}
         >
           <div className="relative max-w-3xl max-h-[90vh] p-2 bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
-            <button 
+            <button
               className="absolute top-3 right-3 p-1.5 bg-black/60 hover:bg-black/85 text-white rounded-full transition-colors cursor-pointer z-10"
               onClick={() => setPreviewImage(null)}
             >
               <X className="w-4 h-4" />
             </button>
-            <img 
-              src={previewImage} 
-              alt="Preview" 
+            <img
+              src={previewImage}
+              alt="Preview"
               className="max-w-full max-h-[80vh] object-contain rounded-lg"
             />
           </div>

@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Camera, Send, FileText } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import GeoCamera from '../components/geo-camera/GeoCamera';
@@ -46,8 +46,8 @@ export default function TransferMaterial() {
   const toDeptId = (selectedRecipient?.department?._id || selectedRecipient?.department || '').toString();
   const isCrossDept = !!toUserId && !!fromDeptId && !!toDeptId && fromDeptId !== toDeptId;
 
-  const managementUsers = employees?.filter(e => 
-    e.role === 'department_admin' && 
+  const managementUsers = employees?.filter(e =>
+    e.role === 'department_admin' &&
     e.departmentAdminType === 'management'
   ) || [];
 
@@ -152,7 +152,7 @@ export default function TransferMaterial() {
         </button>
         <div>
           <h1 className="text-lg font-extrabold text-slate-800 dark:text-white">Transfer Material</h1>
-          <p className="text-[10px] text-slate-400 font-bold tracking-wider font-mono uppercase mt-0.5 animate-pulse">
+          <p className="text-[10px] text-slate-400 font-bold tracking-wider font-mono mt-0.5 animate-pulse">
             Barcode Transfer Flow • {barcode} {material?.name || bcData?.materialName ? `| Material: ${material?.name || bcData?.materialName} (Qty: ${material?.quantity || 1} ${material?.unit || 'pcs'} - Owner: ${bcData?.owner?.fullName || 'N/A'})` : ''}
           </p>
         </div>
@@ -162,7 +162,7 @@ export default function TransferMaterial() {
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
         <form onSubmit={handleSubmit} className="space-y-6 text-xs font-semibold text-slate-600">
           <div>
-            <label className="block text-[10px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">Recipient Employee *</label>
+            <label className="block text-[10px] font-bold text-slate-500 mb-1.5 tracking-wider">Recipient Employee *</label>
             <select
               value={toUserId}
               onChange={(e) => setToUserId(e.target.value)}
@@ -178,7 +178,7 @@ export default function TransferMaterial() {
 
           {isCrossDept && (
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">Management Approver *</label>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1.5 tracking-wider">Management Approver *</label>
               <select
                 value={managementApprover}
                 onChange={(e) => setManagementApprover(e.target.value)}
@@ -196,7 +196,7 @@ export default function TransferMaterial() {
 
 
           <div>
-            <label className="block text-[10px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">Remarks / Reason *</label>
+            <label className="block text-[10px] font-bold text-slate-500 mb-1.5 tracking-wider">Remarks / Reason *</label>
             <textarea
               value={remarks}
               onChange={(e) => setRemarks(e.target.value)}

@@ -1,4 +1,4 @@
-import { ArrowLeftRight, ArrowRight, Eye, Layers } from 'lucide-react';
+import { ArrowLeftRight, ArrowRight, Layers } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Badge from '../../components/ui/Badge';
@@ -68,7 +68,7 @@ const TransferListPage = () => {
         </div>
       ) : Object.keys(groupedTransfers).length === 0 ? (
         <Card>
-          <div className="text-center py-12 text-slate-400 italic text-sm">
+          <div className="text-center py-12 text-slate-400 text-sm">
             No transfer records found.
           </div>
         </Card>
@@ -146,7 +146,7 @@ const TransferListPage = () => {
                           })}
                         </td>
                         <td className="px-5 py-3.5">
-                          <span className="text-slate-550 dark:text-slate-300 italic block truncate max-w-xs">{row.remarks || '-'}</span>
+                          <span className="text-slate-550 dark:text-slate-300 block truncate max-w-xs">{row.remarks || '-'}</span>
                         </td>
                       </tr>
                     ))}

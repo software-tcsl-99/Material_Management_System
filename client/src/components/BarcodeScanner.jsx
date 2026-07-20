@@ -1,18 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
-import { Camera, X, RefreshCw } from 'lucide-react';
+import { BarcodeFormat, DecodeHintType } from '@zxing/library';
+import { Camera, RefreshCw, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 export default function BarcodeScanner({ onScan, onClose }) {
   const [error, setError] = useState('');
-  const [manualCode, setManualCode] = useState('');
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState('');
   const videoRef = useRef(null);
   const codeReaderRef = useRef(null);
+  const controlsRef = useRef(null);
 
   useEffect(() => {
-    // Initialize Reader
-    const reader = new BrowserMultiFormatReader();
+    // Initialize Reader with optimal format hints
+    const hints = new Map();
+    hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+      BarcodeFormat.CODE_128,
+      BarcodeFormat.CODE_39,
+      BarcodeFormat.CODE_93,
+      BarcodeFormat.EAN_13,
+      BarcodeFormat.EAN_8,
+      BarcodeFormat.ITF,
+    ]);
+
+    const reader = new BrowserMultiFormatReader(hints);
     codeReaderRef.current = reader;
 
     // Get Cameras
@@ -45,11 +56,22 @@ export default function BarcodeScanner({ onScan, onClose }) {
     try {
       if (!codeReaderRef.current) return;
       setError('');
-      // Reset reader
-      codeReaderRef.current.reset();
-      
-      await codeReaderRef.current.decodeFromVideoDevice(
-        selectedDevice,
+      if (controlsRef.current) {
+        controlsRef.current.stop();
+        controlsRef.current = null;
+      }
+
+      const constraints = {
+        video: {
+          deviceId: selectedDevice ? { exact: selectedDevice } : undefined,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          facingMode: 'environment'
+        }
+      };
+
+      const controls = await codeReaderRef.current.decodeFromConstraints(
+        constraints,
         videoRef.current,
         (result, err) => {
           if (result) {
@@ -62,6 +84,7 @@ export default function BarcodeScanner({ onScan, onClose }) {
           }
         }
       );
+      controlsRef.current = controls;
     } catch (err) {
       console.error('Start scan error:', err);
       setError('Could not start scanner on this camera. Try another or enter manually.');
@@ -69,16 +92,9 @@ export default function BarcodeScanner({ onScan, onClose }) {
   };
 
   const stopScanning = () => {
-    if (codeReaderRef.current) {
-      codeReaderRef.current.reset();
-    }
-  };
-
-  const handleManualSubmit = (e) => {
-    e.preventDefault();
-    if (manualCode.trim()) {
-      onScan(manualCode.trim());
-      onClose();
+    if (controlsRef.current) {
+      controlsRef.current.stop();
+      controlsRef.current = null;
     }
   };
 
@@ -97,18 +113,34 @@ export default function BarcodeScanner({ onScan, onClose }) {
         </div>
 
         {/* Video Preview */}
-        <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+        <div className="relative w-[300px] h-[300px] bg-black rounded-2xl overflow-hidden shadow-inner flex items-center justify-center mx-auto my-4 border border-slate-100 dark:border-slate-800">
           {error ? (
             <div className="p-4 text-center text-slate-400 text-sm">
               {error}
             </div>
           ) : (
-            <video ref={videoRef} className="w-full h-full object-cover" />
-          )}
-          
-          {/* Laser Guide overlay */}
-          {!error && (
-            <div className="absolute inset-x-8 top-1/2 h-0.5 bg-red-500 shadow-[0_0_8px_#ef4444] animate-pulse pointer-events-none" />
+            <>
+              <video
+                ref={videoRef}
+                className="w-full h-full object-cover"
+                autoPlay
+                playsInline
+                muted
+              />
+              {/* Corner highlights for the 300x300 scan box */}
+              <div className="absolute inset-4 pointer-events-none flex flex-col justify-between">
+                <div className="flex justify-between w-full">
+                  <div className="w-5 h-5 border-t-4 border-l-4 border-blue-500 rounded-tl-md" />
+                  <div className="w-5 h-5 border-t-4 border-r-4 border-blue-500 rounded-tr-md" />
+                </div>
+                {/* Laser line overlay inside the box */}
+                <div className="w-full h-0.5 bg-red-500 shadow-[0_0_8px_#ef4444] animate-pulse" />
+                <div className="flex justify-between w-full">
+                  <div className="w-5 h-5 border-b-4 border-l-4 border-blue-500 rounded-bl-md" />
+                  <div className="w-5 h-5 border-b-4 border-r-4 border-blue-500 rounded-br-md" />
+                </div>
+              </div>
+            </>
           )}
         </div>
 
@@ -130,29 +162,6 @@ export default function BarcodeScanner({ onScan, onClose }) {
               </select>
             </div>
           )}
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center" aria-hidden="true">
-              <div className="w-full border-t border-slate-200" />
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="bg-white px-2 text-slate-400">OR ENTER MANUALLY</span>
-            </div>
-          </div>
-
-          <form onSubmit={handleManualSubmit} className="flex gap-2">
-            <input
-              type="text"
-              placeholder="e.g. PC120001, EN120031"
-              value={manualCode}
-              onChange={(e) => setManualCode(e.target.value)}
-              className="flex-1 px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-primary text-sm"
-              autoFocus
-            />
-            <button type="submit" className="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-xl text-sm font-semibold transition">
-              Apply
-            </button>
-          </form>
         </div>
       </div>
     </div>

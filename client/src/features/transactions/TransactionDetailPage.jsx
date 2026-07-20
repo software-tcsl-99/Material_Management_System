@@ -29,6 +29,7 @@ import Card from '../../components/ui/Card';
 import Spinner from '../../components/ui/Spinner';
 import useActiveRole from '../../hooks/useActiveRole';
 import api from '../../lib/axios';
+import { fetchDynamicLocation } from '../../lib/location';
 import useAuthStore from '../../store/authStore';
 
 // Import sub modals
@@ -100,7 +101,7 @@ const TransactionDetailPage = () => {
   const [receiveCondition, setReceiveCondition] = useState('Good');
   const [receiveRemarks, setReceiveRemarks] = useState('');
   const [receivePhoto, setReceivePhoto] = useState('');
-  const [receiveCoords, setReceiveCoords] = useState({ lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' });
+  const [receiveCoords, setReceiveCoords] = useState({ lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' });
   const [capturingPhoto, setCapturingPhoto] = useState(false);
   const [receivingSubmitting, setReceivingSubmitting] = useState(false);
 
@@ -571,21 +572,23 @@ const TransactionDetailPage = () => {
       setReceivePhoto(data.url);
 
       if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition((position) => {
-          const lat = position.coords.latitude.toFixed(4);
-          const lng = position.coords.longitude.toFixed(4);
+        navigator.geolocation.getCurrentPosition(async (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const loc = await fetchDynamicLocation(lat, lng);
           setReceiveCoords({
-            lat,
-            lng,
-            address: `Received Dock Area, Pune Plant (${lat}° N, ${lng}° E)`
+            lat: loc.lat,
+            lng: loc.lng,
+            address: loc.address
           });
-        }, () => {
+        }, async () => {
           const lat = 18.5204;
           const lng = 73.8567;
+          const loc = await fetchDynamicLocation(lat, lng);
           setReceiveCoords({
-            lat,
-            lng,
-            address: `Received Dock Area, Pune Plant (Coordinates: ${lat}, ${lng})`
+            lat: loc.lat,
+            lng: loc.lng,
+            address: loc.address
           });
         });
       }
@@ -1844,7 +1847,7 @@ const TransactionDetailPage = () => {
                   <p className="font-bold text-slate-800 dark:text-slate-200 text-xs truncate">
                     {txn.teamLead?.fullName || 'Approving Authority'}
                   </p>
-                  <p className="text-[10px] text-slate-500 font-medium italic">
+                  <p className="text-[10px] text-slate-500 font-medium">
                     {(() => {
                       const tlApp = txn.approvalChain?.find(a => a.role === 'team_lead');
                       if (tlApp?.action === 'rejected') {
@@ -1867,7 +1870,7 @@ const TransactionDetailPage = () => {
                 <p className="font-bold text-slate-800 dark:text-slate-200 text-xs truncate">
                   {txn.managementApprover?.fullName || txn.approvalChain?.find(a => a.role === 'management')?.user?.fullName || 'Not Assigned Yet'}
                 </p>
-                <p className="text-[10px] text-slate-500 font-medium italic">
+                <p className="text-[10px] text-slate-500 font-medium">
                   {(() => {
                     const mgtApp = txn.approvalChain?.find(a => a.role === 'management');
                     if (mgtApp?.action === 'rejected') {
@@ -1889,7 +1892,7 @@ const TransactionDetailPage = () => {
                 <p className="font-bold text-slate-800 dark:text-slate-200 text-xs truncate">
                   {txn.store?.fullName || 'Main Store'}
                 </p>
-                <p className="text-[10px] text-slate-500 font-medium italic">
+                <p className="text-[10px] text-slate-500 font-medium">
                   {getTimelineDate('Store Accepted') ? `Accepted on ${getTimelineDate('Store Accepted')}` : 'Sourcing in Progress'}
                 </p>
               </div>
@@ -1929,7 +1932,7 @@ const TransactionDetailPage = () => {
                 </div>
                 <div className="min-w-0">
                   <span className="text-[10px] text-slate-400 font-extrabold tracking-wider block mb-0.5">Store Dispatch Remarks / Purpose</span>
-                  <p className="font-semibold text-slate-800 dark:text-slate-200 text-xs italic">
+                  <p className="font-semibold text-slate-800 dark:text-slate-200 text-xs">
                     "{txn.remarks}"
                   </p>
                 </div>
@@ -2064,7 +2067,7 @@ const TransactionDetailPage = () => {
                   </div>
 
                   {(!mat.barcodes || mat.barcodes.length === 0) ? (
-                    <p className="text-xs text-slate-400 italic">No barcodes assigned to this material yet (Pending dispatch).</p>
+                    <p className="text-xs text-slate-400">No barcodes assigned to this material yet (Pending dispatch).</p>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                       {mat.barcodes.map((bc, bIdx) => {
@@ -2109,7 +2112,7 @@ const TransactionDetailPage = () => {
                 </div>
               )}
               {(!txn.materials || txn.materials.length === 0) && (
-                <p className="text-sm text-slate-400 italic text-center py-6">No materials listed for this transaction.</p>
+                <p className="text-sm text-slate-400 text-center py-6">No materials listed for this transaction.</p>
               )}
             </div>
           </Card>
@@ -2154,7 +2157,7 @@ const TransactionDetailPage = () => {
                         <h4 className={`text-xs font-bold font-sans mt-0.5 ${isPending ? 'text-slate-400 dark:text-slate-500' : 'text-slate-800 dark:text-slate-200'}`}>
                           {item.action}
                         </h4>
-                        <p className="text-[10px] text-slate-500 font-medium italic mt-0.5">
+                        <p className="text-[10px] text-slate-500 font-medium mt-0.5">
                           By: {item.by} {item.remarks ? `— ${item.remarks}` : ''}
                         </p>
                       </div>
@@ -2589,7 +2592,7 @@ const TransactionDetailPage = () => {
               {txn.remarks && (
                 <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800/80 rounded-xl space-y-1">
                   <span className="block text-[9px] text-slate-400 font-bold tracking-wider">Store Dispatch Remarks / Purpose</span>
-                  <p className="text-xs text-slate-700 dark:text-slate-350 font-medium italic">"{txn.remarks}"</p>
+                  <p className="text-xs text-slate-700 dark:text-slate-350 font-medium">"{txn.remarks}"</p>
                 </div>
               )}
               <div>

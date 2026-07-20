@@ -604,7 +604,7 @@ const DashboardPage = () => {
               })}
               {transactions.length === 0 && (
                 <tr>
-                  <td colSpan="5" className="py-10 text-center text-slate-400 italic">No transactions found.</td>
+                  <td colSpan="5" className="py-10 text-center text-slate-400">No transactions found.</td>
                 </tr>
               )}
             </tbody>

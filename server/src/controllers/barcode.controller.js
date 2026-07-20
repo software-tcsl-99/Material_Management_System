@@ -1806,12 +1806,7 @@ exports.getStoreAvailableBarcodes = async (req, res) => {
         }
 
         const cleanGodown = godownName ? godownName.trim().toLowerCase() : '';
-        const isStoreGodown = !cleanGodown ||
-          cleanGodown.includes('gokul') ||
-          cleanGodown.includes('shirgaon') ||
-          cleanGodown.includes('main') ||
-          cleanGodown.includes('primary') ||
-          cleanGodown.includes('store');
+        const isStoreGodown = cleanGodown.includes('gokul') || cleanGodown.includes('shirgaon');
 
         if (isStoreGodown && batchName && batchName.trim() && batchName.trim().toLowerCase() !== 'primary batch') {
           const bcStr = batchName.trim();
@@ -1877,23 +1872,8 @@ exports.getStoreAvailableBarcodes = async (req, res) => {
       });
     });
 
-    // 3. Filter out barcodes already Active or pending_acceptance in MongoDB
-    const barcodesList = Array.from(gatheredBarcodes.values());
-    const barcodes = [];
-
-    if (barcodesList.length > 0) {
-      const Barcode = require('../models/Barcode');
-      const activeBcs = await Barcode.find({
-        status: { $in: ['Active', 'pending_acceptance'] }
-      }).select('barcode');
-      const activeBcSet = new Set(activeBcs.map(b => b.barcode));
-
-      barcodesList.forEach(item => {
-        if (!activeBcSet.has(item.barcode)) {
-          barcodes.push(item);
-        }
-      });
-    }
+    // 3. Return all barcodes retrieved directly from Tally Prime
+    const barcodes = Array.from(gatheredBarcodes.values());
 
     res.json({ barcodes });
   } catch (error) {

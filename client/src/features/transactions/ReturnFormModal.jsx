@@ -2,12 +2,13 @@ import { AlertCircle, Camera, Reply, X } from 'lucide-react';
 import { useState } from 'react';
 import Button from '../../components/ui/Button';
 import api from '../../lib/axios';
+import { fetchDynamicLocation } from '../../lib/location';
 
 const ReturnFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
   const [qty, setQty] = useState(1);
   const [remarks, setRemarks] = useState('');
   const [photo, setPhoto] = useState('');
-  const [coords, setCoords] = useState({ lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' });
+  const [coords, setCoords] = useState({ lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' });
   const [capturing, setCapturing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -23,29 +24,31 @@ const ReturnFormModal = ({ isOpen, onClose, barcode, onSuccess }) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      
+
       const { data } = await api.post('/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      
+
       setPhoto(data.url);
-      
+
       if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition((position) => {
-          const lat = position.coords.latitude.toFixed(4);
-          const lng = position.coords.longitude.toFixed(4);
+        navigator.geolocation.getCurrentPosition(async (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const loc = await fetchDynamicLocation(lat, lng);
           setCoords({
-            lat,
-            lng,
-            address: `Shop Floor Section C, Pune Plant (${lat}° N, ${lng}° E)`
+            lat: loc.lat,
+            lng: loc.lng,
+            address: loc.address
           });
-        }, () => {
+        }, async () => {
           const lat = 18.5204;
           const lng = 73.8567;
+          const loc = await fetchDynamicLocation(lat, lng);
           setCoords({
-            lat,
-            lng,
-            address: `Shop Floor Section C, Pune Plant (Coordinates: ${lat}, ${lng})`
+            lat: loc.lat,
+            lng: loc.lng,
+            address: loc.address
           });
         });
       }

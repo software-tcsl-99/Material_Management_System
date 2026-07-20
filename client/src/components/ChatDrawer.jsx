@@ -186,7 +186,7 @@ export default function ChatDrawer() {
             })
           )}
           {typingUser && (
-            <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium italic animate-pulse">
+            <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium animate-pulse">
               <span className="w-1.5 h-1.5 bg-slate-400 rounded-full" />
               <span>{typingUser} is typing...</span>
             </div>
@@ -222,8 +222,8 @@ export default function ChatDrawer() {
                 type="submit"
                 disabled={!inputText.trim()}
                 className={`p-2.5 rounded-xl transition ${inputText.trim()
-                    ? 'bg-primary text-white hover:bg-primary-dark shadow-md'
-                    : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  ? 'bg-primary text-white hover:bg-primary-dark shadow-md'
+                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                   }`}
               >
                 <Send className="w-4 h-4" />

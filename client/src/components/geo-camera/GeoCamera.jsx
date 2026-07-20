@@ -220,7 +220,7 @@ const GeoCamera = ({
 
         {cameraActive && (
           <div className="flex gap-3 w-full max-w-lg">
-            <Button type="button" variant="outline" className="flex-1 text-slate-300 border-slate-700 hover:bg-slate-850" onClick={handleClose}>
+            <Button type="button" variant="outline" className="flex-1 text-slate-300 border-slate-700" onClick={handleClose}>
               Cancel
             </Button>
             <Button type="button" variant="primary" className="flex-1" onClick={capturePhoto} icon={Camera}>
@@ -242,7 +242,7 @@ const GeoCamera = ({
   return (
     <div className="w-full flex flex-col gap-3 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 bg-slate-50/50 dark:bg-slate-900/40 font-sans">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+        <span className="text-[10px] font-bold text-slate-500 tracking-wider">
           {label}
         </span>
         {value && (
@@ -291,7 +291,7 @@ const GeoCamera = ({
             <div className="space-y-1.5 py-1">
               <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200">
                 <MapPin className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                <span className="font-bold text-[10px] text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">GPS Stamp</span>
+                <span className="font-bold text-[10px] text-indigo-600 dark:text-indigo-400 tracking-wider">GPS Stamp</span>
               </div>
               {gpsData ? (
                 <div className="space-y-0.5 font-mono text-[10px] text-slate-600 dark:text-slate-400">
@@ -301,7 +301,7 @@ const GeoCamera = ({
                   <p className="font-bold mt-1 text-slate-500">Addr: {gpsData.address}</p>
                 </div>
               ) : (
-                <p className="text-[10px] text-slate-400 italic">Coordinates attached to image</p>
+                <p className="text-[10px] text-slate-400">Coordinates attached to image</p>
               )}
             </div>
             <div className="pt-2 sm:pt-0 flex gap-2">

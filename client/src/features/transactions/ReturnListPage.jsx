@@ -1,4 +1,4 @@
-import { AlertTriangle, Eye, Layers, RefreshCcw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Layers, RefreshCcw, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Badge from '../../components/ui/Badge';
@@ -89,7 +89,7 @@ const ReturnListPage = () => {
         </div>
       ) : Object.keys(groupedReturns).length === 0 ? (
         <Card>
-          <div className="text-center py-12 text-slate-400 italic text-sm">
+          <div className="text-center py-12 text-slate-400 text-sm">
             No return records found.
           </div>
         </Card>
@@ -159,7 +159,7 @@ const ReturnListPage = () => {
                           })}
                         </td>
                         <td className="px-5 py-3.5">
-                          <span className="text-slate-550 dark:text-slate-300 italic block truncate max-w-xs">{row.reason || row.remarks || '-'}</span>
+                          <span className="text-slate-550 dark:text-slate-300 block truncate max-w-xs">{row.reason || row.remarks || '-'}</span>
                         </td>
                       </tr>
                     ))}

@@ -13,11 +13,11 @@ const Button = React.forwardRef(({
   ...props
 }, ref) => {
   const baseStyles = 'inline-flex items-center justify-center font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none active:scale-[0.98] cursor-pointer';
-  
+
   const variants = {
     primary: 'bg-primary hover:bg-primary-dark text-white focus:ring-primary shadow-md hover:shadow-primary/20',
     secondary: 'bg-slate-100 hover:bg-slate-200 text-slate-900 focus:ring-slate-400 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100',
-    outline: 'border border-slate-300 bg-transparent hover:bg-slate-50 text-slate-700 focus:ring-primary dark:border-slate-700 dark:hover:bg-slate-800 dark:text-slate-300',
+    outline: 'border border-slate-200 bg-transparent text-slate-900 hover:bg-slate-50 text-slate-300 focus:ring-primary dark:border-slate-700 dark:hover:bg-slate-800 dark:text-slate-300',
     danger: 'bg-danger hover:bg-danger-dark text-white focus:ring-danger shadow-md',
     success: 'bg-success hover:bg-success-dark text-white focus:ring-success shadow-md',
     ghost: 'hover:bg-slate-100 text-slate-700 hover:text-slate-950 focus:ring-slate-400 dark:hover:bg-slate-800 dark:text-slate-300 dark:hover:text-slate-100',

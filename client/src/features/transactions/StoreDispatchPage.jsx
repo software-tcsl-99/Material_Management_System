@@ -1,10 +1,13 @@
-import { ArrowLeft, Camera, CheckCircle, FileText, Layers, MapPin, Shield, Trash2 } from 'lucide-react';
+import { ArrowLeft, Camera, CheckCircle, FileText, Layers, MapPin, Shield, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import BarcodeScanner from '../../components/BarcodeScanner';
+import GeoCamera from '../../components/geo-camera/GeoCamera';
 import Button from '../../components/ui/Button';
 import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
 import api from '../../lib/axios';
 import useAuthStore from '../../store/authStore';
+import { fetchDynamicLocation } from '../../lib/location';
 
 const StoreDispatchPage = () => {
   const { id } = useParams();
@@ -44,6 +47,17 @@ const StoreDispatchPage = () => {
   const [handlerDropdownOpen, setHandlerDropdownOpen] = useState(false);
   const [handlerSearchQuery, setHandlerSearchQuery] = useState('');
 
+  // Barcode error state mapping: `${matIndex}-${bcIndex}` -> error string
+  const [barcodeErrors, setBarcodeErrors] = useState({});
+  // Track barcodes entered by scanning: `${matIndex}-${bcIndex}` -> boolean
+  const [scannedBarcodes, setScannedBarcodes] = useState({});
+  // Scanner modal state: { matIndex, bcIndex } or null
+  const [activeScanner, setActiveScanner] = useState(null);
+  // GeoCamera modal state: matIndex or null
+  const [openGeoCameraIndex, setOpenGeoCameraIndex] = useState(null);
+  // Full-screen image preview modal state
+  const [previewImage, setPreviewImage] = useState(null);
+
   useEffect(() => {
     const handleOutsideClick = (e) => {
       if (!e.target.closest('.receiver-dropdown-container')) {
@@ -66,10 +80,6 @@ const StoreDispatchPage = () => {
         const empList = empRes.data.employees || empRes.data.data || [];
         setEmployees(empList);
 
-        // Filter handlers (disabled filtering to show all users)
-        const handlerList = empList;
-        setHandlers(handlerList);
-
         // Fetch transaction details
         const txRes = await api.get(`/transactions/${id}`);
         const tx = txRes.data.transaction || txRes.data;
@@ -78,6 +88,11 @@ const StoreDispatchPage = () => {
           return;
         }
         setTransaction(tx);
+
+        // Filter handlers to exclude the requester
+        const requesterId = tx.requester?._id || tx.requester || '';
+        const handlerList = empList.filter(emp => emp._id !== requesterId);
+        setHandlers(handlerList);
 
         // Default receiver to requester
         setReceiverId(tx.requester?._id || '');
@@ -162,10 +177,55 @@ const StoreDispatchPage = () => {
     setMaterialRows(updated);
   };
 
+  const validateBarcode = (matIndex, bcIndex, value) => {
+    const key = `${matIndex}-${bcIndex}`;
+    const row = materialRows[matIndex];
+    if (!row) return;
+
+    if (!value || !value.trim()) {
+      setBarcodeErrors(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+
+    const trimmedValue = value.trim();
+    const availableList = rowBarcodesMap[row.name] || [];
+    const isPresent = availableList.some(bc => bc.toString().trim().toLowerCase() === trimmedValue.toLowerCase());
+
+    if (!isPresent) {
+      setBarcodeErrors(prev => ({
+        ...prev,
+        [key]: 'Barcode not present'
+      }));
+    } else {
+      setBarcodeErrors(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+  };
+
   const handleBarcodeChange = (matIndex, bcIndex, value) => {
     const updated = [...materialRows];
     updated[matIndex].barcodes[bcIndex] = value;
     setMaterialRows(updated);
+    validateBarcode(matIndex, bcIndex, value);
+  };
+
+
+
+  const handleScanBarcode = (barcode) => {
+    if (activeScanner) {
+      const { matIndex, bcIndex } = activeScanner;
+      const key = `${matIndex}-${bcIndex}`;
+      handleBarcodeChange(matIndex, bcIndex, barcode);
+      setScannedBarcodes(prev => ({ ...prev, [key]: true }));
+      setActiveScanner(null);
+    }
   };
 
   // Add a new custom material row
@@ -218,24 +278,27 @@ const StoreDispatchPage = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      
+
       const { data } = await api.post('/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      
+
       const photoUrl = data.url;
 
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
-          (position) => {
+          async (position) => {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const loc = await fetchDynamicLocation(lat, lng);
             const updated = [...materialRows];
             const newPhoto = {
               url: photoUrl,
               metadata: {
-                lat: position.coords.latitude,
-                lng: position.coords.longitude,
+                lat: loc.lat,
+                lng: loc.lng,
                 accuracy: position.coords.accuracy || 10,
-                address: 'MIDC Phase II, Sector A, Pune, India',
+                address: loc.address,
                 date: new Date().toLocaleDateString('en-IN'),
                 time: new Date().toLocaleTimeString('en-IN'),
                 device: navigator.userAgent,
@@ -246,15 +309,18 @@ const StoreDispatchPage = () => {
             updated[index].photos = [...(updated[index].photos || []), newPhoto];
             setMaterialRows(updated);
           },
-          (error) => {
+          async (error) => {
+            const lat = 18.5204;
+            const lng = 73.8567;
+            const loc = await fetchDynamicLocation(lat, lng);
             const updated = [...materialRows];
             const newPhoto = {
               url: photoUrl,
               metadata: {
-                lat: 18.5204,
-                lng: 73.8567,
+                lat: loc.lat,
+                lng: loc.lng,
                 accuracy: 15,
-                address: 'MIDC Pune, Maharashtra, India',
+                address: loc.address,
                 date: new Date().toLocaleDateString('en-IN'),
                 time: new Date().toLocaleTimeString('en-IN'),
                 device: navigator.userAgent,
@@ -279,23 +345,26 @@ const StoreDispatchPage = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      
+
       const { data } = await api.post('/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      
+
       const photoUrl = data.url;
 
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
-          (position) => {
+          async (position) => {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const loc = await fetchDynamicLocation(lat, lng);
             const newPhoto = {
               url: photoUrl,
               metadata: {
-                lat: position.coords.latitude,
-                lng: position.coords.longitude,
+                lat: loc.lat,
+                lng: loc.lng,
                 accuracy: position.coords.accuracy || 10,
-                address: 'MIDC Phase II, Sector A, Pune, India',
+                address: loc.address,
                 date: new Date().toLocaleDateString('en-IN'),
                 time: new Date().toLocaleTimeString('en-IN'),
                 device: navigator.userAgent,
@@ -305,14 +374,17 @@ const StoreDispatchPage = () => {
             };
             setDocPhotos([...docPhotos, newPhoto]);
           },
-          (error) => {
+          async (error) => {
+            const lat = 18.5204;
+            const lng = 73.8567;
+            const loc = await fetchDynamicLocation(lat, lng);
             const newPhoto = {
               url: photoUrl,
               metadata: {
-                lat: 18.5204,
-                lng: 73.8567,
+                lat: loc.lat,
+                lng: loc.lng,
                 accuracy: 15,
-                address: 'MIDC Pune, Maharashtra, India',
+                address: loc.address,
                 date: new Date().toLocaleDateString('en-IN'),
                 time: new Date().toLocaleTimeString('en-IN'),
                 device: navigator.userAgent,
@@ -396,6 +468,16 @@ const StoreDispatchPage = () => {
         setError(`Please enter all barcodes for material "${row.name}".`);
         return;
       }
+      // Check if barcode is present in Tally (rowBarcodesMap)
+      const availableList = rowBarcodesMap[row.name] || [];
+      for (let bcIdx = 0; bcIdx < row.barcodes.length; bcIdx++) {
+        const bcVal = row.barcodes[bcIdx];
+        const isPresent = availableList.some(bc => bc.toString().trim().toLowerCase() === bcVal.trim().toLowerCase());
+        if (!isPresent) {
+          setError(`Barcode "${bcVal}" for material "${row.name}" is not present.`);
+          return;
+        }
+      }
       if (row.barcodes.some(bc => /[^0-9]/.test(bc))) {
         setError(`Barcodes for material "${row.name}" must contain only numbers (no alphabetic characters).`);
         return;
@@ -439,7 +521,7 @@ const StoreDispatchPage = () => {
 
       await api.post(`/transactions/${transaction.transactionId}/store-dispatch`, payload);
       alert('Sourcing Dispatch registered successfully!');
-      navigate('/pending');
+      navigate(`/transactions/${id}`);
     } catch (err) {
       setError(err.response?.data?.message || 'Dispatch operation failed.');
     } finally {
@@ -768,45 +850,91 @@ const StoreDispatchPage = () => {
                     Serial Barcode Assignment
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                    {row.barcodes.map((bcVal, bcIndex) => (
-                      <div key={bcIndex} className="space-y-1">
-                        <label className="block text-slate-400 font-bold tracking-wider text-[9px]">
-                          Barcode #{bcIndex + 1} *
-                        </label>
-                        <select
-                          value={bcVal}
-                          onChange={(e) => handleBarcodeChange(matIndex, bcIndex, e.target.value)}
-                          required
-                          disabled={(rowBarcodesMap[row.name] || []).length === 0}
-                          className="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          {(rowBarcodesMap[row.name] || []).length === 0 ? (
-                            <option value="">material is not availble</option>
+                    {row.barcodes.map((bcVal, bcIndex) => {
+                      const key = `${matIndex}-${bcIndex}`;
+                      const errorMsg = barcodeErrors[key];
+                      const availableList = rowBarcodesMap[row.name] || [];
+                      const isScanned = scannedBarcodes[key];
+
+                      return (
+                        <div key={bcIndex} className="space-y-1">
+                          <label className="block text-slate-400 font-bold tracking-wider text-[9px]">
+                            Barcode #{bcIndex + 1} *
+                          </label>
+                          <div className="flex gap-2">
+                            {isScanned ? (
+                              <div className={`flex-1 bg-slate-50 dark:bg-slate-900 border ${errorMsg ? 'border-rose-500 focus:ring-rose-500' : 'border-slate-200 dark:border-slate-800 focus:ring-blue-500'} rounded-lg px-3 py-2 text-xs font-mono font-bold flex items-center justify-between min-h-[38px]`}>
+                                <span className="text-slate-800 dark:text-slate-200">{bcVal || 'No barcode scanned'}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleBarcodeChange(matIndex, bcIndex, '');
+                                    setScannedBarcodes(prev => ({ ...prev, [key]: false }));
+                                  }}
+                                  className="text-[10px] text-rose-500 hover:text-rose-700 font-extrabold"
+                                >
+                                  Clear
+                                </button>
+                              </div>
+                            ) : (
+                              <select
+                                value={bcVal}
+                                onChange={(e) => handleBarcodeChange(matIndex, bcIndex, e.target.value)}
+                                required
+                                disabled={availableList.length === 0}
+                                className={`flex-1 text-xs bg-slate-50 dark:bg-slate-900 border ${errorMsg ? 'border-rose-500 focus:ring-rose-500' : 'border-slate-200 dark:border-slate-800 focus:ring-blue-500'} rounded-lg px-3 py-2 font-mono font-bold focus:outline-none focus:ring-1 text-slate-800 dark:text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed h-[38px]`}
+                              >
+                                {availableList.length === 0 ? (
+                                  <option value="">material is not availble</option>
+                                ) : (
+                                  <>
+                                    <option value="">Select Barcode...</option>
+                                    {bcVal && !availableList.some(code => code.toString().toLowerCase() === bcVal.toString().toLowerCase()) && (
+                                      <option value={bcVal}>
+                                        {bcVal}
+                                      </option>
+                                    )}
+                                    {availableList.map((code) => {
+                                      // Prevent selecting the same barcode in multiple inputs
+                                      const isSelectedElsewhere = materialRows.some((r, rIdx) =>
+                                        r.barcodes.some((bc, bIdx) => bc === code && !(rIdx === matIndex && bIdx === bcIndex))
+                                      );
+                                      if (isSelectedElsewhere) return null;
+                                      return (
+                                        <option key={code} value={code}>
+                                          {code}
+                                        </option>
+                                      );
+                                    })}
+                                  </>
+                                )}
+                              </select>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setActiveScanner({ matIndex, bcIndex })}
+                              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center transition shadow-sm font-extrabold text-xs flex-shrink-0 h-[38px]"
+                              title="Open Camera Scanner"
+                            >
+                              <Camera className="w-3.5 h-3.5 mr-1" />
+                              Scan
+                            </button>
+                          </div>
+
+                          {errorMsg ? (
+                            <p className="text-[9px] text-rose-500 font-extrabold mt-1 animate-pulse">
+                              ⚠️ {errorMsg}
+                            </p>
                           ) : (
-                            <>
-                              <option value="">Select Barcode...</option>
-                              {(rowBarcodesMap[row.name] || []).map((code) => {
-                                // Prevent selecting the same barcode in multiple inputs
-                                const isSelectedElsewhere = materialRows.some((r, rIdx) =>
-                                  r.barcodes.some((bc, bIdx) => bc === code && !(rIdx === matIndex && bIdx === bcIndex))
-                                );
-                                if (isSelectedElsewhere) return null;
-                                return (
-                                  <option key={code} value={code}>
-                                    {code}
-                                  </option>
-                                );
-                              })}
-                            </>
+                            bcVal && (
+                              <p className="text-[9px] text-emerald-500 font-extrabold mt-1">
+                                ✓ Barcode is present
+                              </p>
+                            )
                           )}
-                        </select>
-                        {(rowBarcodesMap[row.name] || []).length === 0 && (
-                          <p className="text-[9px] text-rose-500 font-extrabold mt-1">
-                            material is not availble
-                          </p>
-                        )}
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -820,49 +948,48 @@ const StoreDispatchPage = () => {
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-1.5 text-blue-600 border border-blue-200 dark:text-blue-400 dark:border-blue-800 px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
+                    <button
+                      type="button"
+                      onClick={() => setOpenGeoCameraIndex(matIndex)}
+                      className="flex items-center gap-1.5 text-blue-600 border border-blue-200 dark:text-blue-400 dark:border-blue-800 px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer bg-transparent"
+                    >
                       <Camera className="h-3.5 w-3.5 mr-1" />
-                      Upload Tagged Photo
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleCaptureMaterialPhoto(matIndex, e.target.files[0])}
-                        className="hidden"
-                      />
-                    </label>
+                      Capture Live Photo
+                    </button>
                   </div>
                 </div>
 
                 {row.photos && row.photos.length > 0 && (
                   <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
-                    <span className="block text-[9px] text-slate-400 font-extrabold mb-2">
+                    <span className="block text-[10px] text-slate-500 font-bold mb-2">
                       Material Photos Verification ({row.photos.length}) *
                     </span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    <div className="flex flex-wrap gap-3">
                       {row.photos.map((photo, pIdx) => (
-                        <div key={pIdx} className="flex items-center justify-between gap-2.5 bg-slate-50 dark:bg-slate-950 p-2 rounded-xl border border-slate-200 dark:border-slate-800 relative animate-in zoom-in-95 duration-200 w-full">
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                            <img src={photo.url} alt={`Material Capture ${pIdx + 1}`} className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-800 shrink-0" />
-                            <div className="text-[9px] text-slate-400 leading-tight min-w-0">
-                              <span className="block text-slate-600 dark:text-slate-300 font-bold flex items-center gap-1">
-                                <MapPin className="h-2.5 w-2.5 text-rose-500 shrink-0" />
-                                {photo.metadata.lat.toFixed(4)}, {photo.metadata.lng.toFixed(4)}
-                              </span>
-                              <span className="block truncate font-semibold mt-0.5">{photo.metadata.address}</span>
-                            </div>
+                        <div key={pIdx} className="relative flex flex-col items-center gap-1 p-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl w-24">
+                          <div className="relative w-full aspect-square overflow-hidden rounded-lg">
+                            <img
+                              src={photo.url}
+                              alt={`Material Capture ${pIdx + 1}`}
+                              className="w-full h-full object-cover cursor-pointer hover:opacity-85 transition"
+                              onClick={() => setPreviewImage(photo.url)}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = [...materialRows];
+                                updated[matIndex].photos = updated[matIndex].photos.filter((_, idx) => idx !== pIdx);
+                                setMaterialRows(updated);
+                              }}
+                              className="absolute top-1 right-1 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition cursor-pointer"
+                              title="Delete Photo"
+                            >
+                              <Trash2 className="w-2.5 h-2.5" />
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const updated = [...materialRows];
-                              updated[matIndex].photos = updated[matIndex].photos.filter((_, idx) => idx !== pIdx);
-                              setMaterialRows(updated);
-                            }}
-                            className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded transition shrink-0"
-                            title="Delete photo"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <span className="text-[9px] text-slate-500 font-bold text-center truncate w-full">
+                            Material Capture {pIdx + 1}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -873,24 +1000,24 @@ const StoreDispatchPage = () => {
           </div>
         </div>
 
-        {/* Step 4: Transaction Level Gate Pass / Document Photo (Multiple support) */}
+        {/* Step 4: Transaction Level Gate Pass / Document Attachment (Multiple support) */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-6 rounded-2xl shadow-sm space-y-4">
           <h3 className="text-xs font-bold tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-2">
             <Camera className="h-4 w-4 text-blue-600" />
-            4. Required Dispatch Document / Gate Pass Photo(s)
+            4. Required Dispatch Document/ Attachment(s)
           </h3>
           <p className="text-[10px] text-slate-400 font-bold">
-            Please capture geo-tagged images of the signed Gate Pass, Delivery Challan or Invoice verification document (Multiple captures allowed).
+            Please upload photos, PDFs, or Word documents of the signed Gate Pass, Delivery Challan or Invoice verification document (Multiple files allowed).
           </p>
 
           <div className="space-y-4">
             <div>
               <label className="inline-flex items-center gap-2 text-blue-600 border border-blue-200 dark:text-blue-400 dark:border-blue-800 px-4 py-2 rounded-lg font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
                 <Camera className="h-4 w-4" />
-                Upload Tagged Document Photo
+                Upload Document (Photo/PDF/Word)
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,.doc,.docx"
                   onChange={(e) => handleCaptureDocPhoto(e.target.files[0])}
                   className="hidden"
                 />
@@ -902,7 +1029,34 @@ const StoreDispatchPage = () => {
                 {docPhotos.map((photo, pIdx) => (
                   <div key={pIdx} className="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800 relative animate-in zoom-in-95 duration-200">
                     <div className="flex items-center gap-3">
-                      <img src={photo.url} alt={`Document Capture ${pIdx + 1}`} className="w-12 h-12 object-cover rounded-lg border border-slate-300" />
+                      {(() => {
+                        const urlLower = photo.url.toLowerCase();
+                        const ext = urlLower.split('.').pop().split('?')[0];
+                        const isImg = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext) || urlLower.startsWith('data:image');
+                        if (isImg) {
+                          return (
+                            <img
+                              src={photo.url}
+                              alt={`Document Capture ${pIdx + 1}`}
+                              className="w-12 h-12 object-cover rounded-lg border border-slate-300 cursor-pointer hover:opacity-85 transition"
+                              onClick={() => setPreviewImage(photo.url)}
+                            />
+                          );
+                        } else {
+                          return (
+                            <a
+                              href={photo.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="w-12 h-12 flex flex-col items-center justify-center bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-lg border border-blue-200 dark:border-blue-800 hover:bg-blue-100 transition text-[9px] font-bold leading-none shrink-0"
+                              title="Click to view document"
+                            >
+                              <FileText className="w-5 h-5 mb-0.5" />
+                              {ext.toUpperCase().substring(0, 4)}
+                            </a>
+                          );
+                        }
+                      })()}
                       <div className="text-[10px] text-slate-400 leading-tight">
                         <span className="block text-slate-700 dark:text-slate-200 font-bold flex items-center gap-1">
                           <MapPin className="h-3 w-3 text-rose-500" />
@@ -957,6 +1111,50 @@ const StoreDispatchPage = () => {
           </div>
         </div>
       </form>
+
+      {openGeoCameraIndex !== null && (
+        <GeoCamera
+          triggerOnly={true}
+          onCapture={(photoData) => {
+            if (photoData) {
+              const updated = [...materialRows];
+              updated[openGeoCameraIndex].photos = [...(updated[openGeoCameraIndex].photos || []), photoData];
+              setMaterialRows(updated);
+            }
+            setOpenGeoCameraIndex(null);
+          }}
+          onClose={() => setOpenGeoCameraIndex(null)}
+        />
+      )}
+
+      {activeScanner && (
+        <BarcodeScanner
+          onScan={handleScanBarcode}
+          onClose={() => setActiveScanner(null)}
+        />
+      )}
+
+      {/* Image Preview Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in cursor-pointer"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-3xl max-h-[90vh] p-2" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="absolute top-3 right-3 p-1.5 bg-black/60 hover:bg-black/85 text-white rounded-full transition-colors cursor-pointer z-10"
+              onClick={() => setPreviewImage(null)}
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <img
+              src={previewImage}
+              alt="Preview"
+              className="max-w-full max-h-[80vh] object-contain rounded-lg"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

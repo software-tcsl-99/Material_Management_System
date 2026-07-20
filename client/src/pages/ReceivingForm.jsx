@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertCircle, ArrowLeft, Camera, Paperclip, Trash2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Camera, Paperclip, Trash2, X, FileText } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import GeoCamera from '../components/geo-camera/GeoCamera';
@@ -15,6 +15,8 @@ export default function ReceivingForm() {
   const [cameraBarcode, setCameraBarcode] = useState(null);
   const [barcodeEvidence, setBarcodeEvidence] = useState({});
   const [commonRemark, setCommonRemark] = useState('');
+  const [commonDocuments, setCommonDocuments] = useState([]);
+  const [previewImage, setPreviewImage] = useState(null);
 
   // Fetch transaction details
   const { data: txnData, isLoading, error } = useQuery({
@@ -41,7 +43,7 @@ export default function ReceivingForm() {
           action: 'accept',
           reason: r.remarks || 'Transfer accepted',
           photos: r.photos || [],
-          gps: r.gps || { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
+          gps: r.gps || { lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' }
         };
         return api.post('/barcodes/handle-transfer', transferPayload);
       }
@@ -120,22 +122,19 @@ export default function ReceivingForm() {
     setCameraBarcode(null);
   };
 
-  const handleAttachment = async (barcode, file) => {
+  const handleCommonAttachment = async (file) => {
     if (!file) return;
     try {
       const formData = new FormData();
       formData.append('file', file);
       const { data } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      const current = barcodeEvidence[barcode] || { documents: [] };
-      updateEvidence(barcode, {
-        documents: [...(current.documents || []), {
-          name: file.name,
-          url: data.url,
-          type: file.type || 'document',
-          size: file.size,
-          uploadedAt: new Date().toISOString()
-        }]
-      });
+      setCommonDocuments(prev => [...prev, {
+        name: file.name,
+        url: data.url,
+        type: file.type || 'document',
+        size: file.size,
+        uploadedAt: new Date().toISOString()
+      }]);
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to upload attachment.');
     }
@@ -151,7 +150,13 @@ export default function ReceivingForm() {
       alert('Please enter the common receiving remark before proceeding.');
       return;
     }
-    const receipts = formItems.map(item => ({ barcode: item.barcode, returnId: item.returnId, remarks: commonRemark.trim(), ...(barcodeEvidence[item.barcode] || {}) }));
+    const receipts = formItems.map(item => ({
+      barcode: item.barcode,
+      returnId: item.returnId,
+      remarks: commonRemark.trim(),
+      ...(barcodeEvidence[item.barcode] || {}),
+      documents: commonDocuments
+    }));
     const missingEvidence = receipts.find(receipt => !receipt.photos?.length);
     if (missingEvidence) return alert(`A GeoCamera photo is required for barcode ${missingEvidence.barcode}.`);
 
@@ -207,9 +212,12 @@ export default function ReceivingForm() {
           {formItems.map(bc => {
             const evidence = barcodeEvidence[bc.barcode] || { condition: 'good', photos: [], documents: [] };
             return (
-              <div key={bc.barcode} className="border border-slate-200 rounded-2xl p-4 space-y-3 bg-slate-50/50">
+              <div key={bc.barcode} className="border border-slate-200 rounded-2xl p-4 space-y-4 bg-slate-50/50">
                 <div className="flex justify-between gap-3 text-xs">
-                  <div><p className="font-mono font-extrabold text-slate-800">{bc.barcode}</p><p className="text-slate-500 font-semibold">{bc.materialName}</p></div>
+                  <div>
+                    <p className="font-mono font-extrabold text-slate-800">{bc.barcode}</p>
+                    <p className="text-slate-500 font-semibold">{bc.materialName}</p>
+                  </div>
                   <span className="text-[10px] text-slate-400">Owner: {bc.owner?.fullName || txnData.requester?.fullName || 'Requester'}</span>
                 </div>
                 <div className="relative">
@@ -219,14 +227,130 @@ export default function ReceivingForm() {
                   </select>
                   <span className="pointer-events-none absolute right-3 bottom-2.5 text-slate-400 text-[10px]">▼</span>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => { setCameraBarcode(bc.barcode); setCameraOpen(true); }} className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold"><Camera className="w-4 h-4 text-primary" /> GeoCamera Photo *</button>
-                  <label className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold cursor-pointer"><Paperclip className="w-4 h-4 text-primary" /> Add Attachment<input type="file" className="hidden" onChange={(e) => handleAttachment(bc.barcode, e.target.files?.[0])} /></label>
+
+                {/* Live Photo Grid for this specific barcode */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="block text-[10px] text-slate-500 font-bold tracking-wider">
+                      Live Photo Verification ({evidence.photos.length}) *
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => { setCameraBarcode(bc.barcode); setCameraOpen(true); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 dark:border-slate-800 rounded-xl text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                    >
+                      <Camera className="w-3.5 h-3.5" /> Capture Live Photo
+                    </button>
+                  </div>
+
+                  {evidence.photos.length > 0 && (
+                    <div className="flex flex-wrap gap-2.5">
+                      {evidence.photos.map((photo, pIdx) => (
+                        <div key={pIdx} className="flex flex-col items-center gap-1">
+                          <div className="relative w-24 h-24 bg-slate-100 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-sm">
+                            <img
+                              src={photo.url}
+                              alt="Captured evidence"
+                              className="w-full h-full object-cover cursor-pointer hover:opacity-85 transition"
+                              onClick={() => setPreviewImage(photo.url)}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updatedPhotos = evidence.photos.filter((_, i) => i !== pIdx);
+                                updateEvidence(bc.barcode, { photos: updatedPhotos });
+                              }}
+                              className="absolute top-1 right-1 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition cursor-pointer"
+                              title="Delete Photo"
+                            >
+                              <Trash2 className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                          <span className="text-[9px] text-slate-500 font-bold text-center truncate w-24">
+                            Capture {pIdx + 1}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                {(evidence.photos.length > 0 || evidence.documents.length > 0) && <div className="flex flex-wrap gap-2">{evidence.photos.map((item, index) => <div key={`p-${index}`} className="relative"><img src={item.url} alt="Receiving proof" className="w-16 h-16 object-cover rounded-lg" /><button type="button" onClick={() => updateEvidence(bc.barcode, { photos: evidence.photos.filter((_, i) => i !== index) })} className="absolute -top-1 -right-1 bg-rose-500 text-white rounded-full p-0.5"><Trash2 className="w-3 h-3" /></button></div>)}{evidence.documents.map((document, index) => <div key={`d-${index}`} className="flex items-center gap-1 text-[10px] bg-white border border-slate-200 px-2 py-1 rounded-lg"><Paperclip className="w-3 h-3" />{document.name}<button type="button" onClick={() => updateEvidence(bc.barcode, { documents: evidence.documents.filter((_, i) => i !== index) })}><Trash2 className="w-3 h-3 text-rose-500" /></button></div>)}</div>}
               </div>
             );
           })}
+        </div>
+
+        {/* Global Document Upload Section */}
+        <div className="border-t border-slate-200 pt-4 space-y-3">
+          <div>
+            <h4 className="text-xs font-extrabold text-slate-800 tracking-wider flex items-center gap-1.5">
+              <Paperclip className="w-4 h-4 text-primary" />
+              Upload Dispatch Documents / Attachments (PDF/Word/Images)
+            </h4>
+            <p className="text-[10px] text-slate-400 mt-0.5">Attach documents applicable to the entire materials batch (Multiple files allowed).</p>
+          </div>
+          <div className="flex flex-wrap gap-3 items-center">
+            <label className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-extrabold cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition">
+              <Paperclip className="w-4 h-4 text-primary" />
+              Add Attachment
+              <input
+                type="file"
+                accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,.doc,.docx"
+                className="hidden"
+                onChange={(e) => handleCommonAttachment(e.target.files?.[0])}
+              />
+            </label>
+          </div>
+
+          {commonDocuments.length > 0 && (
+            <div className="space-y-1">
+              <span className="block text-[9px] font-bold text-slate-450 tracking-wider">
+                Uploaded Attachments ({commonDocuments.length})
+              </span>
+              <div className="flex flex-wrap gap-2.5">
+                {commonDocuments.map((doc, docIdx) => {
+                  const urlLower = doc.url.toLowerCase();
+                  const ext = urlLower.split('.').pop().split('?')[0];
+                  const isImg = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext) || urlLower.startsWith('data:image');
+                  return (
+                    <div key={docIdx} className="flex flex-col items-center gap-1">
+                      <div className="relative w-24 h-24 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex items-center justify-center">
+                        {isImg ? (
+                          <img
+                            src={doc.url}
+                            alt={doc.name || `Document ${docIdx + 1}`}
+                            className="w-full h-full object-cover cursor-pointer hover:opacity-85 transition"
+                            onClick={() => setPreviewImage(doc.url)}
+                          />
+                        ) : (
+                          <a
+                            href={doc.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full h-full flex flex-col items-center justify-center bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-[10px] font-bold gap-1"
+                            title="Click to view file"
+                          >
+                            <FileText className="w-6 h-6" />
+                            {ext.toUpperCase().substring(0, 4)}
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setCommonDocuments(prev => prev.filter((_, i) => i !== docIdx))}
+                          className="absolute top-1 right-1 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition cursor-pointer"
+                          title="Delete File"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                      <span className="text-[9px] text-slate-500 font-bold text-center truncate w-24" title={doc.name}>
+                        {doc.name || `Doc ${docIdx + 1}`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {cameraOpen && (
@@ -250,10 +374,31 @@ export default function ReceivingForm() {
             type="submit"
             className="px-6 py-2.5 bg-primary hover:bg-primary-dark text-white text-xs font-bold rounded-xl transition shadow-md shadow-primary/10 cursor-pointer"
           >
-            {mode === 'handler-pickup' ? 'Accept & Collect Materials' : mode === 'store-return' ? 'Accept Returned Materials' : mode === 'transfer-accept' ? 'Confirm & Accept Transfer' : 'Accept Materials & Sign Delivery'}
+            {mode === 'handler-pickup' ? 'Accept & Collect Materials' : mode === 'store-return' ? 'Accept Returned Materials' : mode === 'transfer-accept' ? 'Confirm & Accept Transfer' : 'Accept Materials & submit'}
           </button>
         </div>
       </form>
+      {/* Full-screen Image Preview Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in cursor-pointer"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-3xl max-h-[90vh] p-2" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="absolute top-3 right-3 p-1.5 bg-black/60 hover:bg-black/85 text-white rounded-full transition-colors cursor-pointer z-10"
+              onClick={() => setPreviewImage(null)}
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <img
+              src={previewImage}
+              alt="Preview"
+              className="max-w-full max-h-[80vh] object-contain rounded-lg"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

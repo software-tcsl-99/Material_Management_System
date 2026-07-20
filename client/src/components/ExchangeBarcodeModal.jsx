@@ -1,8 +1,8 @@
+import { X } from 'lucide-react';
 import { useState } from 'react';
-import { Camera, X } from 'lucide-react';
-import Button from './ui/Button';
-import GeoCamera from './geo-camera/GeoCamera';
 import api from '../lib/api';
+import GeoCamera from './geo-camera/GeoCamera';
+import Button from './ui/Button';
 
 export default function ExchangeBarcodeModal({
   isOpen,
@@ -49,7 +49,7 @@ export default function ExchangeBarcodeModal({
         warrantyReason: reasonCombined,
         newBarcode: hasNewBarcode === 'yes' ? exchangeNewBarcode.trim().toUpperCase() : undefined,
         photos: exchangePhoto ? [{ url: exchangePhoto }] : [],
-        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC Pune, India' }
+        gps: { lat: 18.5204, lng: 73.8567, address: 'MIDC kolhapur, India' }
       });
 
       alert('Exchange request submitted successfully!');
@@ -82,7 +82,7 @@ export default function ExchangeBarcodeModal({
           </div>
 
           <form onSubmit={handleExchangeSubmit} className="flex flex-col gap-4 text-xs font-semibold text-slate-600">
-            
+
             {/* Fetched Material Details */}
             <div className="bg-slate-50 dark:bg-slate-955 p-3 rounded-xl border border-slate-100 dark:border-slate-800 space-y-1 mb-2 text-[10px]">
               <div className="font-extrabold text-slate-850 dark:text-slate-200">Material Name: <span className="text-blue-600 dark:text-blue-450">{bc?.materialName}</span></div>
@@ -109,11 +109,10 @@ export default function ExchangeBarcodeModal({
                 <button
                   type="button"
                   onClick={() => setHasNewBarcode('yes')}
-                  className={`flex-1 py-2 rounded-xl text-xs font-bold transition ${
-                    hasNewBarcode === 'yes'
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold transition ${hasNewBarcode === 'yes'
                       ? 'bg-blue-600 text-white shadow-md'
                       : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-200'
-                  }`}
+                    }`}
                 >
                   Yes
                 </button>
@@ -123,11 +122,10 @@ export default function ExchangeBarcodeModal({
                     setHasNewBarcode('no');
                     setExchangeNewBarcode('');
                   }}
-                  className={`flex-1 py-2 rounded-xl text-xs font-bold transition ${
-                    hasNewBarcode === 'no'
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold transition ${hasNewBarcode === 'no'
                       ? 'bg-blue-600 text-white shadow-md'
                       : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-200'
-                  }`}
+                    }`}
                 >
                   No
                 </button>
