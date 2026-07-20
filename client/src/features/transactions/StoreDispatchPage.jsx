@@ -6,8 +6,8 @@ import GeoCamera from '../../components/geo-camera/GeoCamera';
 import Button from '../../components/ui/Button';
 import TallyMaterialAutocomplete from '../../components/ui/TallyMaterialAutocomplete';
 import api from '../../lib/axios';
-import useAuthStore from '../../store/authStore';
 import { fetchDynamicLocation } from '../../lib/location';
+import useAuthStore from '../../store/authStore';
 
 const StoreDispatchPage = () => {
   const { id } = useParams();
@@ -882,13 +882,13 @@ const StoreDispatchPage = () => {
                                 onChange={(e) => handleBarcodeChange(matIndex, bcIndex, e.target.value)}
                                 required
                                 disabled={availableList.length === 0}
-                                className={`flex-1 text-xs bg-slate-50 dark:bg-slate-900 border ${errorMsg ? 'border-rose-500 focus:ring-rose-500' : 'border-slate-200 dark:border-slate-800 focus:ring-blue-500'} rounded-lg px-3 py-2 font-mono font-bold focus:outline-none focus:ring-1 text-slate-800 dark:text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed h-[38px]`}
+                                className={`flex-1 text-xs bg-slate-50 dark:bg-slate-900 border ${errorMsg ? 'border-rose-500 focus:ring-rose-500' : 'border-slate-200 dark:border-slate-800 focus:ring-blue-500'} rounded-lg px-1 py-2 font-mono font-bold focus:outline-none focus:ring-1 text-slate-800 dark:text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed h-[38px]`}
                               >
                                 {availableList.length === 0 ? (
-                                  <option value="">material is not availble</option>
+                                  <option value="">Not availble</option>
                                 ) : (
                                   <>
-                                    <option value="">Select Barcode...</option>
+                                    <option value="">Select Barcode</option>
                                     {bcVal && !availableList.some(code => code.toString().toLowerCase() === bcVal.toString().toLowerCase()) && (
                                       <option value={bcVal}>
                                         {bcVal}

@@ -1842,8 +1842,8 @@ const TransactionDetailPage = () => {
 
 
 
-            {/* Return Multiple Button (only shown when transaction is in active status, user is the requester, not the handler, and no active return is on handler) */}
-            {['active', 'received'].includes(txn.status) && (txn.requester?._id === user?._id || txn.requester === user?._id) && (txn.handler?._id !== user?._id && txn.handler !== user?._id) && !returnsList?.some(r => (r.fromUser?._id === user?._id || r.fromUser === user?._id) && ['handler_assigned', 'collected'].includes(r.status)) && (
+            {/* Return Multiple Button (shown for requester, super_admin, or store admin when transaction is active/received) */}
+            {['active', 'received'].includes(txn.status) && (txn.requester?._id === user?._id || txn.requester === user?._id || user?.role === 'super_admin' || (user?.role === 'department_admin' && user?.departmentAdminType === 'store')) && (txn.handler?._id !== user?._id && txn.handler !== user?._id) && !returnsList?.some(r => (r.fromUser?._id === user?._id || r.fromUser === user?._id) && ['handler_assigned', 'collected'].includes(r.status)) && (
               <Button size="sm" variant="outline" onClick={() => navigate(`/transactions/${txn._id}/return-multiple`)}>
                 Return Multiple
               </Button>

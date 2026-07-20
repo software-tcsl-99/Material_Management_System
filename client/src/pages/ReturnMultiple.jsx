@@ -86,12 +86,18 @@ export default function ReturnMultiple() {
     );
   });
 
-  // Filter only active barcodes owned by the logged-in requester user
+  // Filter active barcodes — requester sees only their own, super_admin/store_admin sees all active
   const activeOwnedBarcodes = barcodes.filter(bc => {
     const isBarcodeActive = bc.status === 'Active';
+    if (!isBarcodeActive) return false;
+    // Super admin and store admin can return any active barcode on behalf of the owner
+    if (currentUser?.role === 'super_admin') return true;
+    if (currentUser?.role === 'department_admin' && currentUser?.departmentAdminType === 'store') return true;
+    // Regular users can only return barcodes they own
     const isOwner = bc.owner?._id === currentUser?._id || bc.owner === currentUser?._id;
-    return isBarcodeActive && isOwner;
+    return isOwner;
   });
+
 
   const returnMutation = useMutation({
     mutationFn: async (payloads) => {
